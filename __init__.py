@@ -94,6 +94,18 @@ from .fitting import SurvivalFitter, FitResult, kaplan_meier
 # Digitize / IPD Reconstruction
 from .digitize import clean_digitized_km, guyot_reconstruct
 
+# Calibration
+from .calibration import (
+    calibrate,
+    CalibrationTarget,
+    CalibrationParam,
+    CalibrationResult,
+    latin_hypercube,
+    gof_sse,
+    gof_wsse,
+    gof_loglik_normal,
+)
+
 # NMA Integration
 from .nma import (
     NMAPosterior,
@@ -161,6 +173,15 @@ __all__ = [
     # Digitize / IPD Reconstruction
     "clean_digitized_km",
     "guyot_reconstruct",
+    # Calibration
+    "calibrate",
+    "CalibrationTarget",
+    "CalibrationParam",
+    "CalibrationResult",
+    "latin_hypercube",
+    "gof_sse",
+    "gof_wsse",
+    "gof_loglik_normal",
     # NMA Integration
     "NMAPosterior",
     "PosteriorDist",
