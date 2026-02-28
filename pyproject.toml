@@ -27,6 +27,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "jupyter", "seaborn"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v --tb=short"
+
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.backends._legacy:_Backend"

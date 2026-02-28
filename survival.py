@@ -78,7 +78,7 @@ class SurvivalDistribution(ABC):
         """
         t = np.linspace(0, t_max, n_points)
         s = self.survival(t)
-        return float(np.trapz(s, t))
+        return float(np.trapezoid(s, t))
 
     @abstractmethod
     def __repr__(self) -> str:
