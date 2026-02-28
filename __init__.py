@@ -91,6 +91,9 @@ from .bia import BudgetImpactAnalysis
 # IPD Fitting
 from .fitting import SurvivalFitter, FitResult, kaplan_meier
 
+# Digitize / IPD Reconstruction
+from .digitize import clean_digitized_km, guyot_reconstruct
+
 # NMA Integration
 from .nma import (
     NMAPosterior,
@@ -155,6 +158,9 @@ __all__ = [
     "SurvivalFitter",
     "FitResult",
     "kaplan_meier",
+    # Digitize / IPD Reconstruction
+    "clean_digitized_km",
+    "guyot_reconstruct",
     # NMA Integration
     "NMAPosterior",
     "PosteriorDist",

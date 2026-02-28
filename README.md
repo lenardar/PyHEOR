@@ -11,6 +11,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 | **微观模拟**                | 个体水平状态转移模型，支持患者异质性、事件处理器、双层 PSA                                 |
 | **离散事件模拟 (DES)**     | 连续时间个体模拟，竞争风险、time-to-event 分布驱动、HR/AFT 集成                            |
 | **IPD 生存曲线拟合**        | 6 种参数分布 MLE 拟合，AIC/BIC 比较，自动选优                                              |
+| **KM 曲线数字化重建**       | Guyot method 从发表文献 KM 图反推 IPD，含数字化噪声预处理                                   |
 | **参数化生存分布**          | Exponential, Weibull, Log-logistic, Log-normal, Gompertz, Generalized Gamma 等 10 种       |
 | **基础分析**                | 确定性基线分析                                                                             |
 | **单因素敏感性分析 (OWSA)** | 龙卷风图，参数单独变动分析                                                                 |
@@ -33,6 +34,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
   - [参数系统](#参数系统) · [转移矩阵](#转移矩阵) · [费用定义](#灵活的费用定义) · [转移费用](#转移费用-transition-costs) · [自定义费用](#自定义费用-custom-costs) · [微观模拟设计](#微观模拟核心设计)
 - [参数化生存分布](#参数化生存分布)
 - [IPD 拟合功能详解](#ipd-拟合功能详解)
+- [KM 曲线数字化重建](#km-曲线数字化重建)
 - [离散事件模拟 (DES)](#离散事件模拟-des)
 - [NMA 整合](#nma-整合)
 - [Excel 导出](#excel-导出)
@@ -616,6 +618,69 @@ fitter = ph.SurvivalFitter(
 
 ---
 
+## KM 曲线数字化重建
+
+从发表文献的 Kaplan-Meier 曲线图反推个体患者数据 (IPD)，实现「文献 KM 图 → IPD → 参数拟合 → 建模」的完整流程。
+
+基于 Guyot et al. (2012) 算法，参考 R 包 `IPDfromKM` 的预处理策略。
+
+### 基本流程
+
+```python
+import pyheor as ph
+
+# 1. 从数字化工具（如 WebPlotDigitizer）获取 KM 坐标
+t_digitized = [0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 24]
+s_digitized = [1.0, 0.92, 0.83, 0.74, 0.66, 0.58, 0.50, 0.40, 0.32, 0.25, 0.20]
+
+# 2. 从文献中读取 number-at-risk 表
+t_risk = [0, 6, 12, 18, 24]
+n_risk = [120, 88, 60, 38, 22]
+
+# 3. 重建 IPD
+ipd_time, ipd_event = ph.guyot_reconstruct(
+    t_digitized, s_digitized,
+    t_risk, n_risk,
+    tot_events=96,  # 可选：文献报告的总事件数
+)
+
+# 4. 直接喂入 SurvivalFitter 拟合参数分布
+fitter = ph.SurvivalFitter(ipd_time, ipd_event, label="OS")
+fitter.fit()
+print(fitter.summary())
+best = fitter.best_model()
+
+# 5. 用拟合结果构建 PSM 模型
+psm = ph.PSMModel(...)
+psm.set_survival_all("SOC", [best.distribution, ...])
+```
+
+### 数字化坐标预处理
+
+手动数字化的坐标难免有噪声（手抖、非单调点、重复时间等），`clean_digitized_km` 提供自动清洗：
+
+```python
+# 独立调用预处理（guyot_reconstruct 内部也会自动调用）
+t_clean, s_clean = ph.clean_digitized_km(t_raw, s_raw)
+```
+
+预处理步骤：
+
+1. 按时间排序
+2. 移除越界点（time < 0 或 survival 超出 [0, 1]）
+3. 确保起点为 (0, 1.0)
+4. 异常值检测：移除导致连续两次大跳变的「夹心」点（top 1% 跳变法，来自 IPDfromKM）
+5. 重复时间处理：同一时间保留最大和最小值（KM 阶梯的上下沿）
+6. 强制单调非递增
+7. 去除连续重复值
+
+### 参考文献
+
+- Guyot P, Ades AE, Ouwens MJ, Welton NJ (2012). Enhanced secondary analysis of survival data: reconstructing the data from published Kaplan-Meier survival curves. *BMC Med Res Methodol*, 12:9.
+- Liu N, Zhou Y, Lee JJ (2021). IPDfromKM: reconstruct individual patient data from published Kaplan-Meier survival curves. *BMC Med Res Methodol*.
+
+---
+
 ## 离散事件模拟 (DES)
 
 DES 模型在**连续时间**下模拟个体患者，事件时间直接从生存分布中抽样，无需固定周期长度。
@@ -1053,6 +1118,7 @@ pyheor/
 ├── nma.py               # NMA 后验样本整合 (NMAPosterior)
 ├── survival.py          # 10 种参数化生存分布
 ├── fitting.py           # IPD 生存曲线拟合 (SurvivalFitter)
+├── digitize.py          # KM 曲线数字化重建 (Guyot method)
 ├── distributions.py     # PSA 概率分布 (Beta, Gamma, ...)
 ├── results.py           # 结果类 (BaseResult, OWSAResult, PSAResult, MicroSimResult, DESResult, ...)
 ├── plotting.py          # 可视化 (28 种图表)
@@ -1098,7 +1164,7 @@ pyheor/
 - [X] 网络 Meta 分析 (NMA) 整合
 - [X] 离散事件模拟 (DES) — 连续时间、竞争风险、HR/AFT 集成
 - [X] 预算影响分析 (BIA) — 人群模型、市场份额演变、摄取曲线、情景/敏感性分析
-- [ ] 数字化 KM 曲线重建 (Guyot method)
+- [X] 数字化 KM 曲线重建 (Guyot method)
 
 ---
 
