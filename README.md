@@ -20,6 +20,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 | **NMA 整合**                | 导入 R 后验样本，保留相关性，自动生成 PH/AFT 曲线                                          |
 | **灵活的费用定义**          | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表、自定义费用函数              |
 | **预算影响分析 (BIA)**      | 人群规模模型、市场份额演变、摄取曲线、情景/单因素敏感性分析                                 |
+| **模型校准**                | 用观测数据反推未知参数：Nelder-Mead 多起点优化、LHS 随机搜索、SSE/WSSE/似然 GoF             |
 | **可视化**                  | 28 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC、KM+拟合曲线、BIA 影响图等   |
 | **Excel 导出**              | 多 Sheet 导出，便于审核验证                                                                |
 
@@ -39,6 +40,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 - [NMA 整合](#nma-整合)
 - [Excel 导出](#excel-导出)
 - [预算影响分析 (BIA)](#预算影响分析-bia)
+- [模型校准](#模型校准)
 - [可视化一览](#可视化一览)
 - [项目结构](#项目结构) · [设计理念](#设计理念) · [路线图](#路线图)
 
@@ -1040,6 +1042,105 @@ tornado_df = bia.tornado({
 
 ---
 
+## 模型校准
+
+模型校准用观测数据（如发病率、死亡率、患病率）反推模型中无法直接观测的参数（如自然史转移概率），使模型输出匹配经验数据。
+
+基于 Vanni et al. (2011) 七步校准框架和 Alarid-Escudero et al. (2018) 教程。
+
+### 基本用法
+
+```python
+import pyheor as ph
+
+# 1. 构建模型（参数值待校准）
+model = ph.MarkovModel(
+    states=["Healthy", "Sick", "Dead"],
+    strategies=["SOC"],
+    n_cycles=20,
+    discount_rate=0,
+    half_cycle_correction=False,
+)
+model.add_param("p_HS", base=0.10)   # 初始猜测
+model.add_param("p_SD", base=0.05)
+model.set_transitions("SOC", lambda p, t: [
+    [ph.C,  p["p_HS"], 0.01],
+    [0,     ph.C,      p["p_SD"]],
+    [0,     0,         1],
+])
+model.set_utility({"Healthy": 1.0, "Sick": 0.7, "Dead": 0.0})
+
+# 2. 定义校准目标（从文献/数据中获得的观测值）
+targets = [
+    ph.CalibrationTarget(
+        name="10yr_healthy",
+        observed=0.42,           # 10 年后健康状态占比
+        se=0.05,                 # 标准误
+        extract_fn=lambda sim: sim["SOC"]["trace"][10, 0],
+    ),
+    ph.CalibrationTarget(
+        name="10yr_dead",
+        observed=0.25,
+        se=0.04,
+        extract_fn=lambda sim: sim["SOC"]["trace"][10, 2],
+    ),
+]
+
+# 3. 定义待校准参数及搜索范围
+calib_params = [
+    ph.CalibrationParam("p_HS", lower=0.01, upper=0.30),
+    ph.CalibrationParam("p_SD", lower=0.01, upper=0.20),
+]
+
+# 4. 运行校准
+result = ph.calibrate(
+    model,
+    targets,
+    calib_params,
+    gof="wsse",              # 加权 SSE（按 1/SE² 加权）
+    method="nelder_mead",    # 多起点 Nelder-Mead
+    n_restarts=10,
+    seed=42,
+)
+
+# 5. 查看结果
+print(result.summary())              # 最优参数值
+print(result.target_comparison())    # 观测 vs 预测对比
+result.apply_to_model(model)         # 将校准结果写回模型
+```
+
+### 搜索方法
+
+| 方法 | 参数 | 特点 |
+|------|------|------|
+| `nelder_mead` | `n_restarts=10` | 多起点无导数优化，精确但较慢 |
+| `random_search` | `n_samples=1000` | LHS 采样逐一评估，简单直观 |
+
+### GoF 度量
+
+| 度量 | 公式 | 适用场景 |
+|------|------|----------|
+| `sse` | Σ(obs - pred)² | 默认，简单快速 |
+| `wsse` | Σ(obs - pred)²/SE² | 多目标量纲不同时 |
+| `loglik_normal` | -Σ log N(obs \| pred, SE²) | 统计原则化 |
+
+### CalibrationResult 方法
+
+```python
+result.summary()              # 参数汇总表
+result.target_comparison()    # 观测 vs 预测
+result.apply_to_model(model)  # 写回模型参数
+result.plot_gof()             # GoF 值散点图
+result.plot_pairs(top_n=100)  # 参数对图（top-n 最优组合）
+```
+
+### 参考文献
+
+- Vanni T et al. (2011). Calibrating models in economic evaluation: a seven-step approach. *PharmacoEconomics*, 29(1), 35-49.
+- Alarid-Escudero F et al. (2018). A Tutorial on Calibration of Health Decision Models. *Medical Decision Making*, 38(8), 980-990.
+
+---
+
 ## 可视化一览
 
 PyHEOR 共提供 **28 种**专业图表，覆盖全部模型类型和分析流程：
@@ -1119,6 +1220,7 @@ pyheor/
 ├── survival.py          # 10 种参数化生存分布
 ├── fitting.py           # IPD 生存曲线拟合 (SurvivalFitter)
 ├── digitize.py          # KM 曲线数字化重建 (Guyot method)
+├── calibration.py       # 模型校准 (Nelder-Mead, 随机搜索)
 ├── distributions.py     # PSA 概率分布 (Beta, Gamma, ...)
 ├── results.py           # 结果类 (BaseResult, OWSAResult, PSAResult, MicroSimResult, DESResult, ...)
 ├── plotting.py          # 可视化 (28 种图表)
@@ -1127,6 +1229,7 @@ pyheor/
 ├── utils.py             # 工具函数 (C 补数, 贴现, 验证)
 ├── pyproject.toml       # 项目元数据
 ├── README.md
+├── tests/               # pytest 测试套件 (228 个测试)
 └── examples/
     ├── demo_hiv_model.py      # Markov 模型示例 (HIV)
     ├── demo_psm_model.py      # PSM 模型示例 (肿瘤)
@@ -1165,6 +1268,8 @@ pyheor/
 - [X] 离散事件模拟 (DES) — 连续时间、竞争风险、HR/AFT 集成
 - [X] 预算影响分析 (BIA) — 人群模型、市场份额演变、摄取曲线、情景/敏感性分析
 - [X] 数字化 KM 曲线重建 (Guyot method)
+- [X] 模型校准 (Nelder-Mead 多起点优化, LHS 随机搜索, SSE/WSSE/似然 GoF)
+- [X] 正式测试套件 (pytest, 228 个测试覆盖全部模块)
 
 ---
 
