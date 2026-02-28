@@ -182,7 +182,10 @@ class MarkovModel:
         # Transition costs: list of (category, from_state, to_state, value)
         # value: float, str (param name), or callable(params, t) -> float
         self._transition_costs: list = []
-        
+
+        # Custom costs: list of {'category': str, 'func': callable}
+        self._custom_costs: list = []
+
         # Utility
         self._utility: Any = None
     
@@ -461,6 +464,60 @@ class MarkovModel:
             'from_state': from_state,
             'to_state': to_state,
             'value': value,
+        })
+        return self
+
+    def set_custom_cost(
+        self,
+        category: str,
+        func: Callable,
+    ) -> "MarkovModel":
+        """Define a custom cost computed from simulation state each cycle.
+
+        Unlike ``set_transition_cost`` which targets individual state pairs,
+        this method gives full access to the transition matrix and state
+        distribution, allowing arbitrary cost logic.
+
+        The user-supplied function is called once per cycle (t = 1 … n_cycles)
+        for each strategy.  Its return value is the **undiscounted cost** for
+        that cycle and category.
+
+        Parameters
+        ----------
+        category : str
+            Cost category name.
+        func : callable
+            ``func(strategy, params, t, state_prev, state_curr, P, states) -> float``
+
+            - **strategy** (str): Current strategy name.
+            - **params** (dict): Parameter values ``{name: float}``.
+            - **t** (int): Current cycle number (1-based).
+            - **state_prev** (np.ndarray): State proportion vector at *t − 1*.
+            - **state_curr** (np.ndarray): State proportion vector at *t*.
+            - **P** (np.ndarray): Transition probability matrix at cycle *t*.
+            - **states** (list[str]): State names (same order as array indices).
+
+        Returns
+        -------
+        MarkovModel
+            Self, for method chaining.
+
+        Examples
+        --------
+        Compute surgery cost from PFS → Progressed flow:
+
+        >>> def surgery_cost(strategy, params, t, state_prev, state_curr, P, states):
+        ...     i_from = states.index("PFS")
+        ...     i_to = states.index("Progressed")
+        ...     flow = state_prev[i_from] * P[i_from, i_to]
+        ...     return flow * params['c_surgery']
+        >>> model.set_custom_cost("surgery", surgery_cost)
+        """
+        if not callable(func):
+            raise TypeError("func must be callable")
+        self._custom_costs.append({
+            'category': category,
+            'func': func,
         })
         return self
 
@@ -747,7 +804,24 @@ class MarkovModel:
                                     if past_t >= 1:
                                         tc_costs[t] += tc_inflows[idx, past_t] * sched_val
                     costs_by_cat[cat] = costs_by_cat.get(cat, np.zeros(self.n_cycles + 1)) + tc_costs
-            
+
+            # --- Custom costs (user-defined functions) ---
+            if self._custom_costs:
+                for cc in self._custom_costs:
+                    cat = cc['category']
+                    cc_costs = np.zeros(self.n_cycles + 1)
+                    for t in range(1, self.n_cycles + 1):
+                        P = self._get_transition_matrix(strategy, params, t)
+                        cost_val = cc['func'](
+                            strategy, params, t,
+                            trace[t - 1], trace[t], P, self.states
+                        )
+                        cc_costs[t] = float(cost_val)
+                    costs_by_cat[cat] = (
+                        costs_by_cat.get(cat, np.zeros(self.n_cycles + 1))
+                        + cc_costs
+                    )
+
             # --- Half-cycle correction ---
             hcc_weights = np.ones(self.n_cycles + 1)
             if self.half_cycle_correction:
@@ -758,17 +832,21 @@ class MarkovModel:
             qalys_hcc = qalys * hcc_weights
             lys_hcc = lys * hcc_weights
             
-            # Collect categories that are transition-cost-only
-            tc_only_cats = set()
+            # Collect categories that are transition-cost-only or custom-cost-only
+            no_hcc_cats = set()
             if self._transition_costs:
                 for tc in self._transition_costs:
                     if tc['category'] not in self._costs:
-                        tc_only_cats.add(tc['category'])
-            
+                        no_hcc_cats.add(tc['category'])
+            if self._custom_costs:
+                for cc in self._custom_costs:
+                    if cc['category'] not in self._costs:
+                        no_hcc_cats.add(cc['category'])
+
             costs_hcc = {}
             for cat in costs_by_cat:
-                if cat in tc_only_cats:
-                    # Transition costs: no HCC (they are event-based, not state-based)
+                if cat in no_hcc_cats:
+                    # Transition/custom costs: no HCC (event-based, not state-based)
                     costs_hcc[cat] = costs_by_cat[cat].copy()
                 elif cat in self._costs and self._costs[cat].method in ("starting",):
                     costs_hcc[cat] = costs_by_cat[cat].copy()

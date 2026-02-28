@@ -135,6 +135,9 @@ class PSMModel:
         self._costs: Dict[str, _CostDef] = {}
         self._utility: Any = None
 
+        # Custom costs: list of {'category': str, 'func': callable}
+        self._custom_costs: list = []
+
     # =========================================================================
     # Parameter Management (same API as MarkovModel)
     # =========================================================================
@@ -278,6 +281,55 @@ class PSMModel:
     def set_utility(self, values: Any) -> "PSMModel":
         """Define utility weights for health states."""
         self._utility = values
+        return self
+
+    def set_custom_cost(
+        self,
+        category: str,
+        func: Callable,
+    ) -> "PSMModel":
+        """Define a custom cost computed from simulation state each cycle.
+
+        The user-supplied function is called once per cycle (t = 1 … n_cycles)
+        for each strategy.  Its return value is the **undiscounted cost** for
+        that cycle and category.
+
+        Parameters
+        ----------
+        category : str
+            Cost category name.
+        func : callable
+            ``func(strategy, params, t, state_prev, state_curr, P, states) -> float``
+
+            - **strategy** (str): Current strategy name.
+            - **params** (dict): Parameter values ``{name: float}``.
+            - **t** (int): Current cycle number (1-based).
+            - **state_prev** (np.ndarray): State proportion vector at *t − 1*.
+            - **state_curr** (np.ndarray): State proportion vector at *t*.
+            - **P**: Always ``None`` for PSMModel (no transition matrix).
+            - **states** (list[str]): State names (same order as array indices).
+
+        Returns
+        -------
+        PSMModel
+            Self, for method chaining.
+
+        Examples
+        --------
+        Cost based on newly progressed patients:
+
+        >>> def prog_cost(strategy, params, t, state_prev, state_curr, P, states):
+        ...     i = states.index("Progressed")
+        ...     new_prog = max(0, state_curr[i] - state_prev[i])
+        ...     return new_prog * params['c_progression']
+        >>> model.set_custom_cost("progression", prog_cost)
+        """
+        if not callable(func):
+            raise TypeError("func must be callable")
+        self._custom_costs.append({
+            'category': category,
+            'func': func,
+        })
         return self
 
     # =========================================================================
@@ -436,6 +488,22 @@ class PSMModel:
                     else:
                         costs_by_cat[cat][t] = np.dot(state_probs, c) * self.cycle_length
 
+            # --- Custom costs (user-defined functions) ---
+            if self._custom_costs:
+                for cc in self._custom_costs:
+                    cat = cc['category']
+                    cc_costs = np.zeros(self.n_cycles + 1)
+                    for t in range(1, self.n_cycles + 1):
+                        cost_val = cc['func'](
+                            strategy, params, t,
+                            trace[t - 1], trace[t], None, self.states
+                        )
+                        cc_costs[t] = float(cost_val)
+                    costs_by_cat[cat] = (
+                        costs_by_cat.get(cat, np.zeros(self.n_cycles + 1))
+                        + cc_costs
+                    )
+
             # --- Half-cycle correction ---
             hcc_weights = np.ones(self.n_cycles + 1)
             if self.half_cycle_correction:
@@ -445,9 +513,18 @@ class PSMModel:
             qalys_hcc = qalys * hcc_weights
             lys_hcc = lys * hcc_weights
 
+            # Collect custom-cost-only categories (no HCC for these)
+            cc_only_cats = set()
+            if self._custom_costs:
+                for cc in self._custom_costs:
+                    if cc['category'] not in self._costs:
+                        cc_only_cats.add(cc['category'])
+
             costs_hcc = {}
             for cat in costs_by_cat:
-                if self._costs[cat].method in ("starting",):
+                if cat in cc_only_cats:
+                    costs_hcc[cat] = costs_by_cat[cat].copy()
+                elif cat in self._costs and self._costs[cat].method in ("starting",):
                     costs_hcc[cat] = costs_by_cat[cat].copy()
                 else:
                     costs_hcc[cat] = costs_by_cat[cat] * hcc_weights

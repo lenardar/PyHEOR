@@ -17,7 +17,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 | **概率敏感性分析 (PSA)**    | Monte Carlo 模拟，CE 散点图，CEAC                                                          |
 | **多策略比较 & NMB**        | 效率前沿、支配/扩展支配检测、NMB 曲线、CEAF、EVPI                                          |
 | **NMA 整合**                | 导入 R 后验样本，保留相关性，自动生成 PH/AFT 曲线                                          |
-| **灵活的费用定义**          | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表                            |
+| **灵活的费用定义**          | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表、自定义费用函数              |
 | **预算影响分析 (BIA)**      | 人群规模模型、市场份额演变、摄取曲线、情景/单因素敏感性分析                                 |
 | **可视化**                  | 28 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC、KM+拟合曲线、BIA 影响图等   |
 | **Excel 导出**              | 多 Sheet 导出，便于审核验证                                                                |
@@ -30,7 +30,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 - [快速开始](#快速开始)
   - [Markov 队列模型](#1-markov-队列模型) · [分区生存模型](#2-分区生存模型-psm) · [IPD 拟合](#3-ipd-生存曲线拟合) · [微观模拟](#4-微观模拟-microsimulation) · [多策略比较](#5-多策略比较--nmb-分析)
 - [核心概念](#核心概念)
-  - [参数系统](#参数系统) · [转移矩阵](#转移矩阵) · [费用定义](#灵活的费用定义) · [转移费用](#转移费用-transition-costs) · [微观模拟设计](#微观模拟核心设计)
+  - [参数系统](#参数系统) · [转移矩阵](#转移矩阵) · [费用定义](#灵活的费用定义) · [转移费用](#转移费用-transition-costs) · [自定义费用](#自定义费用-custom-costs) · [微观模拟设计](#微观模拟核心设计)
 - [参数化生存分布](#参数化生存分布)
 - [IPD 拟合功能详解](#ipd-拟合功能详解)
 - [离散事件模拟 (DES)](#离散事件模拟-des)
@@ -470,6 +470,41 @@ model.set_transition_cost("rescue", "PFS", "Progressed", {
 ```
 
 > **与 `first_cycle_only` 的区别**：`first_cycle_only` 只在 cycle 0 生效（仅一次）；transition cost 在**每个周期**只要有人转移就会产生费用。Transition cost 不受半周期校正影响（事件型费用）。
+
+### 自定义费用 (Custom Costs)
+
+当 `set_transition_cost` 按单个状态对定义费用不够灵活时，可以用 `set_custom_cost` 传入自定义函数，直接基于转移矩阵和状态分布计算费用。支持 MarkovModel 和 PSMModel。
+
+```python
+# 函数签名
+# func(strategy, params, t, state_prev, state_curr, P, states) -> float
+#   strategy:   当前策略名
+#   params:     参数字典 {name: value}
+#   t:          当前周期 (1-based)
+#   state_prev: t-1 时刻各状态占比 (np.array)
+#   state_curr: t 时刻各状态占比 (np.array)
+#   P:          转移概率矩阵 (MarkovModel) 或 None (PSMModel)
+#   states:     状态名列表
+
+# MarkovModel: 基于转移流量计算手术费
+def surgery_cost(strategy, params, t, state_prev, state_curr, P, states):
+    i_from = states.index("PFS")
+    i_to = states.index("Progressed")
+    flow = state_prev[i_from] * P[i_from, i_to]
+    return flow * params["c_surgery"]
+
+model.set_custom_cost("surgery", surgery_cost)
+
+# PSMModel: 基于状态变化量计算进展费用 (无转移矩阵，P=None)
+def progression_cost(strategy, params, t, state_prev, state_curr, P, states):
+    i_prog = states.index("Progressed")
+    new_prog = max(0, state_curr[i_prog] - state_prev[i_prog])
+    return new_prog * params["c_progression"]
+
+psm.set_custom_cost("progression", progression_cost)
+```
+
+> 自定义费用不受半周期校正影响（与转移费用一致）。函数通过 `params` 接收参数值，OWSA/PSA 的参数变化和抽样会自然传导。
 
 ### 微观模拟核心设计
 
@@ -1051,7 +1086,7 @@ pyheor/
 - [X] Markov 队列模型 (cDTSTM)
 - [X] 单因素敏感性分析 (OWSA) + 龙卷风图
 - [X] 概率敏感性分析 (PSA) + CEAC + CE 散点图
-- [X] 灵活费用系统（首周期、时变、WLOS）
+- [X] 灵活费用系统（首周期、时变、WLOS、自定义费用函数）
 - [X] 半周期校正 & 可配置贴现率
 - [X] 分区生存模型 (PSM)
 - [X] 10 种参数化生存分布
