@@ -207,17 +207,27 @@ class OWSAResult:
         self.owsa_data = owsa_data
         self.wtp = wtp
     
-    def summary(self, comparator: Optional[str] = None, 
+    @staticmethod
+    def _compute_icer(cost_int, cost_comp, qaly_int, qaly_comp):
+        """Compute ICER, returning inf when ΔQALYs ≈ 0."""
+        d_cost = cost_int - cost_comp
+        d_qaly = qaly_int - qaly_comp
+        if abs(d_qaly) < 1e-12:
+            return float('inf') if d_cost > 0 else float('-inf')
+        return d_cost / d_qaly
+
+    def summary(self, comparator: Optional[str] = None,
                 outcome: str = "nmb") -> pd.DataFrame:
         """Summarize OWSA results.
-        
+
         Parameters
         ----------
         comparator : str, optional
             Comparator strategy (default: first strategy).
         outcome : str
-            "nmb" for net monetary benefit, "icer" for ICER.
-        
+            "nmb" — rank by INMB range (default).
+            "icer" — rank by ICER range (matches R heemod tornado).
+
         Returns
         -------
         pd.DataFrame
@@ -225,42 +235,53 @@ class OWSAResult:
         """
         if comparator is None:
             comparator = self.model.strategy_names[0]
-        
+
         # Determine the intervention strategy
         intervention = [s for s in self.model.strategy_names if s != comparator][0]
-        
+
         # Base case values
         base_cost_comp = sum(self.base_result[comparator]['total_costs'].values())
         base_cost_int = sum(self.base_result[intervention]['total_costs'].values())
         base_qaly_comp = self.base_result[comparator]['total_qalys']
         base_qaly_int = self.base_result[intervention]['total_qalys']
         base_inmb = (base_qaly_int - base_qaly_comp) * self.wtp - (base_cost_int - base_cost_comp)
-        
+        base_icer = self._compute_icer(
+            base_cost_int, base_cost_comp, base_qaly_int, base_qaly_comp
+        )
+
         rows = []
         param_names = list(dict.fromkeys(d['param'] for d in self.owsa_data))
-        
+
         for param_name in param_names:
             entries = [d for d in self.owsa_data if d['param'] == param_name]
             low_entry = next(d for d in entries if d['bound'] == 'low')
             high_entry = next(d for d in entries if d['bound'] == 'high')
-            
+
             low_result = low_entry['result']
             high_result = high_entry['result']
-            
-            # Compute outcome for low and high
+
+            # Compute INMB for low and high
             low_cost_int = sum(low_result[intervention]['total_costs'].values())
             low_cost_comp = sum(low_result[comparator]['total_costs'].values())
             low_qaly_int = low_result[intervention]['total_qalys']
             low_qaly_comp = low_result[comparator]['total_qalys']
             low_inmb = (low_qaly_int - low_qaly_comp) * self.wtp - (low_cost_int - low_cost_comp)
-            
+
             high_cost_int = sum(high_result[intervention]['total_costs'].values())
             high_cost_comp = sum(high_result[comparator]['total_costs'].values())
             high_qaly_int = high_result[intervention]['total_qalys']
             high_qaly_comp = high_result[comparator]['total_qalys']
             high_inmb = (high_qaly_int - high_qaly_comp) * self.wtp - (high_cost_int - high_cost_comp)
-            
-            rows.append({
+
+            # Compute ICER for low and high
+            low_icer = self._compute_icer(
+                low_cost_int, low_cost_comp, low_qaly_int, low_qaly_comp
+            )
+            high_icer = self._compute_icer(
+                high_cost_int, high_cost_comp, high_qaly_int, high_qaly_comp
+            )
+
+            row = {
                 'Parameter': low_entry['label'] or param_name,
                 'param_name': param_name,
                 'Base Value': low_entry['base_value'],
@@ -269,9 +290,22 @@ class OWSAResult:
                 'INMB (Low)': low_inmb,
                 'INMB (High)': high_inmb,
                 'INMB (Base)': base_inmb,
-                'Range': abs(high_inmb - low_inmb),
-            })
-        
+                'ICER (Low)': low_icer,
+                'ICER (High)': high_icer,
+                'ICER (Base)': base_icer,
+            }
+
+            if outcome == "icer":
+                # Rank by ICER range (absolute difference)
+                if float('inf') in (abs(low_icer), abs(high_icer)):
+                    row['Range'] = float('inf')
+                else:
+                    row['Range'] = abs(high_icer - low_icer)
+            else:
+                row['Range'] = abs(high_inmb - low_inmb)
+
+            rows.append(row)
+
         df = pd.DataFrame(rows)
         df = df.sort_values('Range', ascending=False).reset_index(drop=True)
         return df

@@ -576,7 +576,7 @@ def plot_tornado(
     max_params: int = 15,
 ):
     """Plot tornado diagram for one-way sensitivity analysis.
-    
+
     Parameters
     ----------
     owsa_result : OWSAResult
@@ -584,7 +584,8 @@ def plot_tornado(
     comparator : str, optional
         Comparator strategy.
     outcome : str
-        "nmb" for net monetary benefit.
+        "nmb" — x-axis shows INMB, ranked by INMB range.
+        "icer" — x-axis shows ICER, ranked by ICER range.
     figsize : tuple
         Figure size (height auto-calculated if None).
     title : str, optional
@@ -593,50 +594,76 @@ def plot_tornado(
         Maximum number of parameters to show.
     """
     _setup_style()
-    
+
     summary = owsa_result.summary(comparator=comparator, outcome=outcome)
     summary = summary.head(max_params)
-    
+
     n_params = len(summary)
     if figsize[1] is None:
         figsize = (figsize[0], max(4, n_params * 0.5 + 1.5))
-    
+
     fig, ax = plt.subplots(figsize=figsize)
-    
-    base_inmb = summary['INMB (Base)'].iloc[0]
-    
-    y_pos = np.arange(n_params)
-    
+
+    # Choose columns based on outcome
+    if outcome == "icer":
+        col_low, col_high, col_base = 'ICER (Low)', 'ICER (High)', 'ICER (Base)'
+        xlabel = 'ICER ($/QALY)'
+        default_title = 'Tornado Diagram — ICER'
+    else:
+        col_low, col_high, col_base = 'INMB (Low)', 'INMB (High)', 'INMB (Base)'
+        xlabel = 'Incremental Net Monetary Benefit ($)'
+        default_title = f'Tornado Diagram (WTP = ${owsa_result.wtp:,.0f}/QALY)'
+
+    base_val = summary[col_base].iloc[0]
+
     for i, (_, row) in enumerate(summary.iterrows()):
-        low_inmb = row['INMB (Low)']
-        high_inmb = row['INMB (High)']
-        
-        # Range relative to base
-        left = min(low_inmb, high_inmb)
-        right = max(low_inmb, high_inmb)
-        
-        # Color: green for positive impact, red for negative
-        color_left = COLORS['negative'] if left < base_inmb else COLORS['positive']
-        color_right = COLORS['positive'] if right > base_inmb else COLORS['negative']
-        
+        low_val = row[col_low]
+        high_val = row[col_high]
+
+        # Skip infinite ICER values
+        if outcome == "icer" and (
+            abs(low_val) == float('inf') or abs(high_val) == float('inf')
+        ):
+            continue
+
+        left = min(low_val, high_val)
+        right = max(low_val, high_val)
+
+        # For ICER: lower is better (green), higher is worse (red)
+        # For INMB: higher is better (green), lower is worse (red)
+        if outcome == "icer":
+            color_lo = COLORS['positive'] if left < base_val else COLORS['negative']
+            color_hi = COLORS['negative'] if right > base_val else COLORS['positive']
+        else:
+            color_lo = COLORS['negative'] if left < base_val else COLORS['positive']
+            color_hi = COLORS['positive'] if right > base_val else COLORS['negative']
+
         # Draw two bars: left of base and right of base
-        if left < base_inmb:
-            ax.barh(n_params - 1 - i, base_inmb - left, left=left,
-                    height=0.6, color=COLORS['negative'], alpha=0.8,
-                    edgecolor='white', linewidth=0.5)
-        if right > base_inmb:
-            ax.barh(n_params - 1 - i, right - base_inmb, left=base_inmb,
-                    height=0.6, color=COLORS['positive'], alpha=0.8,
-                    edgecolor='white', linewidth=0.5)
-        if left >= base_inmb:
+        if left < base_val:
+            ax.barh(n_params - 1 - i, base_val - left, left=left,
+                    height=0.6,
+                    color=(COLORS['positive'] if outcome == "icer"
+                           else COLORS['negative']),
+                    alpha=0.8, edgecolor='white', linewidth=0.5)
+        if right > base_val:
+            ax.barh(n_params - 1 - i, right - base_val, left=base_val,
+                    height=0.6,
+                    color=(COLORS['negative'] if outcome == "icer"
+                           else COLORS['positive']),
+                    alpha=0.8, edgecolor='white', linewidth=0.5)
+        if left >= base_val:
             ax.barh(n_params - 1 - i, right - left, left=left,
-                    height=0.6, color=COLORS['positive'], alpha=0.8,
-                    edgecolor='white', linewidth=0.5)
-        if right <= base_inmb:
+                    height=0.6,
+                    color=(COLORS['negative'] if outcome == "icer"
+                           else COLORS['positive']),
+                    alpha=0.8, edgecolor='white', linewidth=0.5)
+        if right <= base_val:
             ax.barh(n_params - 1 - i, right - left, left=left,
-                    height=0.6, color=COLORS['negative'], alpha=0.8,
-                    edgecolor='white', linewidth=0.5)
-        
+                    height=0.6,
+                    color=(COLORS['positive'] if outcome == "icer"
+                           else COLORS['negative']),
+                    alpha=0.8, edgecolor='white', linewidth=0.5)
+
         # Annotations: low and high bounds
         ax.text(left - abs(right - left) * 0.02, n_params - 1 - i,
                 f'{row["Low Value"]:.3g}', ha='right', va='center',
@@ -644,21 +671,21 @@ def plot_tornado(
         ax.text(right + abs(right - left) * 0.02, n_params - 1 - i,
                 f'{row["High Value"]:.3g}', ha='left', va='center',
                 fontsize=8, color='#666')
-    
+
     # Base case line
-    ax.axvline(base_inmb, color='#333', linewidth=1.5, linestyle='-', zorder=5)
-    
+    ax.axvline(base_val, color='#333', linewidth=1.5, linestyle='-', zorder=5)
+
     ax.set_yticks(np.arange(n_params))
     ax.set_yticklabels(summary['Parameter'].values[::-1], fontsize=10)
-    ax.set_xlabel('Incremental Net Monetary Benefit ($)', fontsize=11)
-    
+    ax.set_xlabel(xlabel, fontsize=11)
+
     if title is None:
-        title = f'Tornado Diagram (WTP = ${owsa_result.wtp:,.0f}/QALY)'
+        title = default_title
     ax.set_title(title, fontsize=14, fontweight='bold')
-    
+
     ax.grid(axis='x', alpha=0.3)
     ax.grid(axis='y', visible=False)
-    
+
     fig.tight_layout()
     return fig
 

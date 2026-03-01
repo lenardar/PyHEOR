@@ -4,25 +4,25 @@
 
 PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 
-| 功能                              | 说明                                                                                       |
-| --------------------------------- | ------------------------------------------------------------------------------------------ |
-| **Markov 队列模型**         | 离散时间状态转移模型 (cDTSTM)，时齐 / 时变转移矩阵                                         |
-| **分区生存模型 (PSM)**      | 基于参数化生存曲线的状态概率划分                                                           |
-| **微观模拟**                | 个体水平状态转移模型，支持患者异质性、事件处理器、双层 PSA                                 |
-| **离散事件模拟 (DES)**     | 连续时间个体模拟，竞争风险、time-to-event 分布驱动、HR/AFT 集成                            |
-| **IPD 生存曲线拟合**        | 6 种参数分布 MLE 拟合，AIC/BIC 比较，自动选优                                              |
-| **KM 曲线数字化重建**       | Guyot method 从发表文献 KM 图反推 IPD，含数字化噪声预处理                                   |
-| **参数化生存分布**          | Exponential, Weibull, Log-logistic, Log-normal, Gompertz, Generalized Gamma 等 10 种       |
-| **基础分析**                | 确定性基线分析                                                                             |
-| **单因素敏感性分析 (OWSA)** | 龙卷风图，参数单独变动分析                                                                 |
-| **概率敏感性分析 (PSA)**    | Monte Carlo 模拟，CE 散点图，CEAC                                                          |
-| **多策略比较 & NMB**        | 效率前沿、支配/扩展支配检测、NMB 曲线、CEAF、EVPI                                          |
-| **NMA 整合**                | 导入 R 后验样本，保留相关性，自动生成 PH/AFT 曲线                                          |
-| **灵活的费用定义**          | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表、自定义费用函数              |
-| **预算影响分析 (BIA)**      | 人群规模模型、市场份额演变、摄取曲线、情景/单因素敏感性分析                                 |
-| **模型校准**                | 用观测数据反推未知参数：Nelder-Mead 多起点优化、LHS 随机搜索、SSE/WSSE/似然 GoF             |
-| **可视化**                  | 28 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC、KM+拟合曲线、BIA 影响图等   |
-| **Excel 导出**              | 多 Sheet 导出，便于审核验证                                                                |
+| 功能                              | 说明                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| **Markov 队列模型**         | 离散时间状态转移模型 (cDTSTM)，时齐 / 时变转移矩阵                                          |
+| **分区生存模型 (PSM)**      | 基于参数化生存曲线的状态概率划分                                                            |
+| **微观模拟**                | 个体水平状态转移模型，支持患者异质性、事件处理器、双层 PSA                                  |
+| **离散事件模拟 (DES)**     | 连续时间个体模拟，竞争风险、time-to-event 分布驱动、HR/AFT 集成                             |
+| **IPD 生存曲线拟合**        | 6 种参数分布 MLE 拟合，AIC/BIC 比较，自动选优                                               |
+| **KM 曲线数字化重建**       | Guyot method 从发表文献 KM 图反推 IPD，含数字化噪声预处理                                    |
+| **参数化生存分布**          | Exponential, Weibull, Log-logistic, Log-normal, Gompertz, Generalized Gamma 等 10 种        |
+| **基础分析**                | 确定性基线分析                                                                              |
+| **单因素敏感性分析 (OWSA)** | 龙卷风图（INMB/ICER 排序），支持贴现率变动，参数单独变动分析                                 |
+| **概率敏感性分析 (PSA)**    | Monte Carlo 模拟，CE 散点图，CEAC                                                           |
+| **多策略比较 & NMB**        | 效率前沿、支配/扩展支配检测、NMB 曲线、CEAF、EVPI                                           |
+| **NMA 整合**                | 导入 R 后验样本，保留相关性，自动生成 PH/AFT 曲线                                           |
+| **灵活的费用定义**          | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表、自定义费用函数               |
+| **预算影响分析 (BIA)**      | 人群规模模型、市场份额演变、摄取曲线、情景/单因素敏感性分析                                  |
+| **模型校准**                | 用观测数据反推未知参数：Nelder-Mead 多起点优化、LHS 随机搜索、SSE/WSSE/似然 GoF              |
+| **可视化**                  | 28 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC、KM+拟合曲线、BIA 影响图等    |
+| **Excel 导出**              | 多 Sheet 导出，便于审核验证                                                                 |
 
 ---
 
@@ -111,9 +111,10 @@ result = model.run_base_case()
 print(result.summary())
 print(result.icer())
 
-# OWSA
+# OWSA（支持 ICER 排序，贴现率可作为变动参数）
+model.add_param("dr", base=0.03, low=0.0, high=0.08)  # 贴现率参数
 owsa = model.run_owsa()
-print(owsa.summary())
+print(owsa.summary(outcome="icer"))  # 按 ICER 影响幅度排序
 
 # PSA (1000 次 Monte Carlo)
 psa = model.run_psa(n_sim=1000)
@@ -539,11 +540,26 @@ psa = model.run_psa(n_outer=500, n_inner=2000)  # 500 × 2000 次模拟
 ```python
 model = ph.MarkovModel(
     ...,
-    discount_rate_cost=0.03,    # 费用贴现率
-    discount_rate_qaly=0.03,    # 效用贴现率（可与费用不同）
-    half_cycle_correction=True, # 半周期校正（默认开启）
-    cycle_length=1,             # 周期长度（年），1/12=月，1/52=周
+    discount_rate=0.03,                      # 贴现率（也可用 dict 分别设置）
+    # discount_rate={"costs": 0.03, "qalys": 0.03},
+    half_cycle_correction="life-table",      # 半周期校正方法
+    cycle_length=1,                          # 周期长度（年），1/12=月，1/52=周
 )
+```
+
+**半周期校正方法**：
+
+| 值               | 说明                                            |
+| ---------------- | ----------------------------------------------- |
+| `True` / `"trapezoidal"` | 梯形法：首尾周期权重 ×0.5（默认）        |
+| `"life-table"`   | 生命表法：相邻 trace 行取均值（与 R heemod 一致）|
+| `False` / `None` | 不校正                                          |
+
+```python
+# 运行时可动态切换
+model.half_cycle_correction = "life-table"
+model.half_cycle_correction = "trapezoidal"
+model.half_cycle_correction = False
 ```
 
 ---
@@ -1229,7 +1245,7 @@ pyheor/
 ├── utils.py             # 工具函数 (C 补数, 贴现, 验证)
 ├── pyproject.toml       # 项目元数据
 ├── README.md
-├── tests/               # pytest 测试套件 (228 个测试)
+├── tests/               # pytest 测试套件 (243 个测试)
 └── examples/
     ├── demo_hiv_model.py      # Markov 模型示例 (HIV)
     ├── demo_psm_model.py      # PSM 模型示例 (肿瘤)
@@ -1256,7 +1272,8 @@ pyheor/
 - [X] 单因素敏感性分析 (OWSA) + 龙卷风图
 - [X] 概率敏感性分析 (PSA) + CEAC + CE 散点图
 - [X] 灵活费用系统（首周期、时变、WLOS、自定义费用函数）
-- [X] 半周期校正 & 可配置贴现率
+- [X] 半周期校正多方法（梯形法 / 生命表法 / 无校正）& 可配置贴现率
+- [X] OWSA 龙卷风图 ICER 排序 & 贴现率作为可变动参数
 - [X] 分区生存模型 (PSM)
 - [X] 10 种参数化生存分布
 - [X] Excel 多 Sheet 导出
@@ -1269,7 +1286,7 @@ pyheor/
 - [X] 预算影响分析 (BIA) — 人群模型、市场份额演变、摄取曲线、情景/敏感性分析
 - [X] 数字化 KM 曲线重建 (Guyot method)
 - [X] 模型校准 (Nelder-Mead 多起点优化, LHS 随机搜索, SSE/WSSE/似然 GoF)
-- [X] 正式测试套件 (pytest, 228 个测试覆盖全部模块)
+- [X] 正式测试套件 (pytest, 243 个测试覆盖全部模块)
 
 ---
 

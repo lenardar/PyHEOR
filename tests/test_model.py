@@ -212,3 +212,203 @@ class TestSensitivityAnalysis:
         s1 = r1.summary()["Mean QALYs"].values
         s2 = r2.summary()["Mean QALYs"].values
         np.testing.assert_allclose(s1, s2)
+
+    def test_owsa_icer_ranking(self, simple_markov_model):
+        """ICER-based ranking may differ from NMB-based ranking."""
+        owsa = simple_markov_model.run_owsa()
+        nmb_summary = owsa.summary(outcome="nmb")
+        icer_summary = owsa.summary(outcome="icer")
+        # Both should have same parameters
+        assert set(nmb_summary['param_name']) == set(icer_summary['param_name'])
+        # ICER summary should have ICER columns
+        assert "ICER (Low)" in icer_summary.columns
+        assert "ICER (High)" in icer_summary.columns
+        assert "ICER (Base)" in icer_summary.columns
+
+    def test_owsa_discount_rate_param(self):
+        """Discount rate can be varied in OWSA as a model-level parameter."""
+        model = MarkovModel(
+            states=["Alive", "Dead"],
+            strategies=["S1", "S2"],
+            n_cycles=10,
+            discount_rate=0.05,
+            half_cycle_correction=False,
+        )
+        model.add_param("dr", base=0.05, low=0.0, high=0.08)
+        model.add_param("p_death", base=0.1, low=0.05, high=0.15)
+        model.set_transitions("S1", lambda p, t: [
+            [1 - p["p_death"], p["p_death"]],
+            [0, 1],
+        ])
+        model.set_transitions("S2", lambda p, t: [
+            [1 - p["p_death"] * 0.8, p["p_death"] * 0.8],
+            [0, 1],
+        ])
+        model.set_state_cost("drug", {
+            "S1": {"Alive": 1000, "Dead": 0},
+            "S2": {"Alive": 5000, "Dead": 0},
+        })
+        model.set_utility({"Alive": 1.0, "Dead": 0.0})
+
+        owsa = model.run_owsa(params=["dr", "p_death"])
+        summary = owsa.summary()
+        assert "dr" in summary["param_name"].values
+
+        # Verify discount rate was actually varied (different results)
+        dr_row = summary[summary["param_name"] == "dr"].iloc[0]
+        assert dr_row["INMB (Low)"] != dr_row["INMB (High)"]
+
+        # Verify model discount rate was restored
+        assert model.dr_costs == 0.05
+        assert model.dr_qalys == 0.05
+
+
+# =========================================================================
+# Half-Cycle Correction Methods
+# =========================================================================
+
+class TestHCCNormalization:
+    def test_true_to_trapezoidal(self):
+        m = MarkovModel(
+            states=["A", "B"], strategies=["S1"], n_cycles=5,
+            half_cycle_correction=True,
+        )
+        assert m._hcc_method == "trapezoidal"
+
+    def test_false_to_none(self):
+        m = MarkovModel(
+            states=["A", "B"], strategies=["S1"], n_cycles=5,
+            half_cycle_correction=False,
+        )
+        assert m._hcc_method is None
+
+    def test_none_to_none(self):
+        m = MarkovModel(
+            states=["A", "B"], strategies=["S1"], n_cycles=5,
+            half_cycle_correction=None,
+        )
+        assert m._hcc_method is None
+
+    def test_string_trapezoidal(self):
+        m = MarkovModel(
+            states=["A", "B"], strategies=["S1"], n_cycles=5,
+            half_cycle_correction="trapezoidal",
+        )
+        assert m._hcc_method == "trapezoidal"
+
+    def test_string_life_table(self):
+        m = MarkovModel(
+            states=["A", "B"], strategies=["S1"], n_cycles=5,
+            half_cycle_correction="life-table",
+        )
+        assert m._hcc_method == "life-table"
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            MarkovModel(
+                states=["A", "B"], strategies=["S1"], n_cycles=5,
+                half_cycle_correction="invalid",
+            )
+
+    def test_setter(self):
+        m = MarkovModel(
+            states=["A", "B"], strategies=["S1"], n_cycles=5,
+            half_cycle_correction=True,
+        )
+        m.half_cycle_correction = "life-table"
+        assert m._hcc_method == "life-table"
+        m.half_cycle_correction = False
+        assert m._hcc_method is None
+
+    def test_backward_compat_bool_true(self):
+        """True and 'trapezoidal' produce identical results."""
+        def make(hcc):
+            m = MarkovModel(
+                states=["Alive", "Dead"], strategies=["S1"],
+                n_cycles=10, half_cycle_correction=hcc, discount_rate=0.05,
+            )
+            m.set_transitions("S1", [[0.9, 0.1], [0, 1]])
+            m.set_utility({"Alive": 1.0, "Dead": 0.0})
+            m.set_state_cost("drug", {"Alive": 1000, "Dead": 0})
+            return m.run_base_case()
+
+        r_bool = make(True)
+        r_str = make("trapezoidal")
+        np.testing.assert_allclose(
+            r_bool.summary()["QALYs"].values,
+            r_str.summary()["QALYs"].values,
+        )
+        np.testing.assert_allclose(
+            r_bool.summary()["Total Cost"].values,
+            r_str.summary()["Total Cost"].values,
+        )
+
+
+class TestLifeTableHCC:
+    @staticmethod
+    def _make_model(hcc, n_cycles=10, discount_rate=0):
+        m = MarkovModel(
+            states=["Alive", "Dead"], strategies=["S1"],
+            n_cycles=n_cycles, half_cycle_correction=hcc,
+            discount_rate=discount_rate,
+        )
+        m.set_transitions("S1", lambda p, t: [[0.9, 0.1], [0, 1]])
+        m.set_utility({"Alive": 1.0, "Dead": 0.0})
+        m.set_state_cost("drug", {"Alive": 1000, "Dead": 0})
+        return m
+
+    def test_life_table_differs_from_no_hcc(self):
+        r_lt = self._make_model("life-table").run_base_case()
+        r_none = self._make_model(None).run_base_case()
+        q_lt = r_lt.summary()["QALYs"].iloc[0]
+        q_none = r_none.summary()["QALYs"].iloc[0]
+        assert q_lt != q_none
+
+    def test_life_table_vs_trapezoidal_close(self):
+        """With constant utilities, life-table ≈ trapezoidal."""
+        r_lt = self._make_model("life-table").run_base_case()
+        r_trap = self._make_model("trapezoidal").run_base_case()
+        q_lt = r_lt.summary()["QALYs"].iloc[0]
+        q_trap = r_trap.summary()["QALYs"].iloc[0]
+        # Close but differ at last cycle (life-table keeps it, trap halves it)
+        np.testing.assert_allclose(q_lt, q_trap, rtol=0.10)
+
+    def test_life_table_manual_verification(self):
+        """Verify against hand-computed corrected trace."""
+        model = self._make_model("life-table")
+        result = model.run_base_case()
+        trace = result.results["S1"]["trace"]
+        qalys_hcc = result.results["S1"]["qalys_hcc"]
+
+        n = model.n_cycles
+        for t in range(n):
+            corrected_alive = (trace[t, 0] + trace[t + 1, 0]) / 2.0
+            expected_qaly = corrected_alive * model.cycle_length  # u=1.0
+            np.testing.assert_allclose(
+                qalys_hcc[t], expected_qaly, atol=1e-10,
+            )
+        # Last cycle: unchanged
+        np.testing.assert_allclose(
+            qalys_hcc[n], trace[n, 0] * model.cycle_length, atol=1e-10,
+        )
+
+    def test_life_table_costs_manual(self):
+        """Verify life-table corrected costs."""
+        model = self._make_model("life-table")
+        result = model.run_base_case()
+        trace = result.results["S1"]["trace"]
+        costs_hcc = result.results["S1"]["costs_hcc"]["drug"]
+
+        n = model.n_cycles
+        for t in range(n):
+            corrected_alive = (trace[t, 0] + trace[t + 1, 0]) / 2.0
+            expected_cost = corrected_alive * 1000 * model.cycle_length
+            np.testing.assert_allclose(
+                costs_hcc[t], expected_cost, atol=1e-10,
+            )
+
+    def test_life_table_with_discount(self):
+        """Life-table + discounting runs without error."""
+        r = self._make_model("life-table", discount_rate=0.05).run_base_case()
+        q = r.summary()["QALYs"].iloc[0]
+        assert q > 0

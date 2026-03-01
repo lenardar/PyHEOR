@@ -88,7 +88,7 @@ def _export_markov_base(result, filepath: str):
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
             {'Setting': 'Discount Rate (costs)', 'Value': model.dr_costs},
             {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qalys},
-            {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction},
+            {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
             {'Setting': 'Initial State', 'Value': model.states[model.initial_state_idx]},
         ])
         settings.to_excel(writer, sheet_name='Settings', index=False)
@@ -136,7 +136,7 @@ def _export_markov_base(result, filepath: str):
 
             # HCC weights
             hcc = np.ones(model.n_cycles + 1)
-            if model.half_cycle_correction:
+            if model.half_cycle_correction == "trapezoidal":
                 hcc[0] = 0.5
                 hcc[-1] = 0.5
             costs_data['HCC Weight'] = hcc
@@ -251,7 +251,7 @@ def _export_psm_base(result, filepath: str):
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
             {'Setting': 'Discount Rate (costs)', 'Value': model.dr_costs},
             {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qalys},
-            {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction},
+            {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
         ])
         settings.to_excel(writer, sheet_name='Settings', index=False)
 
@@ -298,7 +298,7 @@ def _export_psm_base(result, filepath: str):
             costs_sheet = f'Costs_{label}'[:31]
             df_c = 1 / (1 + model.dr_costs) ** (cycles * model.cycle_length)
             hcc = np.ones(model.n_cycles + 1)
-            if model.half_cycle_correction:
+            if model.half_cycle_correction == "trapezoidal":
                 hcc[0] = 0.5
                 hcc[-1] = 0.5
 

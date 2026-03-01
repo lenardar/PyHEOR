@@ -125,7 +125,7 @@ def _build_markov_excel(model, filepath, params, py_results):
     cl_val = model.cycle_length
     dr_c = model.dr_costs
     dr_q = model.dr_qalys
-    hcc_flag = model.half_cycle_correction
+    hcc_method = model.half_cycle_correction  # str or None
     initial_idx = model.initial_state_idx
 
     cost_cats = list(model._costs.keys())
@@ -165,7 +165,7 @@ def _build_markov_excel(model, filepath, params, py_results):
         ROW_DR_Q = _write_setting(ws, r, "Discount Rate (QALYs)", dr_q); r += 1
         ROW_CL   = _write_setting(ws, r, "Cycle Length (years)", cl_val); r += 1
         _write_setting(ws, r, "N Cycles", n_cycles); r += 1
-        _write_setting(ws, r, "Half-cycle Correction", "Yes" if hcc_flag else "No"); r += 1
+        _write_setting(ws, r, "Half-cycle Correction", hcc_method or "No"); r += 1
         _write_setting(ws, r, "Initial State", states[initial_idx]); r += 2
 
         # -- Transition Matrix (Transposed: rows=to, cols=from) --
@@ -337,7 +337,7 @@ def _build_markov_excel(model, filepath, params, py_results):
             ws.cell(rr, COL_DFQ, f"=1/(1+{drq})^{time_c}")
 
             # HCC
-            if hcc_flag and (t == 0 or t == n_cycles):
+            if hcc_method == "trapezoidal" and (t == 0 or t == n_cycles):
                 ws.cell(rr, COL_HCC, 0.5)
             else:
                 ws.cell(rr, COL_HCC, 1.0)
@@ -507,7 +507,7 @@ def _build_psm_excel(model, filepath, params, py_results):
     cl_val = model.cycle_length
     dr_c = model.dr_costs
     dr_q = model.dr_qalys
-    hcc_flag = model.half_cycle_correction
+    hcc_method = model.half_cycle_correction  # str or None
 
     cost_cats = list(model._costs.keys())
     n_cats = len(cost_cats)
@@ -536,7 +536,7 @@ def _build_psm_excel(model, filepath, params, py_results):
         ROW_DR_Q = _write_setting(ws, r, "Discount Rate (QALYs)", dr_q); r += 1
         ROW_CL   = _write_setting(ws, r, "Cycle Length (years)", cl_val); r += 1
         _write_setting(ws, r, "N Cycles", n_cycles); r += 1
-        _write_setting(ws, r, "Half-cycle Correction", "Yes" if hcc_flag else "No"); r += 2
+        _write_setting(ws, r, "Half-cycle Correction", hcc_method or "No"); r += 2
 
         # State Costs
         ws.cell(r, 1, "状态费用 (年度费率)").font = _SECTION_FONT; r += 1
@@ -678,7 +678,7 @@ def _build_psm_excel(model, filepath, params, py_results):
             ws.cell(rr, COL_DFQ, f"=1/(1+{drq})^{time_c}")
 
             # HCC
-            if hcc_flag and (t == 0 or t == n_cycles):
+            if hcc_method == "trapezoidal" and (t == 0 or t == n_cycles):
                 ws.cell(rr, COL_HCC, 0.5)
             else:
                 ws.cell(rr, COL_HCC, 1.0)

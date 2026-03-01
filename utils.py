@@ -167,6 +167,70 @@ def discount_factor(t: Union[int, np.ndarray], rate: float,
 
 
 # =============================================================================
+# Half-Cycle Correction
+# =============================================================================
+
+def normalize_hcc(value):
+    """Normalize half_cycle_correction input to a canonical form.
+
+    Parameters
+    ----------
+    value : bool, str, or None
+        - True → "trapezoidal"
+        - False or None → None (no correction)
+        - "trapezoidal" → "trapezoidal"
+        - "life-table" → "life-table"
+
+    Returns
+    -------
+    str or None
+        "trapezoidal", "life-table", or None.
+
+    Raises
+    ------
+    ValueError
+        If value is not a recognized option.
+    """
+    if value is True:
+        return "trapezoidal"
+    elif value is False or value is None:
+        return None
+    elif isinstance(value, str):
+        v = value.lower().strip()
+        if v in ("trapezoidal", "life-table"):
+            return v
+        raise ValueError(
+            f"Invalid half_cycle_correction: {value!r}. "
+            f"Expected True, False, None, 'trapezoidal', or 'life-table'."
+        )
+    else:
+        raise TypeError(
+            f"half_cycle_correction must be bool, str, or None, "
+            f"got {type(value).__name__}"
+        )
+
+
+def life_table_corrected_trace(trace):
+    """Compute heemod-style life-table corrected trace.
+
+    For t = 0..n-1: corrected[t] = (trace[t] + trace[t+1]) / 2
+    corrected[n] = trace[n]  (last cycle unchanged)
+
+    Parameters
+    ----------
+    trace : np.ndarray, shape (n_cycles+1, n_states)
+
+    Returns
+    -------
+    np.ndarray, same shape as input
+    """
+    corrected = np.empty_like(trace)
+    corrected[:-1] = (trace[:-1] + trace[1:]) / 2.0
+    corrected[-1] = trace[-1]
+    return corrected
+
+
+# =============================================================================
 # Value Resolution
 # =============================================================================
 

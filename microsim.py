@@ -46,7 +46,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .distributions import Distribution
 from .model import Param, _CostDef
-from .utils import C, _Complement, resolve_complement, resolve_value, discount_factor
+from .utils import (
+    C, _Complement, resolve_complement, resolve_value, discount_factor,
+    normalize_hcc,
+)
 
 
 # =============================================================================
@@ -119,8 +122,14 @@ class MicroSimModel:
         Cycle length in years (default: 1.0).
     discount_rate : float or dict
         Annual discount rate(s). Keys: 'costs', 'qalys'.
-    half_cycle_correction : bool
-        Whether to apply half-cycle correction (default: True).
+    half_cycle_correction : bool or str or None
+        Half-cycle correction method. Options:
+
+        - True or ``"trapezoidal"``: endpoint weighting [0.5, 1, ..., 1, 0.5]
+        - ``"life-table"``: average adjacent per-cycle rewards
+        - False or None: no correction
+
+        Default: True (trapezoidal).
     initial_state : str or int
         Starting state for all patients (default: 0).
     state_type : dict, optional
@@ -143,7 +152,7 @@ class MicroSimModel:
         n_patients: int = 1000,
         cycle_length: float = 1.0,
         discount_rate: Union[float, Dict[str, float]] = 0.03,
-        half_cycle_correction: bool = True,
+        half_cycle_correction: Union[bool, str, None] = True,
         initial_state: Union[str, int] = 0,
         state_type: Optional[Dict[str, str]] = None,
         seed: Optional[int] = None,
@@ -165,7 +174,7 @@ class MicroSimModel:
         self.n_cycles = n_cycles
         self.n_patients = n_patients
         self.cycle_length = cycle_length
-        self.half_cycle_correction = half_cycle_correction
+        self._hcc_method = normalize_hcc(half_cycle_correction)
         self.seed = seed
 
         # Discount rates
@@ -212,6 +221,15 @@ class MicroSimModel:
 
         # Patient profile (overrides n_patients if set)
         self._profile: Optional[PatientProfile] = None
+
+    @property
+    def half_cycle_correction(self):
+        """Half-cycle correction method (str or None)."""
+        return self._hcc_method
+
+    @half_cycle_correction.setter
+    def half_cycle_correction(self, value):
+        self._hcc_method = normalize_hcc(value)
 
     # =========================================================================
     # Parameter Management
@@ -699,14 +717,20 @@ class MicroSimModel:
                     ly_hist[i, t] = alive_mask_arr[s] * self.cycle_length
 
         # --- Half-cycle correction ---
-        hcc = np.ones(T + 1)
-        if self.half_cycle_correction:
+        if self._hcc_method == "trapezoidal":
+            hcc = np.ones(T + 1)
             hcc[0] = 0.5
             hcc[-1] = 0.5
+            cost_hist *= hcc[np.newaxis, :]
+            qaly_hist *= hcc[np.newaxis, :]
+            ly_hist *= hcc[np.newaxis, :]
 
-        cost_hist *= hcc[np.newaxis, :]
-        qaly_hist *= hcc[np.newaxis, :]
-        ly_hist *= hcc[np.newaxis, :]
+        elif self._hcc_method == "life-table":
+            # Average adjacent per-cycle rewards
+            for arr in (cost_hist, qaly_hist, ly_hist):
+                orig = arr.copy()
+                arr[:, :-1] = (orig[:, :-1] + orig[:, 1:]) / 2.0
+                # last cycle unchanged
 
         # --- Discounting ---
         cycles = np.arange(T + 1, dtype=float)
@@ -976,7 +1000,7 @@ class MicroSimModel:
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
             f"  Patients: {self.n_patients}",
             f"  Discount rates: costs={self.dr_costs:.1%}, QALYs={self.dr_qalys:.1%}",
-            f"  Half-cycle correction: {self.half_cycle_correction}",
+            f"  Half-cycle correction: {self._hcc_method or 'None'}",
             f"  Parameters ({len(self.params)}):",
         ]
         for name, p in self.params.items():

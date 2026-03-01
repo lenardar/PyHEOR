@@ -26,7 +26,9 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from .distributions import Distribution
 from .model import Param, _CostDef
 from .survival import SurvivalDistribution, ProportionalHazards
-from .utils import resolve_value, discount_factor
+from .utils import (
+    resolve_value, discount_factor, normalize_hcc, life_table_corrected_trace,
+)
 
 
 class PSMModel:
@@ -53,8 +55,14 @@ class PSMModel:
         Length of each cycle in years (default: 1.0).
     discount_rate : float or dict
         Annual discount rate(s).
-    half_cycle_correction : bool
-        Whether to apply half-cycle correction (default: True).
+    half_cycle_correction : bool or str or None
+        Half-cycle correction method. Options:
+
+        - True or ``"trapezoidal"``: endpoint weighting [0.5, 1, ..., 1, 0.5]
+        - ``"life-table"``: average adjacent trace rows (heemod-style)
+        - False or None: no correction
+
+        Default: True (trapezoidal).
     state_type : dict, optional
         Map state names to "alive" or "dead".
 
@@ -77,7 +85,7 @@ class PSMModel:
         n_cycles: int,
         cycle_length: float = 1.0,
         discount_rate: Union[float, Dict[str, float]] = 0.03,
-        half_cycle_correction: bool = True,
+        half_cycle_correction: Union[bool, str, None] = True,
         state_type: Optional[Dict[str, str]] = None,
     ):
         # States
@@ -106,7 +114,7 @@ class PSMModel:
         # Model settings
         self.n_cycles = n_cycles
         self.cycle_length = cycle_length
-        self.half_cycle_correction = half_cycle_correction
+        self._hcc_method = normalize_hcc(half_cycle_correction)
 
         # Discount rates
         if isinstance(discount_rate, (int, float)):
@@ -137,6 +145,15 @@ class PSMModel:
 
         # Custom costs: list of {'category': str, 'func': callable}
         self._custom_costs: list = []
+
+    @property
+    def half_cycle_correction(self):
+        """Half-cycle correction method (str or None)."""
+        return self._hcc_method
+
+    @half_cycle_correction.setter
+    def half_cycle_correction(self, value):
+        self._hcc_method = normalize_hcc(value)
 
     # =========================================================================
     # Parameter Management (same API as MarkovModel)
@@ -505,14 +522,6 @@ class PSMModel:
                     )
 
             # --- Half-cycle correction ---
-            hcc_weights = np.ones(self.n_cycles + 1)
-            if self.half_cycle_correction:
-                hcc_weights[0] = 0.5
-                hcc_weights[-1] = 0.5
-
-            qalys_hcc = qalys * hcc_weights
-            lys_hcc = lys * hcc_weights
-
             # Collect custom-cost-only categories (no HCC for these)
             cc_only_cats = set()
             if self._custom_costs:
@@ -520,14 +529,52 @@ class PSMModel:
                     if cc['category'] not in self._costs:
                         cc_only_cats.add(cc['category'])
 
-            costs_hcc = {}
-            for cat in costs_by_cat:
-                if cat in cc_only_cats:
-                    costs_hcc[cat] = costs_by_cat[cat].copy()
-                elif cat in self._costs and self._costs[cat].method in ("starting",):
-                    costs_hcc[cat] = costs_by_cat[cat].copy()
-                else:
-                    costs_hcc[cat] = costs_by_cat[cat] * hcc_weights
+            if self._hcc_method == "trapezoidal":
+                hcc_weights = np.ones(self.n_cycles + 1)
+                hcc_weights[0] = 0.5
+                hcc_weights[-1] = 0.5
+
+                qalys_hcc = qalys * hcc_weights
+                lys_hcc = lys * hcc_weights
+
+                costs_hcc = {}
+                for cat in costs_by_cat:
+                    if cat in cc_only_cats:
+                        costs_hcc[cat] = costs_by_cat[cat].copy()
+                    elif cat in self._costs and self._costs[cat].method in ("starting",):
+                        costs_hcc[cat] = costs_by_cat[cat].copy()
+                    else:
+                        costs_hcc[cat] = costs_by_cat[cat] * hcc_weights
+
+            elif self._hcc_method == "life-table":
+                corrected = life_table_corrected_trace(trace)
+
+                qalys_hcc = np.zeros(self.n_cycles + 1)
+                lys_hcc = np.zeros(self.n_cycles + 1)
+                for t in range(self.n_cycles + 1):
+                    u = self._get_utilities(strategy, params, t)
+                    qalys_hcc[t] = np.dot(corrected[t], u) * self.cycle_length
+                    lys_hcc[t] = np.dot(corrected[t], alive_mask) * self.cycle_length
+
+                costs_hcc = {}
+                for cat in costs_by_cat:
+                    if cat in cc_only_cats:
+                        costs_hcc[cat] = costs_by_cat[cat].copy()
+                    elif cat in self._costs and self._costs[cat].method in ("starting",):
+                        costs_hcc[cat] = costs_by_cat[cat].copy()
+                    else:
+                        costs_hcc[cat] = np.zeros(self.n_cycles + 1)
+                        for t in range(self.n_cycles + 1):
+                            c = self._get_state_costs(cat, strategy, params, t)
+                            costs_hcc[cat][t] = (
+                                np.dot(corrected[t], c) * self.cycle_length
+                            )
+
+            else:
+                # No correction
+                qalys_hcc = qalys.copy()
+                lys_hcc = lys.copy()
+                costs_hcc = {cat: arr.copy() for cat, arr in costs_by_cat.items()}
 
             # --- Discounting ---
             cycles = np.arange(self.n_cycles + 1, dtype=float)
@@ -676,7 +723,7 @@ class PSMModel:
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
             f"  Discount rates: costs={self.dr_costs:.1%}, QALYs={self.dr_qalys:.1%}",
-            f"  Half-cycle correction: {self.half_cycle_correction}",
+            f"  Half-cycle correction: {self._hcc_method or 'None'}",
             f"  Parameters ({len(self.params)}):",
         ]
         for name, p in self.params.items():
