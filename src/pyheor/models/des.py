@@ -65,10 +65,10 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from .distributions import Distribution
-from .model import Param
-from .survival import SurvivalDistribution
-from .utils import resolve_value, discount_factor
+from ..distributions import Distribution
+from .markov import Param
+from ..survival import SurvivalDistribution
+from ..utils import resolve_value, discount_factor
 
 
 # =============================================================================
@@ -768,7 +768,7 @@ class DESModel:
         -------
         DESResult
         """
-        from .results import DESResult
+        from ..analysis.results import DESResult
 
         if seed is not None:
             np.random.seed(seed)
@@ -858,7 +858,7 @@ class DESModel:
         -------
         DESPSAResult
         """
-        from .results import DESPSAResult
+        from ..analysis.results import DESPSAResult
 
         if seed is not None:
             np.random.seed(seed)

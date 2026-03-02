@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pyheor.nma import NMAPosterior, PosteriorDist, make_ph_curves, make_aft_curves
+from pyheor.evidence.nma import NMAPosterior, PosteriorDist, make_ph_curves, make_aft_curves
 from pyheor.survival import Weibull, ProportionalHazards, AcceleratedFailureTime
 
 

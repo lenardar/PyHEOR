@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 from pyheor import MarkovModel, C, Beta, Gamma
-from pyheor.results import BaseResult, OWSAResult, PSAResult
+from pyheor.analysis.results import BaseResult, OWSAResult, PSAResult
 
 
 # =========================================================================

@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pyheor.fitting import SurvivalFitter, kaplan_meier
+from pyheor.evidence.fitting import SurvivalFitter, kaplan_meier
 
 
 # =========================================================================

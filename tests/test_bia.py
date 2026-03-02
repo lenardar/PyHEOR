@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pyheor.bia import BudgetImpactAnalysis
+from pyheor.analysis.bia import BudgetImpactAnalysis
 
 
 class TestBIAConstruction:

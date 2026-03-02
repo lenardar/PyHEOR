@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pyheor.comparison import CEAnalysis, calculate_icers
+from pyheor.analysis.comparison import CEAnalysis, calculate_icers
 
 
 # =========================================================================

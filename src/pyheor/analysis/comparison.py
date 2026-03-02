@@ -651,22 +651,22 @@ class CEAnalysis:
 
     def plot_frontier(self, **kwargs):
         """Plot CE plane with efficiency frontier."""
-        from .plotting import plot_ce_frontier
+        from ..plotting import plot_ce_frontier
         return plot_ce_frontier(self, **kwargs)
 
     def plot_nmb_curve(self, **kwargs):
         """Plot NMB curves across WTP thresholds."""
-        from .plotting import plot_nmb_curve
+        from ..plotting import plot_nmb_curve
         return plot_nmb_curve(self, **kwargs)
 
     def plot_ceaf(self, **kwargs):
         """Plot CEAF (requires PSA data)."""
-        from .plotting import plot_ceaf
+        from ..plotting import plot_ceaf
         return plot_ceaf(self, **kwargs)
 
     def plot_evpi(self, **kwargs):
         """Plot EVPI curve (requires PSA data)."""
-        from .plotting import plot_evpi
+        from ..plotting import plot_evpi
         return plot_evpi(self, **kwargs)
 
     # -----------------------------------------------------------------------

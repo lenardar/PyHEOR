@@ -44,9 +44,9 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from .distributions import Distribution
-from .model import Param, _CostDef
-from .utils import (
+from ..distributions import Distribution
+from .markov import Param, _CostDef
+from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
     normalize_hcc,
 )
@@ -807,7 +807,7 @@ class MicroSimModel:
         -------
         MicroSimResult
         """
-        from .results import MicroSimResult
+        from ..analysis.results import MicroSimResult
 
         s = seed if seed is not None else self.seed
         rng = np.random.default_rng(s)
@@ -854,7 +854,7 @@ class MicroSimModel:
         -------
         MicroSimPSAResult
         """
-        from .results import MicroSimPSAResult
+        from ..analysis.results import MicroSimPSAResult
 
         s = seed if seed is not None else self.seed
         rng = np.random.default_rng(s)
@@ -922,7 +922,7 @@ class MicroSimModel:
         -------
         OWSAResult
         """
-        from .results import OWSAResult
+        from ..analysis.results import OWSAResult
 
         if params is None:
             params = [n for n, p in self.params.items() if p.dist is not None]

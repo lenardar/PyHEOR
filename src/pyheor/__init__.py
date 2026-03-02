@@ -66,36 +66,36 @@ from .survival import (
 )
 
 # Models
-from .model import MarkovModel, Param
-from .psm import PSMModel
-from .microsim import MicroSimModel, PatientProfile
-from .des import DESModel
+from .models.markov import MarkovModel, Param
+from .models.psm import PSMModel
+from .models.microsim import MicroSimModel, PatientProfile
+from .models.des import DESModel
 
 # Results
-from .results import (
+from .analysis.results import (
     BaseResult, OWSAResult, PSAResult, PSMBaseResult,
     MicroSimResult, MicroSimPSAResult,
     DESResult, DESPSAResult,
 )
 
 # Excel export
-from .excel_export import export_to_excel, export_comparison_excel
-from .excel_model import export_excel_model
+from .export.excel import export_to_excel, export_comparison_excel
+from .export.excel_model import export_excel_model
 
 # Comparison / CEA
-from .comparison import CEAnalysis, calculate_icers
+from .analysis.comparison import CEAnalysis, calculate_icers
 
 # Budget Impact Analysis
-from .bia import BudgetImpactAnalysis
+from .analysis.bia import BudgetImpactAnalysis
 
 # IPD Fitting
-from .fitting import SurvivalFitter, FitResult, kaplan_meier
+from .evidence.fitting import SurvivalFitter, FitResult, kaplan_meier
 
 # Digitize / IPD Reconstruction
-from .digitize import clean_digitized_km, guyot_reconstruct
+from .evidence.digitize import clean_digitized_km, guyot_reconstruct
 
 # Calibration
-from .calibration import (
+from .analysis.calibration import (
     calibrate,
     CalibrationTarget,
     CalibrationParam,
@@ -107,7 +107,7 @@ from .calibration import (
 )
 
 # NMA Integration
-from .nma import (
+from .evidence.nma import (
     NMAPosterior,
     PosteriorDist,
     CorrelatedPosterior,

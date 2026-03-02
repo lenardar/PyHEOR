@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pyheor.results import PSMBaseResult, PSAResult
+from pyheor.analysis.results import PSMBaseResult, PSAResult
 
 
 # =========================================================================

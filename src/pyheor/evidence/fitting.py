@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from scipy.optimize import minimize
 from scipy import stats as sp_stats
 
-from .survival import (
+from ..survival import (
     SurvivalDistribution,
     Exponential,
     Weibull,

@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pyheor.digitize import clean_digitized_km, guyot_reconstruct
+from pyheor.evidence.digitize import clean_digitized_km, guyot_reconstruct
 
 
 # =========================================================================
@@ -73,7 +73,7 @@ class TestGuyotReconstruct:
 
     def test_roundtrip(self):
         """Generate IPD from known Weibull, compute KM, reconstruct, refit."""
-        from pyheor.fitting import SurvivalFitter, kaplan_meier
+        from pyheor.evidence.fitting import SurvivalFitter, kaplan_meier
 
         rng = np.random.default_rng(42)
         n = 200

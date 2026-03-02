@@ -81,9 +81,9 @@ def export_excel_model(model_or_result, filepath: str, params: dict = None):
     >>> result = model.run_base_case()
     >>> ph.export_excel_model(result, "verification.xlsx")
     """
-    from .model import MarkovModel
-    from .psm import PSMModel
-    from .results import BaseResult, PSMBaseResult
+    from ..models.markov import MarkovModel
+    from ..models.psm import PSMModel
+    from ..analysis.results import BaseResult, PSMBaseResult
 
     result = None
     if isinstance(model_or_result, (BaseResult, PSMBaseResult)):

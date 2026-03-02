@@ -168,17 +168,17 @@ class BaseResult:
     
     def plot_trace(self, **kwargs):
         """Plot Markov trace (state occupancy over time)."""
-        from .plotting import plot_trace
+        from ..plotting import plot_trace
         return plot_trace(self, **kwargs)
     
     def plot_transition_diagram(self, strategy=None, **kwargs):
         """Plot state transition diagram."""
-        from .plotting import plot_transition_diagram
+        from ..plotting import plot_transition_diagram
         return plot_transition_diagram(self.model, self.params, strategy=strategy, **kwargs)
     
     def plot_model_diagram(self, **kwargs):
         """Plot TreeAge-style model structure diagram."""
-        from .plotting import plot_model_diagram
+        from ..plotting import plot_model_diagram
         return plot_model_diagram(self.model, **kwargs)
 
 
@@ -314,12 +314,12 @@ class OWSAResult:
     
     def plot_tornado(self, comparator=None, outcome="nmb", **kwargs):
         """Plot tornado diagram."""
-        from .plotting import plot_tornado
+        from ..plotting import plot_tornado
         return plot_tornado(self, comparator=comparator, outcome=outcome, **kwargs)
     
     def plot_owsa(self, param_name: str, comparator=None, **kwargs):
         """Plot one-way sensitivity for a specific parameter."""
-        from .plotting import plot_owsa_param
+        from ..plotting import plot_owsa_param
         return plot_owsa_param(self, param_name, comparator=comparator, **kwargs)
 
 
@@ -510,17 +510,17 @@ class PSAResult:
     
     def plot_ceac(self, comparator=None, wtp_range=(0, 100000), **kwargs):
         """Plot cost-effectiveness acceptability curve."""
-        from .plotting import plot_ceac
+        from ..plotting import plot_ceac
         return plot_ceac(self, comparator=comparator, wtp_range=wtp_range, **kwargs)
     
     def plot_scatter(self, comparator=None, wtp=None, **kwargs):
         """Plot CE scatter (incremental cost-effectiveness plane)."""
-        from .plotting import plot_scatter
+        from ..plotting import plot_scatter
         return plot_scatter(self, comparator=comparator, wtp=wtp, **kwargs)
     
     def plot_convergence(self, comparator=None, wtp=50000, **kwargs):
         """Plot PSA convergence (running mean of incremental NMB)."""
-        from .plotting import plot_convergence
+        from ..plotting import plot_convergence
         return plot_convergence(self, comparator=comparator, wtp=wtp, **kwargs)
 
 
@@ -678,17 +678,17 @@ class PSMBaseResult:
 
     def plot_survival(self, **kwargs):
         """Plot survival curves."""
-        from .plotting import plot_survival_curves
+        from ..plotting import plot_survival_curves
         return plot_survival_curves(self, **kwargs)
 
     def plot_state_area(self, **kwargs):
         """Plot area-between-curves (state occupancy)."""
-        from .plotting import plot_state_area
+        from ..plotting import plot_state_area
         return plot_state_area(self, **kwargs)
 
     def plot_trace(self, **kwargs):
         """Plot state occupancy as line plot."""
-        from .plotting import plot_psm_trace
+        from ..plotting import plot_psm_trace
         return plot_psm_trace(self, **kwargs)
 
 
@@ -872,17 +872,17 @@ class MicroSimResult:
 
     def plot_trace(self, **kwargs):
         """Plot state occupancy trace."""
-        from .plotting import plot_microsim_trace
+        from ..plotting import plot_microsim_trace
         return plot_microsim_trace(self, **kwargs)
 
     def plot_survival(self, **kwargs):
         """Plot empirical survival curves."""
-        from .plotting import plot_microsim_survival
+        from ..plotting import plot_microsim_survival
         return plot_microsim_survival(self, **kwargs)
 
     def plot_outcomes_histogram(self, **kwargs):
         """Plot distribution of patient-level outcomes."""
-        from .plotting import plot_microsim_outcomes
+        from ..plotting import plot_microsim_outcomes
         return plot_microsim_outcomes(self, **kwargs)
 
 
@@ -1020,12 +1020,12 @@ class MicroSimPSAResult:
 
     def plot_ceac(self, comparator=None, wtp_range=(0, 100000), **kwargs):
         """Plot CEAC."""
-        from .plotting import plot_ceac
+        from ..plotting import plot_ceac
         return plot_ceac(self, comparator=comparator, wtp_range=wtp_range, **kwargs)
 
     def plot_scatter(self, comparator=None, wtp=None, **kwargs):
         """Plot CE scatter."""
-        from .plotting import plot_scatter
+        from ..plotting import plot_scatter
         return plot_scatter(self, comparator=comparator, wtp=wtp, **kwargs)
 
 
@@ -1415,10 +1415,10 @@ class DESPSAResult:
 
     def plot_ceac(self, comparator=None, wtp_range=(0, 100000), **kwargs):
         """Plot CEAC."""
-        from .plotting import plot_ceac
+        from ..plotting import plot_ceac
         return plot_ceac(self, comparator=comparator, wtp_range=wtp_range, **kwargs)
 
     def plot_scatter(self, comparator=None, wtp=None, **kwargs):
         """Plot CE scatter."""
-        from .plotting import plot_scatter
+        from ..plotting import plot_scatter
         return plot_scatter(self, comparator=comparator, wtp=wtp, **kwargs)

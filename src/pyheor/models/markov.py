@@ -13,8 +13,8 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from .distributions import Distribution
-from .utils import (
+from ..distributions import Distribution
+from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
     normalize_hcc, life_table_corrected_trace,
 )
@@ -942,7 +942,7 @@ class MarkovModel:
         BaseResult
             Results including summary, ICER, Markov trace, and plotting methods.
         """
-        from .results import BaseResult
+        from ..analysis.results import BaseResult
         params = self._get_base_params()
         sim = self._simulate_single(params)
         return BaseResult(model=self, results=sim, params=params)
@@ -980,7 +980,7 @@ class MarkovModel:
         OWSAResult
             Results with tornado plot and sensitivity summary.
         """
-        from .results import OWSAResult
+        from ..analysis.results import OWSAResult
 
         if params is None:
             params = [
@@ -1060,7 +1060,7 @@ class MarkovModel:
         PSAResult
             Results with CEAC, CE plane, and summary statistics.
         """
-        from .results import PSAResult
+        from ..analysis.results import PSAResult
         
         if seed is not None:
             np.random.seed(seed)

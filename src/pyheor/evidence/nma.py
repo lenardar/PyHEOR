@@ -42,7 +42,7 @@ from typing import (
     Union,
 )
 
-from .distributions import Distribution
+from ..distributions import Distribution
 
 # ---------------------------------------------------------------------------
 # Public helpers
@@ -535,7 +535,7 @@ def make_ph_curves(
     >>> curves = ph.make_ph_curves(baseline, nma)
     >>> model.set_transitions("Drug_A", build_matrix(curves["Drug_A"]))
     """
-    from .survival import ProportionalHazards
+    from ..survival import ProportionalHazards
 
     if treatments is None:
         treatments = nma.treatment_names
@@ -566,7 +566,7 @@ def make_aft_curves(
     dict
         ``{treatment_name: AcceleratedFailureTime(baseline, median_af)}``
     """
-    from .survival import AcceleratedFailureTime
+    from ..survival import AcceleratedFailureTime
 
     if treatments is None:
         treatments = nma.treatment_names

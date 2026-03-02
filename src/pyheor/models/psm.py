@@ -23,10 +23,10 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from .distributions import Distribution
-from .model import Param, _CostDef
-from .survival import SurvivalDistribution, ProportionalHazards
-from .utils import (
+from ..distributions import Distribution
+from .markov import Param, _CostDef
+from ..survival import SurvivalDistribution, ProportionalHazards
+from ..utils import (
     resolve_value, discount_factor, normalize_hcc, life_table_corrected_trace,
 )
 
@@ -622,7 +622,7 @@ class PSMModel:
 
     def run_base_case(self) -> "PSMBaseResult":
         """Run deterministic base case analysis."""
-        from .results import PSMBaseResult
+        from ..analysis.results import PSMBaseResult
         params = self._get_base_params()
         sim = self._simulate_single(params)
         return PSMBaseResult(model=self, results=sim, params=params)
@@ -634,7 +634,7 @@ class PSMModel:
         wtp: float = 50000,
     ) -> "OWSAResult":
         """Run one-way sensitivity analysis."""
-        from .results import OWSAResult
+        from ..analysis.results import OWSAResult
 
         if params is None:
             params = [
@@ -681,7 +681,7 @@ class PSMModel:
         progress: bool = True,
     ) -> "PSAResult":
         """Run probabilistic sensitivity analysis."""
-        from .results import PSAResult
+        from ..analysis.results import PSAResult
 
         if seed is not None:
             np.random.seed(seed)

@@ -44,7 +44,7 @@ def export_to_excel(
         For PSAResult, whether to include all simulation data.
     """
     # Detect result type
-    from .results import BaseResult, OWSAResult, PSAResult, PSMBaseResult
+    from ..analysis.results import BaseResult, OWSAResult, PSAResult, PSMBaseResult
 
     if isinstance(result, PSAResult):
         _export_psa(result, filepath, include_psa)
@@ -198,7 +198,7 @@ def _export_markov_base(result, filepath: str):
 
 def _write_transition_matrices(writer, model, params):
     """Write transition matrices for each strategy."""
-    from .utils import _Complement, C, resolve_complement
+    from ..utils import _Complement, C, resolve_complement
 
     rows_all = []
     for strategy in model.strategy_names:
@@ -362,7 +362,7 @@ def _export_owsa(result, filepath: str):
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
         # === Base Case Summary ===
         # Reconstruct base case summary from base_result
-        from .results import BaseResult
+        from ..analysis.results import BaseResult
         base_res_obj = BaseResult(model=model, results=result.base_result,
                                   params=result.base_params)
         summary = base_res_obj.summary()

@@ -713,22 +713,22 @@ class BudgetImpactAnalysis:
 
     def plot_budget_impact(self, **kwargs):
         """Bar chart of annual budget impact (new − current)."""
-        from .plotting import plot_budget_impact
+        from ..plotting import plot_budget_impact
         return plot_budget_impact(self, **kwargs)
 
     def plot_budget_comparison(self, **kwargs):
         """Grouped bar chart: total costs current vs new per year."""
-        from .plotting import plot_budget_comparison
+        from ..plotting import plot_budget_comparison
         return plot_budget_comparison(self, **kwargs)
 
     def plot_market_share(self, **kwargs):
         """Market-share evolution over time (current & new)."""
-        from .plotting import plot_market_share
+        from ..plotting import plot_market_share
         return plot_market_share(self, **kwargs)
 
     def plot_detail(self, **kwargs):
         """Stacked-bar cost breakdown by strategy per year."""
-        from .plotting import plot_bia_detail
+        from ..plotting import plot_bia_detail
         return plot_bia_detail(self, **kwargs)
 
     def plot_tornado(self, sensitivities: Dict[str, Tuple], **kwargs):
@@ -740,7 +740,7 @@ class BudgetImpactAnalysis:
         sensitivities : dict
             ``{param_label: (low_value, high_value)}``.
         """
-        from .plotting import plot_bia_tornado
+        from ..plotting import plot_bia_tornado
         return plot_bia_tornado(self, sensitivities, **kwargs)
 
     # -------------------------------------------------------------------
