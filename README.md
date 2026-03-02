@@ -1256,13 +1256,12 @@ pyheor/
 │       └── excel_model.py   #  Excel 公式验证模型导出
 │
 ├── tests/                   # pytest 测试套件 (243 个测试)
-├── examples/
-│   ├── demo_hiv_model.py    #  Markov 模型示例 (HIV)
-│   ├── demo_psm_model.py    #  PSM 模型示例 (肿瘤)
-│   ├── demo_ipd_fitting.py  #  IPD 拟合示例
-│   ├── demo_microsim.py     #  微观模拟示例
-│   └── demo_comparison.py   #  多策略比较示例
-└── reproduce/               #  文献复现脚本
+└── examples/
+    ├── demo_hiv_model.py    #  Markov 模型示例 (HIV)
+    ├── demo_psm_model.py    #  PSM 模型示例 (肿瘤)
+    ├── demo_ipd_fitting.py  #  IPD 拟合示例
+    ├── demo_microsim.py     #  微观模拟示例
+    └── demo_comparison.py   #  多策略比较示例
 ```
 
 ---
