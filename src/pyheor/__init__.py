@@ -82,6 +82,9 @@ from .analysis.results import (
 from .export.excel import export_to_excel, export_comparison_excel
 from .export.excel_model import export_excel_model
 
+# Report
+from .export.report import generate_report
+
 # Comparison / CEA
 from .analysis.comparison import CEAnalysis, calculate_icers
 
@@ -157,10 +160,11 @@ __all__ = [
     "MicroSimPSAResult",
     "DESResult",
     "DESPSAResult",
-    # Excel
+    # Excel / Report
     "export_to_excel",
     "export_comparison_excel",
     "export_excel_model",
+    "generate_report",
     # Comparison / CEA
     "CEAnalysis",
     "calculate_icers",
