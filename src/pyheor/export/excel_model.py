@@ -123,8 +123,8 @@ def _build_markov_excel(model, filepath, params, py_results):
     states = model.states
     n_cycles = model.n_cycles
     cl_val = model.cycle_length
-    dr_c = model.dr_costs
-    dr_q = model.dr_qalys
+    dr_c = model.dr_cost
+    dr_q = model.dr_qaly
     hcc_method = model.half_cycle_correction  # str or None
     initial_idx = model.initial_state_idx
 
@@ -505,8 +505,8 @@ def _build_psm_excel(model, filepath, params, py_results):
     endpoints = model.survival_endpoints
     n_cycles = model.n_cycles
     cl_val = model.cycle_length
-    dr_c = model.dr_costs
-    dr_q = model.dr_qalys
+    dr_c = model.dr_cost
+    dr_q = model.dr_qaly
     hcc_method = model.half_cycle_correction  # str or None
 
     cost_cats = list(model._costs.keys())

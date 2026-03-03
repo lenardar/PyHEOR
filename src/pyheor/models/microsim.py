@@ -120,8 +120,12 @@ class MicroSimModel:
         by providing a PatientProfile.
     cycle_length : float
         Cycle length in years (default: 1.0).
-    discount_rate : float or dict
-        Annual discount rate(s). Keys: 'costs', 'qalys'.
+    dr_cost : float or Param
+        Annual discount rate for costs. Default: 0 (no discounting).
+        Pass a ``Param`` to enable sensitivity analysis.
+    dr_qaly : float or Param
+        Annual discount rate for QALYs. Default: 0 (no discounting).
+        Pass a ``Param`` to enable sensitivity analysis.
     half_cycle_correction : bool or str or None
         Half-cycle correction method. Options:
 
@@ -151,7 +155,8 @@ class MicroSimModel:
         n_cycles: int,
         n_patients: int = 1000,
         cycle_length: float = 1.0,
-        discount_rate: Union[float, Dict[str, float]] = 0.03,
+        dr_cost: Union[float, "Param"] = 0.0,
+        dr_qaly: Union[float, "Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
         initial_state: Union[str, int] = 0,
         state_type: Optional[Dict[str, str]] = None,
@@ -177,13 +182,24 @@ class MicroSimModel:
         self._hcc_method = normalize_hcc(half_cycle_correction)
         self.seed = seed
 
+        # Parameters (init early so discount rates can register into it)
+        self.params: Dict[str, Param] = {}
+
         # Discount rates
-        if isinstance(discount_rate, (int, float)):
-            self.dr_costs = float(discount_rate)
-            self.dr_qalys = float(discount_rate)
+        if isinstance(dr_cost, Param):
+            self.dr_cost = dr_cost.base
+            if not dr_cost.label:
+                dr_cost.label = "Discount Rate (Cost)"
+            self.params["dr_cost"] = dr_cost
         else:
-            self.dr_costs = float(discount_rate.get('costs', 0.03))
-            self.dr_qalys = float(discount_rate.get('qalys', 0.03))
+            self.dr_cost = float(dr_cost)
+        if isinstance(dr_qaly, Param):
+            self.dr_qaly = dr_qaly.base
+            if not dr_qaly.label:
+                dr_qaly.label = "Discount Rate (QALY)"
+            self.params["dr_qaly"] = dr_qaly
+        else:
+            self.dr_qaly = float(dr_qaly)
 
         # Initial state
         if isinstance(initial_state, str):
@@ -203,8 +219,6 @@ class MicroSimModel:
         # Absorbing states (dead)
         self._absorbing = set(range(self.n_states)) - self._alive_states
 
-        # Parameters
-        self.params: Dict[str, Param] = {}
 
         # Transitions: strategy -> callable(params, cycle, attrs_dict) -> matrix
         self._transitions: Dict[str, Any] = {}
@@ -734,8 +748,8 @@ class MicroSimModel:
 
         # --- Discounting ---
         cycles = np.arange(T + 1, dtype=float)
-        df_c = discount_factor(cycles, self.dr_costs, self.cycle_length)
-        df_q = discount_factor(cycles, self.dr_qalys, self.cycle_length)
+        df_c = discount_factor(cycles, self.dr_cost, self.cycle_length)
+        df_q = discount_factor(cycles, self.dr_qaly, self.cycle_length)
 
         cost_hist_disc = cost_hist * df_c[np.newaxis, :]
         qaly_hist_disc = qaly_hist * df_q[np.newaxis, :]
@@ -892,6 +906,9 @@ class MicroSimModel:
             sampled_params=sampled_params,
         )
 
+    # Parameters that live as model attributes (varied via setattr in OWSA)
+    _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
+
     def run_owsa(
         self,
         params: Optional[List[str]] = None,
@@ -940,7 +957,6 @@ class MicroSimModel:
         base_result = {}
         for strat in self.strategy_names:
             sim = self._simulate_patients(strat, base_params, prof, rng)
-            # Convert to cohort-like format for OWSAResult compatibility
             base_result[strat] = {
                 'total_costs': {'total': sim['mean_cost']},
                 'total_qalys': sim['mean_qalys'],
@@ -953,19 +969,33 @@ class MicroSimModel:
             low = p.low if p.low is not None else p.base * 0.8
             high = p.high if p.high is not None else p.base * 1.2
 
+            is_attr = param_name in self._ATTR_PARAMS
+
             for bound, val in [('low', low), ('high', high)]:
                 test_params = base_params.copy()
-                test_params[param_name] = val
 
-                rng = np.random.default_rng(s)  # Reset seed for comparability
-                result = {}
-                for strat in self.strategy_names:
-                    sim = self._simulate_patients(strat, test_params, prof, rng)
-                    result[strat] = {
-                        'total_costs': {'total': sim['mean_cost']},
-                        'total_qalys': sim['mean_qalys'],
-                        'total_lys': sim['mean_lys'],
-                    }
+                saved = None
+                if is_attr:
+                    saved = getattr(self, param_name)
+                    setattr(self, param_name, val)
+                else:
+                    test_params[param_name] = val
+
+                try:
+                    rng = np.random.default_rng(s)
+                    result = {}
+                    for strat in self.strategy_names:
+                        sim = self._simulate_patients(
+                            strat, test_params, prof, rng
+                        )
+                        result[strat] = {
+                            'total_costs': {'total': sim['mean_cost']},
+                            'total_qalys': sim['mean_qalys'],
+                            'total_lys': sim['mean_lys'],
+                        }
+                finally:
+                    if saved is not None:
+                        setattr(self, param_name, saved)
 
                 owsa_data.append({
                     'param': param_name,
@@ -999,7 +1029,7 @@ class MicroSimModel:
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
             f"  Patients: {self.n_patients}",
-            f"  Discount rates: costs={self.dr_costs:.1%}, QALYs={self.dr_qalys:.1%}",
+            f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
             f"  Half-cycle correction: {self._hcc_method or 'None'}",
             f"  Parameters ({len(self.params)}):",
         ]

@@ -25,7 +25,8 @@ def simple_markov_model():
         strategies=["SOC", "New"],
         n_cycles=10,
         cycle_length=1.0,
-        discount_rate=0.03,
+        dr_cost=0.03,
+        dr_qaly=0.03,
         half_cycle_correction=True,
     )
     model.add_param("p_HS", base=0.15, dist=Beta(mean=0.15, sd=0.03))
@@ -66,7 +67,8 @@ def simple_psm_model():
         strategies=["SOC", "TRT"],
         n_cycles=20,
         cycle_length=1.0,
-        discount_rate=0.03,
+        dr_cost=0.03,
+        dr_qaly=0.03,
     )
     model.set_survival_all("SOC", {
         "PFS": Weibull(shape=1.0, scale=5.0),

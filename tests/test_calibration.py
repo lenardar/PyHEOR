@@ -133,7 +133,6 @@ class TestNelderMead:
             strategies=["S1"],
             n_cycles=10,
             half_cycle_correction=False,
-            discount_rate=0,
         )
         # True parameter: p_death = 0.10
         model.add_param("p_death", base=0.05)  # intentionally wrong
@@ -261,7 +260,6 @@ class TestRandomSearch:
             strategies=["S1"],
             n_cycles=10,
             half_cycle_correction=False,
-            discount_rate=0,
         )
         true_p = 0.10
         model.add_param("p_death", base=0.05)

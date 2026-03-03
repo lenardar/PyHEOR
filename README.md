@@ -14,7 +14,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 | **KM 曲线数字化重建**       | Guyot method 从发表文献 KM 图反推 IPD，含数字化噪声预处理                                    |
 | **参数化生存分布**          | Exponential, Weibull, Log-logistic, Log-normal, Gompertz, Generalized Gamma 等 10 种        |
 | **基础分析**                | 确定性基线分析                                                                              |
-| **单因素敏感性分析 (OWSA)** | 龙卷风图（INMB/ICER 排序），支持贴现率变动，参数单独变动分析                                 |
+| **单因素敏感性分析 (OWSA)** | 龙卷风图（INMB/ICER 排序），贴现率通过 `Param` 直接参与变动分析                                 |
 | **概率敏感性分析 (PSA)**    | Monte Carlo 模拟，CE 散点图，CEAC                                                           |
 | **多策略比较 & NMB**        | 效率前沿、支配/扩展支配检测、NMB 曲线、CEAF、EVPI                                           |
 | **NMA 整合**                | 导入 R 后验样本，保留相关性，自动生成 PH/AFT 曲线                                           |
@@ -72,8 +72,8 @@ model = ph.MarkovModel(
     strategies=["Standard", "New Treatment"],
     n_cycles=40,
     cycle_length=1,          # 年
-    discount_rate_cost=0.03, # 费用贴现 3%
-    discount_rate_qaly=0.03, # 效用贴现 3%
+    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="费用贴现率"),
+    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="效用贴现率"),
     half_cycle_correction=True,
 )
 
@@ -111,8 +111,7 @@ result = model.run_base_case()
 print(result.summary())
 print(result.icer())
 
-# OWSA（支持 ICER 排序，贴现率可作为变动参数）
-model.add_param("dr", base=0.03, low=0.0, high=0.08)  # 贴现率参数
+# OWSA（贴现率已通过 Param 自动注册，无需额外 add_param）
 owsa = model.run_owsa()
 print(owsa.summary(outcome="icer"))  # 按 ICER 影响幅度排序
 
@@ -230,7 +229,8 @@ model = ph.MicroSimModel(
     n_cycles=30,
     n_patients=5000,
     cycle_length=1.0,
-    discount_rate={"costs": 0.03, "qalys": 0.03},
+    dr_cost=0.03,
+    dr_qaly=0.03,
     half_cycle_correction=True,
     seed=42,
 )
@@ -535,19 +535,53 @@ psa = model.run_psa(n_outer=500, n_inner=2000)  # 500 × 2000 次模拟
 
 **性能优化**：当转移矩阵不依赖个体属性（2 参数 lambda）时，引擎自动使用向量化批量采样，速度接近队列模型。
 
-### 贴现与半周期校正
+### 贴现率
+
+所有模型（Markov / PSM / MicroSim / DES）均通过 `dr_cost` 和 `dr_qaly` 两个独立参数设置贴现率。**默认值为 0（不贴现）**，未设置的一方不会被贴现。
+
+```python
+# 基础用法：固定贴现率
+model = ph.MarkovModel(
+    ...,
+    dr_cost=0.03,  # 费用年贴现率 3%
+    dr_qaly=0.03,  # 效用年贴现率 3%
+)
+
+# 只贴现费用，不贴现效用
+model = ph.MarkovModel(
+    ...,
+    dr_cost=0.06,  # 费用贴现 6%
+    # dr_qaly 默认 0，效用不贴现
+)
+```
+
+#### 贴现率敏感性分析
+
+传入 `Param` 对象即可将贴现率纳入 OWSA / PSA，无需额外调用 `add_param()`：
 
 ```python
 model = ph.MarkovModel(
     ...,
-    discount_rate=0.03,                      # 贴现率（也可用 dict 分别设置）
-    # discount_rate={"costs": 0.03, "qalys": 0.03},
-    half_cycle_correction="life-table",      # 半周期校正方法
-    cycle_length=1,                          # 周期长度（年），1/12=月，1/52=周
+    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="费用贴现率"),
+    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="效用贴现率"),
+)
+
+# dr_cost 和 dr_qaly 自动注册到 model.params，直接参与 OWSA
+owsa = model.run_owsa()
+owsa.summary()       # 龙卷风图数据中包含贴现率
+owsa.plot_tornado()  # 可视化
+
+# 也可以只对其中一个做敏感性分析
+model = ph.MarkovModel(
+    ...,
+    dr_cost=0.03,                                          # 固定
+    dr_qaly=ph.Param(0.03, low=0.0, high=0.05),           # 变动
 )
 ```
 
-**半周期校正方法**：
+> **设计原则**：贴现率的基准值和敏感性分析范围在同一处定义，避免重复指定。`float` 表示固定值，`Param` 表示可变动值。
+
+### 半周期校正
 
 | 值               | 说明                                            |
 | ---------------- | ----------------------------------------------- |
@@ -720,10 +754,8 @@ model = ph.DESModel(
     states=["PFS", "Progressed", "Dead"],
     strategies={"SOC": "Standard of Care", "TRT": "New Treatment"},
     time_horizon=40,
-    discount_rate=0.03,
-)
-
-# 添加参数
+    dr_cost=0.03,
+    dr_qaly=0.03,# 添加参数
 model.add_param("hr_pfs", base=0.70,
                 dist=ph.LogNormal(mean=-0.36, sd=0.15))
 
@@ -1074,7 +1106,6 @@ model = ph.MarkovModel(
     states=["Healthy", "Sick", "Dead"],
     strategies=["SOC"],
     n_cycles=20,
-    discount_rate=0,
     half_cycle_correction=False,
 )
 model.add_param("p_HS", base=0.10)   # 初始猜测
@@ -1283,7 +1314,7 @@ pyheor/
 - [X] 概率敏感性分析 (PSA) + CEAC + CE 散点图
 - [X] 灵活费用系统（首周期、时变、WLOS、自定义费用函数）
 - [X] 半周期校正多方法（梯形法 / 生命表法 / 无校正）& 可配置贴现率
-- [X] OWSA 龙卷风图 ICER 排序 & 贴现率作为可变动参数
+- [X] OWSA 龙卷风图 ICER 排序 & 贴现率通过 `Param` 直接参与敏感性分析
 - [X] 分区生存模型 (PSM)
 - [X] 10 种参数化生存分布
 - [X] Excel 多 Sheet 导出

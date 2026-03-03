@@ -23,7 +23,8 @@ class TestDESRun:
             states=["PFS", "Progressed", "Dead"],
             strategies=["SOC", "TRT"],
             time_horizon=20,
-            discount_rate=0.03,
+            dr_cost=0.03,
+            dr_qaly=0.03,
         )
         model.set_event("SOC", "PFS", "Progressed", Weibull(shape=1.2, scale=5.0))
         model.set_event("SOC", "PFS", "Dead", Exponential(rate=0.01))
@@ -62,7 +63,6 @@ class TestDESRun:
             states=["Alive", "Dead"],
             strategies=["S1"],
             time_horizon=100,
-            discount_rate=0,
         )
         model.set_event("S1", "Alive", "Dead", Exponential(rate=0.1))
         model.set_utility({"Alive": 1.0, "Dead": 0.0})

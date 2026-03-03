@@ -36,7 +36,8 @@ model = ph.MarkovModel(
     strategies=["SOC", "Drug A", "Drug B", "Drug C"],
     n_cycles=40,
     cycle_length=1.0,
-    discount_rate={"costs": 0.03, "qalys": 0.03},
+    dr_cost=0.03,
+    dr_qaly=0.03,
     half_cycle_correction=True,
 )
 

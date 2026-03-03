@@ -116,8 +116,12 @@ class DESModel:
         Treatment strategies. Dict maps internal name → display label.
     time_horizon : float
         Maximum simulation time in years.
-    discount_rate : float or dict
-        Annual discount rate(s). If dict, keys are 'costs' and 'qalys'.
+    dr_cost : float or Param
+        Annual discount rate for costs. Default: 0 (no discounting).
+        Pass a ``Param`` to enable sensitivity analysis.
+    dr_qaly : float or Param
+        Annual discount rate for QALYs. Default: 0 (no discounting).
+        Pass a ``Param`` to enable sensitivity analysis.
     state_type : dict, optional
         Map state names to "alive" or "dead" (default: last state is dead).
 
@@ -135,7 +139,8 @@ class DESModel:
         states: List[str],
         strategies: Union[List[str], Dict[str, str]],
         time_horizon: float = 40.0,
-        discount_rate: Union[float, Dict[str, float]] = 0.03,
+        dr_cost: Union[float, "Param"] = 0.0,
+        dr_qaly: Union[float, "Param"] = 0.0,
         state_type: Optional[Dict[str, str]] = None,
     ):
         self.states = list(states)
@@ -151,13 +156,24 @@ class DESModel:
             self.strategy_labels = {s: s for s in self.strategy_names}
         self.n_strategies = len(self.strategy_names)
 
-        # Discount
-        if isinstance(discount_rate, (int, float)):
-            self.dr_costs = float(discount_rate)
-            self.dr_qalys = float(discount_rate)
+        # Parameters (init early so discount rates can register into it)
+        self.params: Dict[str, Param] = {}
+
+        # Discount rates
+        if isinstance(dr_cost, Param):
+            self.dr_cost = dr_cost.base
+            if not dr_cost.label:
+                dr_cost.label = "Discount Rate (Cost)"
+            self.params["dr_cost"] = dr_cost
         else:
-            self.dr_costs = float(discount_rate.get('costs', 0.03))
-            self.dr_qalys = float(discount_rate.get('qalys', 0.03))
+            self.dr_cost = float(dr_cost)
+        if isinstance(dr_qaly, Param):
+            self.dr_qaly = dr_qaly.base
+            if not dr_qaly.label:
+                dr_qaly.label = "Discount Rate (QALY)"
+            self.params["dr_qaly"] = dr_qaly
+        else:
+            self.dr_qaly = float(dr_qaly)
 
         # State types
         if state_type is not None:
@@ -169,8 +185,6 @@ class DESModel:
             self._alive_states = set(range(self.n_states - 1))
         self._absorbing = set(range(self.n_states)) - self._alive_states
 
-        # Parameters
-        self.params: Dict[str, Param] = {}
 
         # Events: strategy -> list[_EventDef]
         self._events: Dict[str, List[_EventDef]] = {
@@ -686,7 +700,7 @@ class DESModel:
             for ec in self._entry_costs:
                 if ec.state_idx == current_state:
                     c = self._resolve_entry_cost(ec, strategy, params)
-                    dc = self._discount_lump_sum(c, current_time, self.dr_costs)
+                    dc = self._discount_lump_sum(c, current_time, self.dr_cost)
                     cat = ec.category
                     costs_by_cat[cat] = costs_by_cat.get(cat, 0) + dc
 
@@ -720,7 +734,7 @@ class DESModel:
 
         duration = t_end - t_start
         # Discounted LYs
-        lys = self._discount_continuous(1.0, t_start, t_end, self.dr_qalys)
+        lys = self._discount_continuous(1.0, t_start, t_end, self.dr_qaly)
         # Discounted QALYs
         u = self._resolve_utility(strategy, state_idx, params)
         qalys = lys * u
@@ -736,7 +750,7 @@ class DESModel:
             rate = self._resolve_cost_rate(sc, strategy, state_idx, params)
             if rate == 0:
                 continue
-            dc = self._discount_continuous(rate, t_start, t_end, self.dr_costs)
+            dc = self._discount_continuous(rate, t_start, t_end, self.dr_cost)
             cat = sc.category
             costs_by_cat[cat] = costs_by_cat.get(cat, 0) + dc
 
@@ -920,7 +934,7 @@ class DESModel:
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Time horizon: {self.time_horizon} years",
-            f"  Discount rates: costs={self.dr_costs:.1%}, QALYs={self.dr_qalys:.1%}",
+            f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
             f"  Parameters ({len(self.params)}):",
         ]
         for name, p in self.params.items():

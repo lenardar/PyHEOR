@@ -121,7 +121,6 @@ class TestResults:
                 strategies=["S1"],
                 n_cycles=10,
                 half_cycle_correction=hcc,
-                discount_rate=0,
             )
             model.set_transitions("S1", lambda p, t: [
                 [0.9, 0.1],
@@ -143,7 +142,8 @@ class TestResults:
                 states=["Alive", "Dead"],
                 strategies=["S1"],
                 n_cycles=20,
-                discount_rate=dr,
+                dr_cost=dr,
+                dr_qaly=dr,
                 half_cycle_correction=False,
             )
             model.set_transitions("S1", lambda p, t: [
@@ -169,7 +169,6 @@ class TestCosts:
             strategies=["S1"],
             n_cycles=5,
             half_cycle_correction=False,
-            discount_rate=0,
         )
         model.set_transitions("S1", lambda p, t: [[1, 0], [0, 1]])
         model.set_state_cost("init", {"Alive": 10000, "Dead": 0},
@@ -226,15 +225,16 @@ class TestSensitivityAnalysis:
         assert "ICER (Base)" in icer_summary.columns
 
     def test_owsa_discount_rate_param(self):
-        """Discount rate can be varied in OWSA as a model-level parameter."""
+        """Discount rate can be varied in OWSA via Param."""
+        from pyheor.models.markov import Param
         model = MarkovModel(
             states=["Alive", "Dead"],
             strategies=["S1", "S2"],
             n_cycles=10,
-            discount_rate=0.05,
+            dr_cost=Param(0.05, low=0.0, high=0.08),
+            dr_qaly=Param(0.05, low=0.0, high=0.08),
             half_cycle_correction=False,
         )
-        model.add_param("dr", base=0.05, low=0.0, high=0.08)
         model.add_param("p_death", base=0.1, low=0.05, high=0.15)
         model.set_transitions("S1", lambda p, t: [
             [1 - p["p_death"], p["p_death"]],
@@ -250,17 +250,17 @@ class TestSensitivityAnalysis:
         })
         model.set_utility({"Alive": 1.0, "Dead": 0.0})
 
-        owsa = model.run_owsa(params=["dr", "p_death"])
+        owsa = model.run_owsa(params=["dr_cost", "p_death"])
         summary = owsa.summary()
-        assert "dr" in summary["param_name"].values
+        assert "dr_cost" in summary["param_name"].values
 
         # Verify discount rate was actually varied (different results)
-        dr_row = summary[summary["param_name"] == "dr"].iloc[0]
+        dr_row = summary[summary["param_name"] == "dr_cost"].iloc[0]
         assert dr_row["INMB (Low)"] != dr_row["INMB (High)"]
 
         # Verify model discount rate was restored
-        assert model.dr_costs == 0.05
-        assert model.dr_qalys == 0.05
+        assert model.dr_cost == 0.05
+        assert model.dr_qaly == 0.05
 
 
 # =========================================================================
@@ -325,7 +325,7 @@ class TestHCCNormalization:
         def make(hcc):
             m = MarkovModel(
                 states=["Alive", "Dead"], strategies=["S1"],
-                n_cycles=10, half_cycle_correction=hcc, discount_rate=0.05,
+                n_cycles=10, half_cycle_correction=hcc, dr_cost=0.05, dr_qaly=0.05,
             )
             m.set_transitions("S1", [[0.9, 0.1], [0, 1]])
             m.set_utility({"Alive": 1.0, "Dead": 0.0})
@@ -346,11 +346,11 @@ class TestHCCNormalization:
 
 class TestLifeTableHCC:
     @staticmethod
-    def _make_model(hcc, n_cycles=10, discount_rate=0):
+    def _make_model(hcc, n_cycles=10, dr_cost=0, dr_qaly=0):
         m = MarkovModel(
             states=["Alive", "Dead"], strategies=["S1"],
             n_cycles=n_cycles, half_cycle_correction=hcc,
-            discount_rate=discount_rate,
+            dr_cost=dr_cost, dr_qaly=dr_qaly,
         )
         m.set_transitions("S1", lambda p, t: [[0.9, 0.1], [0, 1]])
         m.set_utility({"Alive": 1.0, "Dead": 0.0})
@@ -409,6 +409,6 @@ class TestLifeTableHCC:
 
     def test_life_table_with_discount(self):
         """Life-table + discounting runs without error."""
-        r = self._make_model("life-table", discount_rate=0.05).run_base_case()
+        r = self._make_model("life-table", dr_cost=0.05, dr_qaly=0.05).run_base_case()
         q = r.summary()["QALYs"].iloc[0]
         assert q > 0

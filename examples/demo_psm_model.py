@@ -35,7 +35,8 @@ model = ph.PSMModel(
     strategies={"SOC": "Chemotherapy", "TRT": "Immuno + Chemo"},
     n_cycles=240,             # 240 months = 20 years
     cycle_length=1/12,        # Monthly cycles
-    discount_rate={"costs": 0.03, "qalys": 0.03},
+    dr_cost=0.03,
+    dr_qaly=0.03,
     half_cycle_correction=True,
 )
 
@@ -238,7 +239,8 @@ markov = ph.MarkovModel(
     strategies={"SOC": "Standard Care", "New": "New Drug"},
     n_cycles=20,
     cycle_length=1.0,
-    discount_rate=0.03,
+    dr_cost=0.03,
+    dr_qaly=0.03,
 )
 
 markov.add_params({

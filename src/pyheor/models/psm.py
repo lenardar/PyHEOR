@@ -53,8 +53,12 @@ class PSMModel:
         Number of model cycles.
     cycle_length : float
         Length of each cycle in years (default: 1.0).
-    discount_rate : float or dict
-        Annual discount rate(s).
+    dr_cost : float or Param
+        Annual discount rate for costs. Default: 0 (no discounting).
+        Pass a ``Param`` to enable sensitivity analysis.
+    dr_qaly : float or Param
+        Annual discount rate for QALYs. Default: 0 (no discounting).
+        Pass a ``Param`` to enable sensitivity analysis.
     half_cycle_correction : bool or str or None
         Half-cycle correction method. Options:
 
@@ -84,7 +88,8 @@ class PSMModel:
         strategies: Union[List[str], Dict[str, str]],
         n_cycles: int,
         cycle_length: float = 1.0,
-        discount_rate: Union[float, Dict[str, float]] = 0.03,
+        dr_cost: Union[float, "Param"] = 0.0,
+        dr_qaly: Union[float, "Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
         state_type: Optional[Dict[str, str]] = None,
     ):
@@ -116,13 +121,24 @@ class PSMModel:
         self.cycle_length = cycle_length
         self._hcc_method = normalize_hcc(half_cycle_correction)
 
+        # Parameters (init early so discount rates can register into it)
+        self.params: Dict[str, Param] = {}
+
         # Discount rates
-        if isinstance(discount_rate, (int, float)):
-            self.dr_costs = float(discount_rate)
-            self.dr_qalys = float(discount_rate)
+        if isinstance(dr_cost, Param):
+            self.dr_cost = dr_cost.base
+            if not dr_cost.label:
+                dr_cost.label = "Discount Rate (Cost)"
+            self.params["dr_cost"] = dr_cost
         else:
-            self.dr_costs = float(discount_rate.get('costs', 0.03))
-            self.dr_qalys = float(discount_rate.get('qalys', 0.03))
+            self.dr_cost = float(dr_cost)
+        if isinstance(dr_qaly, Param):
+            self.dr_qaly = dr_qaly.base
+            if not dr_qaly.label:
+                dr_qaly.label = "Discount Rate (QALY)"
+            self.params["dr_qaly"] = dr_qaly
+        else:
+            self.dr_qaly = float(dr_qaly)
 
         # State types
         if state_type is not None:
@@ -133,8 +149,6 @@ class PSMModel:
         else:
             self._alive_states = list(range(self.n_states - 1))
 
-        # Parameters
-        self.params: Dict[str, Param] = {}
 
         # Survival curves: {strategy: {endpoint: SurvivalDistribution or callable}}
         self._survival_curves: Dict[str, Dict[str, Any]] = {}
@@ -578,8 +592,8 @@ class PSMModel:
 
             # --- Discounting ---
             cycles = np.arange(self.n_cycles + 1, dtype=float)
-            df_c = discount_factor(cycles, self.dr_costs, self.cycle_length)
-            df_q = discount_factor(cycles, self.dr_qalys, self.cycle_length)
+            df_c = discount_factor(cycles, self.dr_cost, self.cycle_length)
+            df_q = discount_factor(cycles, self.dr_qaly, self.cycle_length)
 
             discounted_costs = {cat: costs_hcc[cat] * df_c for cat in costs_hcc}
             discounted_qalys = qalys_hcc * df_q
@@ -627,6 +641,9 @@ class PSMModel:
         sim = self._simulate_single(params)
         return PSMBaseResult(model=self, results=sim, params=params)
 
+    # Parameters that live as model attributes (varied via setattr in OWSA)
+    _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
+
     def run_owsa(
         self,
         params: Optional[List[str]] = None,
@@ -653,10 +670,24 @@ class PSMModel:
             low = p.low if p.low is not None else p.base * (1 - range_pct)
             high = p.high if p.high is not None else p.base * (1 + range_pct)
 
+            is_attr = param_name in self._ATTR_PARAMS
+
             for bound, val in [('low', low), ('high', high)]:
                 test_params = base_params.copy()
-                test_params[param_name] = val
-                result = self._simulate_single(test_params)
+
+                saved = None
+                if is_attr:
+                    saved = getattr(self, param_name)
+                    setattr(self, param_name, val)
+                else:
+                    test_params[param_name] = val
+
+                try:
+                    result = self._simulate_single(test_params)
+                finally:
+                    if saved is not None:
+                        setattr(self, param_name, saved)
+
                 owsa_data.append({
                     'param': param_name,
                     'label': p.label,
@@ -722,7 +753,7 @@ class PSMModel:
             f"  Endpoints ({self.n_endpoints}): {self.survival_endpoints}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
-            f"  Discount rates: costs={self.dr_costs:.1%}, QALYs={self.dr_qalys:.1%}",
+            f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
             f"  Half-cycle correction: {self._hcc_method or 'None'}",
             f"  Parameters ({len(self.params)}):",
         ]

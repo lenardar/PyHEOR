@@ -38,7 +38,8 @@ model = ph.MicroSimModel(
     n_cycles=30,
     n_patients=5000,
     cycle_length=1.0,        # Annual cycles
-    discount_rate={"costs": 0.03, "qalys": 0.03},
+    dr_cost=0.03,
+    dr_qaly=0.03,
     half_cycle_correction=True,
     seed=42,
 )
@@ -163,7 +164,8 @@ cohort = ph.MarkovModel(
     strategies=["Standard of Care", "New Treatment"],
     n_cycles=30,
     cycle_length=1.0,
-    discount_rate={"costs": 0.03, "qalys": 0.03},
+    dr_cost=0.03,
+    dr_qaly=0.03,
     half_cycle_correction=True,
 )
 
@@ -220,7 +222,8 @@ hetero_model = ph.MicroSimModel(
     n_cycles=30,
     n_patients=5000,
     cycle_length=1.0,
-    discount_rate=0.03,
+    dr_cost=0.03,
+    dr_qaly=0.03,
     seed=42,
 )
 

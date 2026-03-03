@@ -99,8 +99,12 @@ class MarkovModel:
         Number of model cycles to simulate.
     cycle_length : float
         Length of each cycle in years (default: 1.0).
-    discount_rate : float or dict
-        Annual discount rate(s). If dict, keys are 'costs' and 'qalys'.
+    dr_cost : float or Param
+        Annual discount rate for costs. Default: 0 (no discounting).
+        Pass a ``Param`` object to enable sensitivity analysis on this rate.
+    dr_qaly : float or Param
+        Annual discount rate for QALYs. Default: 0 (no discounting).
+        Pass a ``Param`` object to enable sensitivity analysis on this rate.
     half_cycle_correction : bool or str or None
         Half-cycle correction method. Options:
 
@@ -122,7 +126,8 @@ class MarkovModel:
     ...     strategies=["SOC", "New"],
     ...     n_cycles=20,
     ...     cycle_length=1.0,
-    ...     discount_rate={"costs": 0.03, "qalys": 0.03},
+    ...     dr_cost=0.03,
+    ...     dr_qaly=0.03,
     ... )
     """
     
@@ -132,7 +137,8 @@ class MarkovModel:
         strategies: Union[List[str], Dict[str, str]],
         n_cycles: int,
         cycle_length: float = 1.0,
-        discount_rate: Union[float, Dict[str, float]] = 0.03,
+        dr_cost: Union[float, "Param"] = 0.0,
+        dr_qaly: Union[float, "Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
         initial_state: Union[str, int] = 0,
         state_type: Optional[Dict[str, str]] = None,
@@ -154,14 +160,25 @@ class MarkovModel:
         self.n_cycles = n_cycles
         self.cycle_length = cycle_length
         self._hcc_method = normalize_hcc(half_cycle_correction)
-        
+
+        # Parameters (init early so discount rates can register into it)
+        self.params: Dict[str, Param] = {}
+
         # Discount rates
-        if isinstance(discount_rate, (int, float)):
-            self.dr_costs = float(discount_rate)
-            self.dr_qalys = float(discount_rate)
+        if isinstance(dr_cost, Param):
+            self.dr_cost = dr_cost.base
+            if not dr_cost.label:
+                dr_cost.label = "Discount Rate (Cost)"
+            self.params["dr_cost"] = dr_cost
         else:
-            self.dr_costs = float(discount_rate.get('costs', 0.03))
-            self.dr_qalys = float(discount_rate.get('qalys', 0.03))
+            self.dr_cost = float(dr_cost)
+        if isinstance(dr_qaly, Param):
+            self.dr_qaly = dr_qaly.base
+            if not dr_qaly.label:
+                dr_qaly.label = "Discount Rate (QALY)"
+            self.params["dr_qaly"] = dr_qaly
+        else:
+            self.dr_qaly = float(dr_qaly)
         
         # Initial state
         if isinstance(initial_state, str):
@@ -178,10 +195,7 @@ class MarkovModel:
         else:
             # Default: all states except last are "alive"
             self._alive_states = list(range(self.n_states - 1))
-        
-        # Parameters
-        self.params: Dict[str, Param] = {}
-        
+
         # Transitions: strategy_name -> matrix or callable
         self._transitions: Dict[str, Any] = {}
         
@@ -901,8 +915,8 @@ class MarkovModel:
             
             # --- Discounting ---
             cycles = np.arange(self.n_cycles + 1, dtype=float)
-            df_c = discount_factor(cycles, self.dr_costs, self.cycle_length)
-            df_q = discount_factor(cycles, self.dr_qalys, self.cycle_length)
+            df_c = discount_factor(cycles, self.dr_cost, self.cycle_length)
+            df_q = discount_factor(cycles, self.dr_qaly, self.cycle_length)
             
             discounted_costs = {cat: costs_hcc[cat] * df_c for cat in costs_hcc}
             discounted_qalys = qalys_hcc * df_q
@@ -947,12 +961,10 @@ class MarkovModel:
         sim = self._simulate_single(params)
         return BaseResult(model=self, results=sim, params=params)
     
-    # Model-level parameters that can be varied in OWSA.
-    # Maps param name → tuple of model attributes to set.
-    _MODEL_LEVEL_PARAMS = {
-        'dr': ('dr_costs', 'dr_qalys'),
-        'discount_rate': ('dr_costs', 'dr_qalys'),
-    }
+    # Parameters that live as model attributes rather than in the params dict
+    # passed to _simulate_single. When varied in OWSA, the corresponding
+    # model attribute is temporarily overwritten.
+    _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
 
     def run_owsa(
         self,
@@ -968,8 +980,8 @@ class MarkovModel:
         Parameters
         ----------
         params : list of str, optional
-            Parameter names to vary. Default: all parameters with distributions.
-            Model-level parameters like "dr" (discount rate) are also supported.
+            Parameter names to vary. Default: all parameters with
+            low/high bounds or distributions defined.
         range_pct : float
             Percentage range for variation if low/high not set (default: ±20%).
         wtp : float
@@ -1000,26 +1012,23 @@ class MarkovModel:
             low = p.low if p.low is not None else p.base * (1 - range_pct)
             high = p.high if p.high is not None else p.base * (1 + range_pct)
 
-            is_model_level = param_name in self._MODEL_LEVEL_PARAMS
+            is_attr = param_name in self._ATTR_PARAMS
 
             for bound, val in [('low', low), ('high', high)]:
                 test_params = base_params.copy()
 
-                # Model-level params: temporarily modify model attributes
-                saved_attrs = {}
-                if is_model_level:
-                    for attr in self._MODEL_LEVEL_PARAMS[param_name]:
-                        saved_attrs[attr] = getattr(self, attr)
-                        setattr(self, attr, val)
+                saved = None
+                if is_attr:
+                    saved = getattr(self, param_name)
+                    setattr(self, param_name, val)
                 else:
                     test_params[param_name] = val
 
                 try:
                     result = self._simulate_single(test_params)
                 finally:
-                    # Restore model-level attributes
-                    for attr, orig_val in saved_attrs.items():
-                        setattr(self, attr, orig_val)
+                    if saved is not None:
+                        setattr(self, param_name, saved)
 
                 owsa_data.append({
                     'param': param_name,
@@ -1102,7 +1111,7 @@ class MarkovModel:
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
-            f"  Discount rates: costs={self.dr_costs:.1%}, QALYs={self.dr_qalys:.1%}",
+            f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
             f"  Half-cycle correction: {self._hcc_method or 'None'}",
             f"  Parameters ({len(self.params)}):",
         ]

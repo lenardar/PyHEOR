@@ -26,7 +26,8 @@ class TestMicroSimRun:
             n_cycles=10,
             n_patients=100,
             cycle_length=1.0,
-            discount_rate=0.03,
+            dr_cost=0.03,
+            dr_qaly=0.03,
             seed=42,
         )
         model.add_param("p_death", base=0.1)

@@ -86,8 +86,8 @@ def _export_markov_base(result, filepath: str):
             {'Setting': 'Strategies', 'Value': ', '.join(model.strategy_names)},
             {'Setting': 'Number of Cycles', 'Value': model.n_cycles},
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
-            {'Setting': 'Discount Rate (costs)', 'Value': model.dr_costs},
-            {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qalys},
+            {'Setting': 'Discount Rate (costs)', 'Value': model.dr_cost},
+            {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qaly},
             {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
             {'Setting': 'Initial State', 'Value': model.states[model.initial_state_idx]},
         ])
@@ -128,7 +128,7 @@ def _export_markov_base(result, filepath: str):
             # --- Costs sheet ---
             costs_sheet = f'Costs_{label}'[:31]
             cycles = np.arange(model.n_cycles + 1)
-            df_c = 1 / (1 + model.dr_costs) ** (cycles * model.cycle_length)
+            df_c = 1 / (1 + model.dr_cost) ** (cycles * model.cycle_length)
 
             costs_data = {'Cycle': cycles}
             costs_data['Time (yrs)'] = cycles * model.cycle_length
@@ -166,7 +166,7 @@ def _export_markov_base(result, filepath: str):
 
             # --- QALYs sheet ---
             qaly_sheet = f'QALYs_{label}'[:31]
-            df_q = 1 / (1 + model.dr_qalys) ** (cycles * model.cycle_length)
+            df_q = 1 / (1 + model.dr_qaly) ** (cycles * model.cycle_length)
 
             qaly_data = {
                 'Cycle': cycles,
@@ -249,8 +249,8 @@ def _export_psm_base(result, filepath: str):
             {'Setting': 'Strategies', 'Value': ', '.join(model.strategy_names)},
             {'Setting': 'Number of Cycles', 'Value': model.n_cycles},
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
-            {'Setting': 'Discount Rate (costs)', 'Value': model.dr_costs},
-            {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qalys},
+            {'Setting': 'Discount Rate (costs)', 'Value': model.dr_cost},
+            {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qaly},
             {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
         ])
         settings.to_excel(writer, sheet_name='Settings', index=False)
@@ -296,7 +296,7 @@ def _export_psm_base(result, filepath: str):
 
             # --- Costs ---
             costs_sheet = f'Costs_{label}'[:31]
-            df_c = 1 / (1 + model.dr_costs) ** (cycles * model.cycle_length)
+            df_c = 1 / (1 + model.dr_cost) ** (cycles * model.cycle_length)
             hcc = np.ones(model.n_cycles + 1)
             if model.half_cycle_correction == "trapezoidal":
                 hcc[0] = 0.5
@@ -330,7 +330,7 @@ def _export_psm_base(result, filepath: str):
 
             # --- QALYs ---
             qaly_sheet = f'QALYs_{label}'[:31]
-            df_q = 1 / (1 + model.dr_qalys) ** (cycles * model.cycle_length)
+            df_q = 1 / (1 + model.dr_qaly) ** (cycles * model.cycle_length)
 
             qaly_data = {
                 'Cycle': cycles,
