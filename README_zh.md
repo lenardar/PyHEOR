@@ -997,6 +997,9 @@ pyheor/
 - [X] 模型校准 (Nelder-Mead 多起点优化, LHS 随机搜索, SSE/WSSE/似然 GoF)
 - [X] Markdown 一键报告 (`generate_report`)
 - [X] 正式测试套件 (pytest, 243 个测试覆盖全部模块)
+- [ ] 结构化输出 (`to_dict` / `to_json`)，面向 LLM 的机器可读结果
+- [ ] 自动解读 (`interpret(wtp)`)——标准化结论文本生成
+- [ ] 自然语言建模接口——JSON Schema 模型定义，自动构建与执行
 
 ---
 

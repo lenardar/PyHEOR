@@ -997,6 +997,9 @@ pyheor/
 - [X] Calibration de modèle (optimisation multi-départ Nelder-Mead, recherche aléatoire LHS, SSE/WSSE/vraisemblance GoF)
 - [X] Rapport Markdown en un clic (`generate_report`)
 - [X] Suite de tests formelle (pytest, 243 tests couvrant tous les modules)
+- [ ] Sortie structurée (`to_dict` / `to_json`) pour résultats lisibles par les LLM
+- [ ] Interprétation automatique (`interpret(wtp)`) — génération de texte de conclusion standardisé
+- [ ] Interface de modélisation en langage naturel — définition de modèle par JSON Schema, construction et exécution automatiques
 
 ---
 
