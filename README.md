@@ -1,76 +1,78 @@
 # PyHEOR — Python Health Economics and Outcome Research
 
-> **用 Python 做卫生经济学建模，像 R 的 hesim / DARTH 一样专业，但更简洁。**
+**English** | [中文](README_zh.md) | [Français](README_fr.md)
 
-PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
+> **Health economics modeling in Python — as professional as R's hesim / DARTH, but more concise.**
 
-| 功能                              | 说明                                                                                        |
-| --------------------------------- | ------------------------------------------------------------------------------------------- |
-| **Markov 队列模型**               | 离散时间状态转移模型 (cDTSTM)，时齐 / 时变转移矩阵                                          |
-| **分区生存模型 (PSM)**            | 基于参数化生存曲线的状态概率划分                                                            |
-| **微观模拟**                      | 个体水平状态转移模型，支持患者异质性、事件处理器、双层 PSA                                  |
-| **离散事件模拟 (DES)**            | 连续时间个体模拟，竞争风险、time-to-event 分布驱动、HR/AFT 集成                             |
-| **参数化生存分布**                | Exponential, Weibull, Log-logistic, Log-normal, Gompertz, Generalized Gamma 等 10 种        |
-| **灵活的费用定义**                | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表、自定义费用函数               |
-| **基础分析 / OWSA / PSA**         | 确定性分析、龙卷风图 (INMB/ICER)、Monte Carlo + CE 散点图 + CEAC                            |
-| **多策略比较 & NMB**              | 效率前沿、支配/扩展支配检测、NMB 曲线、CEAF、EVPI                                           |
-| **IPD 生存曲线拟合**              | 6 种参数分布 MLE 拟合，AIC/BIC 比较，自动选优                                               |
-| **KM 曲线数字化重建**             | Guyot method 从发表文献 KM 图反推 IPD，含数字化噪声预处理                                    |
-| **NMA 整合**                      | 导入 R 后验样本，保留相关性，自动生成 PH/AFT 曲线                                           |
-| **预算影响分析 (BIA)**            | 人群规模模型、市场份额演变、摄取曲线、情景/单因素敏感性分析                                  |
-| **模型校准**                      | 用观测数据反推未知参数：Nelder-Mead 多起点优化、LHS 随机搜索、SSE/WSSE/似然 GoF              |
-| **可视化**                        | 28 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC、KM+拟合曲线、BIA 影响图等    |
-| **导出**                          | Excel 多 Sheet 导出、Excel 公式验证模型、Markdown 一键报告                                   |
+PyHEOR is a Python framework for health economics research, supporting:
 
----
-
-## 目录
-
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [用户指南](#用户指南)
-  - [模型类型](#模型类型) · [参数系统](#参数系统) · [转移矩阵](#转移矩阵) · [费用与效用](#费用与效用) · [生存分析](#生存分析) · [敏感性分析与报告](#敏感性分析与报告) · [高级功能](#高级功能) · [导出](#导出)
-- [可视化一览](#可视化一览)
-- [项目结构](#项目结构) · [设计理念](#设计理念) · [路线图](#路线图)
+| Feature                           | Description                                                                                  |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Markov Cohort Model**           | Discrete-time state-transition model (cDTSTM), time-homogeneous / time-dependent transition matrices |
+| **Partitioned Survival Model (PSM)** | State probability partitioning based on parametric survival curves                          |
+| **Microsimulation**               | Individual-level state-transition model with patient heterogeneity, event handlers, two-level PSA |
+| **Discrete Event Simulation (DES)** | Continuous-time individual simulation, competing risks, time-to-event distribution driven, HR/AFT integration |
+| **Parametric Survival Distributions** | Exponential, Weibull, Log-logistic, Log-normal, Gompertz, Generalized Gamma, and 10 others |
+| **Flexible Cost Definitions**     | First-cycle costs, time-dependent functions, one-time costs, WLOS method, transition cost schedules, custom cost functions |
+| **Base Case / OWSA / PSA**        | Deterministic analysis, tornado diagrams (INMB/ICER), Monte Carlo + CE scatter plot + CEAC    |
+| **Multi-Strategy Comparison & NMB** | Efficiency frontier, dominance/extended dominance detection, NMB curves, CEAF, EVPI          |
+| **IPD Survival Curve Fitting**    | MLE fitting with 6 parametric distributions, AIC/BIC comparison, automatic best model selection |
+| **KM Curve Digitization & Reconstruction** | Guyot method to reconstruct IPD from published KM plots, with digitization noise preprocessing |
+| **NMA Integration**               | Import R posterior samples, preserve correlations, auto-generate PH/AFT curves               |
+| **Budget Impact Analysis (BIA)**  | Population size models, market share evolution, uptake curves, scenario/one-way sensitivity analysis |
+| **Model Calibration**             | Estimate unknown parameters from observed data: Nelder-Mead multi-start optimization, LHS random search, SSE/WSSE/likelihood GoF |
+| **Visualization**                 | 28 professional charts: state transition diagrams, frontier plots, NMB curves, CEAF, EVPI, CEAC, KM + fitted curves, BIA impact plots, etc. |
+| **Export**                         | Multi-sheet Excel export, Excel formula-based verification model, one-click Markdown reports  |
 
 ---
 
-## 安装
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [User Guide](#user-guide)
+  - [Model Types](#model-types) · [Parameter System](#parameter-system) · [Transition Matrix](#transition-matrix) · [Costs and Utilities](#costs-and-utilities) · [Survival Analysis](#survival-analysis) · [Sensitivity Analysis and Reporting](#sensitivity-analysis-and-reporting) · [Advanced Features](#advanced-features) · [Export](#export)
+- [Visualization Gallery](#visualization-gallery)
+- [Project Structure](#project-structure) · [Design Philosophy](#design-philosophy) · [Roadmap](#roadmap)
+
+---
+
+## Installation
 
 ```bash
-# 从源码安装
+# Install from source
 git clone <repo-url>
 cd pyheor
 pip install -e .
 ```
 
-依赖：`numpy`, `pandas`, `matplotlib`, `scipy`（可选：`openpyxl` 用于 Excel 导出，`tabulate` 用于 Markdown 报告）
+Dependencies: `numpy`, `pandas`, `matplotlib`, `scipy` (optional: `openpyxl` for Excel export, `tabulate` for Markdown reports)
 
 ---
 
-## 快速开始
+## Quick Start
 
 ```python
 import pyheor as ph
 
-# ── 定义模型 ──
+# ── Define Model ──
 model = ph.MarkovModel(
     states=["Healthy", "Sick", "Dead"],
     strategies=["SOC", "Treatment"],
     n_cycles=40,
     cycle_length=1,
-    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="费用贴现率"),
-    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="效用贴现率"),
+    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="Cost discount rate"),
+    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="Utility discount rate"),
     half_cycle_correction=True,
 )
 
-# ── 参数 ──
+# ── Parameters ──
 model.add_param("p_HS", base=0.15, low=0.10, high=0.20,
     dist=ph.Beta(mean=0.15, sd=0.03))
 model.add_param("c_drug", base=2000, low=1500, high=2500,
     dist=ph.Gamma(mean=2000, sd=400))
 
-# ── 转移矩阵 (ph.C = 补数) ──
+# ── Transition Matrix (ph.C = complement) ──
 model.set_transitions("SOC", lambda p, t: [
     [ph.C,  p["p_HS"], 0.02],
     [0,     ph.C,      0.10],
@@ -82,7 +84,7 @@ model.set_transitions("Treatment", lambda p, t: [
     [0,     0,                1   ],
 ])
 
-# ── 费用 & 效用 ──
+# ── Costs & Utilities ──
 model.set_state_cost("medical", {"Healthy": 500, "Sick": 3000, "Dead": 0})
 model.set_state_cost("drug", {
     "SOC": {"Healthy": 0, "Sick": 0, "Dead": 0},
@@ -94,34 +96,34 @@ model.set_state_cost("drug", {
 })
 model.set_utility({"Healthy": 0.95, "Sick": 0.60, "Dead": 0.0})
 
-# ── 运行分析 ──
+# ── Run Analysis ──
 result = model.run_base_case()
 print(result.summary())
 print(result.icer())
 
-owsa = model.run_owsa()       # 贴现率通过 Param 自动参与 OWSA
+owsa = model.run_owsa()       # Discount rates auto-included in OWSA via Param
 owsa.plot_tornado()
 
 psa = model.run_psa(n_sim=1000)
 psa.plot_ceac()
 
-# ── 一键生成 Markdown 报告 ──
+# ── One-click Markdown Report ──
 ph.generate_report(model, "report.md")
 ```
 
 ---
 
-## 用户指南
+## User Guide
 
-### 模型类型
+### Model Types
 
-#### Markov 队列模型
+#### Markov Cohort Model
 
-离散时间队列模型 (cDTSTM)，适用于状态转移概率已知的简单模型。完整示例见 [快速开始](#快速开始)。
+Discrete-time cohort model (cDTSTM), suitable for simple models with known state-transition probabilities. See the full example in [Quick Start](#quick-start).
 
-#### 分区生存模型 (PSM)
+#### Partitioned Survival Model (PSM)
 
-基于参数化生存曲线推导状态占比，适用于肿瘤经济学中常见的 PFS/OS 分析框架。
+Derives state proportions from parametric survival curves, suitable for the PFS/OS analysis framework commonly used in oncology health economics.
 
 ```python
 import pyheor as ph
@@ -136,21 +138,21 @@ psm = ph.PSMModel(
     dr_qaly=0.03,
 )
 
-# 基线生存曲线
+# Baseline survival curves
 baseline_pfs = ph.LogLogistic(shape=1.5, scale=18)
 baseline_os = ph.Weibull(shape=1.2, scale=36)
 
-# SOC: 直接使用基线
+# SOC: use baseline directly
 psm.set_survival("SOC", "PFS", baseline_pfs)
 psm.set_survival("SOC", "OS", baseline_os)
 
-# New Drug: HR / AFT 修饰
+# New Drug: HR / AFT modification
 psm.set_survival("New Drug", "PFS",
     lambda p: ph.AcceleratedFailureTime(baseline_pfs, af=1.3))
 psm.set_survival("New Drug", "OS",
     lambda p: ph.ProportionalHazards(baseline_os, hr=0.7))
 
-# 费用 & 效用
+# Costs & Utilities
 psm.set_state_cost("treatment", {
     "SOC": {"PFS": 1000, "Progressed": 2500, "Dead": 0},
     "New Drug": {"PFS": 6000, "Progressed": 2500, "Dead": 0},
@@ -163,9 +165,9 @@ result.plot_survival()
 result.plot_state_area()
 ```
 
-#### 微观模拟 (Microsimulation)
+#### Microsimulation
 
-个体水平状态转移模型，与 MarkovModel 共享同一套 API（`add_param`, `set_transitions`, `set_state_cost`, `set_utility`），但每位患者独立采样，产生个体异质性结局。
+Individual-level state-transition model that shares the same API as MarkovModel (`add_param`, `set_transitions`, `set_state_cost`, `set_utility`), but each patient is sampled independently, producing heterogeneous individual-level outcomes.
 
 ```python
 import pyheor as ph
@@ -204,18 +206,18 @@ model.set_state_cost("drug", {
 })
 model.set_utility({"Healthy": 0.95, "Sick": 0.75, "Sicker": 0.50, "Dead": 0.0})
 
-# 事件处理器：进入 Sicker 时一次性住院费
+# Event handler: one-time hospitalization cost upon entering Sicker
 model.on_state_enter("Sicker", lambda idx, t, attrs: {"cost": 15000})
 
 result = model.run_base_case(verbose=True)
-print(result.summary())   # 含 SD 和 95% 百分位数
+print(result.summary())   # Includes SD and 95% percentiles
 
-# PSA: 外层参数不确定性 × 内层个体随机性
+# PSA: outer parameter uncertainty x inner individual stochasticity
 psa = model.run_psa(n_outer=500, n_inner=2000, seed=42)
 psa.plot_ceac(wtp_range=(0, 150000))
 ```
 
-**患者异质性**：转移概率支持 3 参数 lambda `(params, cycle, attrs)`，可基于个体属性（年龄、性别等）调整：
+**Patient Heterogeneity**: Transition probabilities support a 3-argument lambda `(params, cycle, attrs)`, enabling adjustments based on individual attributes (age, sex, etc.):
 
 ```python
 import numpy as np
@@ -236,11 +238,11 @@ model.set_transitions("SOC", lambda p, t, attrs: [
 ])
 ```
 
-**性能优化**：当转移矩阵不依赖个体属性（2 参数 lambda）时，引擎自动使用向量化批量采样，速度接近队列模型。
+**Performance Optimization**: When the transition matrix does not depend on individual attributes (2-argument lambda), the engine automatically uses vectorized batch sampling, achieving speeds comparable to the cohort model.
 
-#### 离散事件模拟 (DES)
+#### Discrete Event Simulation (DES)
 
-DES 在**连续时间**下模拟个体患者，事件时间直接从生存分布中抽样，无需固定周期长度。
+DES simulates individual patients in **continuous time**, with event times sampled directly from survival distributions, eliminating the need for fixed cycle lengths.
 
 ```python
 import pyheor as ph
@@ -260,18 +262,18 @@ baseline_pfs2prog = ph.Weibull(shape=1.2, scale=5.0)
 baseline_pfs2dead = ph.Weibull(shape=1.0, scale=20.0)
 baseline_prog2dead = ph.Weibull(shape=1.5, scale=3.0)
 
-# SOC: 直接使用基线
+# SOC: use baseline directly
 model.set_event("SOC", "PFS", "Progressed", baseline_pfs2prog)
 model.set_event("SOC", "PFS", "Dead",       baseline_pfs2dead)
 model.set_event("SOC", "Progressed", "Dead", baseline_prog2dead)
 
-# TRT: HR 应用于 PFS→Progressed
+# TRT: HR applied to PFS->Progressed
 model.set_event("TRT", "PFS", "Progressed",
     lambda p: ph.ProportionalHazards(baseline_pfs2prog, p["hr_pfs"]))
 model.set_event("TRT", "PFS", "Dead",       baseline_pfs2dead)
 model.set_event("TRT", "Progressed", "Dead", baseline_prog2dead)
 
-# 费用 (连续时间费率: 元/年)
+# Costs (continuous-time rates: $/year)
 model.set_state_cost("drug", {
     "SOC": {"PFS": 500, "Progressed": 200, "Dead": 0},
     "TRT": {"PFS": 3000, "Progressed": 200, "Dead": 0},
@@ -281,7 +283,7 @@ model.set_entry_cost("surgery", "Progressed", 50000)
 
 model.set_utility({"PFS": 0.85, "Progressed": 0.50, "Dead": 0})
 
-# 运行
+# Run
 result = model.run(n_patients=3000, seed=42)
 result.summary()
 result.icer()
@@ -291,80 +293,80 @@ psa = model.run_psa(n_sim=200, n_patients=1000, seed=123)
 psa.summary()
 ```
 
-**DES vs 其他模型类型**：
+**DES vs Other Model Types**:
 
-| 特性 | MarkovModel | MicroSimModel | DESModel |
-|------|-------------|---------------|----------|
-| 时间轴 | 离散周期 | 离散周期 | 连续时间 |
-| 分析层级 | 队列 | 个体 | 个体 |
-| 转移机制 | 转移矩阵 | 转移概率 | time-to-event 分布 |
-| 竞争风险 | 需手动处理 | 需手动处理 | 天然支持 |
-| 周期伪影 | 有 (需半周期校正) | 有 | 无 |
-| 速度 | 最快 | 中等 | 较慢 |
-| 适用场景 | 简单模型 | 复杂异质性 | 事件驱动的复杂模型 |
+| Feature | MarkovModel | MicroSimModel | DESModel |
+|---------|-------------|---------------|----------|
+| Time axis | Discrete cycles | Discrete cycles | Continuous time |
+| Analysis level | Cohort | Individual | Individual |
+| Transition mechanism | Transition matrix | Transition probabilities | Time-to-event distributions |
+| Competing risks | Requires manual handling | Requires manual handling | Natively supported |
+| Cycle artifacts | Present (requires half-cycle correction) | Present | None |
+| Speed | Fastest | Moderate | Slower |
+| Use case | Simple models | Complex heterogeneity | Event-driven complex models |
 
 ---
 
-### 参数系统
+### Parameter System
 
-每个参数通过 `add_param()` 定义，包含：
+Each parameter is defined via `add_param()`, containing:
 
-| 属性               | 说明                                                                              |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `base`           | 基线值（确定性分析）                                                              |
-| `low` / `high` | OWSA 范围                                                                         |
-| `dist`           | PSA 分布（Beta, Gamma, Normal, LogNormal, Uniform, Triangular, Dirichlet, Fixed） |
+| Attribute          | Description                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `base`           | Baseline value (deterministic analysis)                                                |
+| `low` / `high` | OWSA range                                                                             |
+| `dist`           | PSA distribution (Beta, Gamma, Normal, LogNormal, Uniform, Triangular, Dirichlet, Fixed) |
 
 ```python
 model.add_param("p_progression",
-    base=0.15,           # 基线分析用
-    low=0.10, high=0.20, # OWSA 范围
-    dist=ph.Beta(mean=0.15, sd=0.03),  # PSA 用
-    label="疾病进展概率",  # 用于图表显示
+    base=0.15,           # For base case analysis
+    low=0.10, high=0.20, # OWSA range
+    dist=ph.Beta(mean=0.15, sd=0.03),  # For PSA
+    label="Disease progression probability",  # For chart display
 )
 ```
 
-#### 贴现率
+#### Discount Rates
 
-所有模型均通过 `dr_cost` 和 `dr_qaly` 两个独立参数设置贴现率。**默认值为 0（不贴现）**，未设置的一方不会被贴现。
+All models set discount rates via two independent parameters, `dr_cost` and `dr_qaly`. **The default is 0 (no discounting)**; whichever is not set will not be discounted.
 
 ```python
-# 固定贴现率
+# Fixed discount rates
 model = ph.MarkovModel(..., dr_cost=0.03, dr_qaly=0.03)
 
-# 只贴现费用
-model = ph.MarkovModel(..., dr_cost=0.06)  # dr_qaly 默认 0
+# Discount costs only
+model = ph.MarkovModel(..., dr_cost=0.06)  # dr_qaly defaults to 0
 ```
 
-传入 `Param` 对象即可将贴现率纳入 OWSA / PSA，无需额外调用 `add_param()`：
+Pass a `Param` object to include discount rates in OWSA / PSA without needing an additional `add_param()` call:
 
 ```python
 model = ph.MarkovModel(
     ...,
-    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="费用贴现率"),
-    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="效用贴现率"),
+    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="Cost discount rate"),
+    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="Utility discount rate"),
 )
 
 owsa = model.run_owsa()
-owsa.plot_tornado()  # 龙卷风图中包含贴现率
+owsa.plot_tornado()  # Tornado diagram includes discount rates
 
-# 也可以只对其中一个做敏感性分析
+# You can also apply sensitivity analysis to only one
 model = ph.MarkovModel(
     ...,
-    dr_cost=0.03,                                        # 固定
-    dr_qaly=ph.Param(0.03, low=0.0, high=0.05),          # 变动
+    dr_cost=0.03,                                        # Fixed
+    dr_qaly=ph.Param(0.03, low=0.0, high=0.05),          # Variable
 )
 ```
 
-> **设计原则**：贴现率的基准值和敏感性分析范围在同一处定义，避免重复指定。`float` = 固定值，`Param` = 可变动值。
+> **Design Principle**: The baseline value and sensitivity analysis range for discount rates are defined in the same place, avoiding redundant specification. `float` = fixed value, `Param` = variable value.
 
-#### 半周期校正
+#### Half-Cycle Correction
 
-| 值                         | 说明                                            |
-| -------------------------- | ----------------------------------------------- |
-| `True` / `"trapezoidal"` | 梯形法：首尾周期权重 ×0.5（默认）                |
-| `"life-table"`            | 生命表法：相邻 trace 行取均值（与 R heemod 一致）|
-| `False` / `None`          | 不校正                                          |
+| Value                      | Description                                               |
+| -------------------------- | --------------------------------------------------------- |
+| `True` / `"trapezoidal"` | Trapezoidal method: first and last cycle weights x0.5 (default) |
+| `"life-table"`            | Life-table method: average of adjacent trace rows (consistent with R heemod) |
+| `False` / `None`          | No correction                                             |
 
 ```python
 model.half_cycle_correction = "life-table"
@@ -374,19 +376,19 @@ model.half_cycle_correction = False
 
 ---
 
-### 转移矩阵
+### Transition Matrix
 
-使用 `ph.C`（补数哨兵）自动计算对角线元素：
+Use `ph.C` (complement sentinel) to auto-calculate diagonal elements:
 
 ```python
-# 时齐矩阵
+# Time-homogeneous matrix
 model.set_transitions("Strategy", lambda p, t: [
     [ph.C,  p["p_AB"], p["p_AD"]],
     [0,     ph.C,      p["p_BD"]],
     [0,     0,         1        ],
 ])
 
-# 时变矩阵（t 为周期数）
+# Time-dependent matrix (t is the cycle number)
 model.set_transitions("Strategy", lambda p, t: [
     [ph.C,  p["p_AB"] * (1 + 0.01 * t), p["p_AD"]],
     [0,     ph.C,                        p["p_BD"] + 0.001 * t],
@@ -396,76 +398,76 @@ model.set_transitions("Strategy", lambda p, t: [
 
 ---
 
-### 费用与效用
+### Costs and Utilities
 
-#### 状态费用
+#### State Costs
 
 ```python
-# 基础状态费用
+# Basic state cost
 model.set_state_cost("Sick", "Treatment", lambda p, t: 3000)
 
-# 时间依赖费用
+# Time-dependent cost
 model.set_state_cost("Sick", "Treatment", lambda p, t: 3000 if t < 5 else 2000)
 
-# 首周期一次性费用
+# First-cycle one-time cost
 model.set_state_cost("Sick", "Treatment", lambda p, t: 50000,
                      first_cycle_only=True)
 
-# 限定应用周期
+# Restricted to specific cycles
 model.set_state_cost("Sick", "Treatment", lambda p, t: p["c_drug"],
-                     apply_cycles=(0, 24))  # 仅前 24 个周期
+                     apply_cycles=(0, 24))  # First 24 cycles only
 
-# WLOS (Weighted Length of Stay) 方法
+# WLOS (Weighted Length of Stay) method
 model.set_state_cost("Sick", "Treatment", lambda p, t: 5000,
                      method="wlos")
 ```
 
-#### 转移费用 (Transition Costs)
+#### Transition Costs
 
-状态转移时触发的费用（如疾病进展时的手术费、转入 ICU 时的住院费）。基于每周期的**转移流量**自动计算：`trace[t-1, from] × P[from→to] × 单位费用`。
+Costs triggered upon state transitions (e.g., surgery costs upon disease progression, hospitalization costs upon ICU transfer). Automatically calculated based on per-cycle **transition flows**: `trace[t-1, from] x P[from->to] x unit cost`.
 
 ```python
-# 从 Healthy 进入 Sick 时的手术费
+# Surgery cost upon transitioning from Healthy to Sick
 model.set_transition_cost("surgery", "Healthy", "Sick", 50000)
 
-# 参数引用
+# Parameter reference
 model.set_transition_cost("surgery", "Healthy", "Sick", "c_surgery")
 
-# 策略特异性
+# Strategy-specific
 model.set_transition_cost("icu", "Sick", "Dead", {
     "SOC": 20000,
     "Treatment": 15000,
 })
 ```
 
-**费用计划表**：当转移后需要跨多个周期产生费用时（如手术 + 随访），传入列表。引擎通过卷积自动处理多批次转入患者的费用叠加：
+**Cost Schedules**: When a transition triggers costs spanning multiple cycles (e.g., surgery + follow-up), pass a list. The engine automatically handles cost stacking from multiple cohorts of transitioning patients via convolution:
 
 ```python
-# 进展时手术 50000，下一周期随访 10000 → 共 2 周期
+# Progression: surgery 50000, next cycle follow-up 10000 -> spans 2 cycles
 model.set_transition_cost("surgery", "PFS", "Progressed", [50000, 10000])
 
-# 参数引用也可以在列表中使用
+# Parameter references can also be used within lists
 model.set_transition_cost("chemo", "PFS", "Progressed",
     ["c_chemo_init", "c_chemo_maint", "c_chemo_maint"])
 
-# 策略特异性 + 计划表混用
+# Strategy-specific + schedule mixed usage
 model.set_transition_cost("rescue", "PFS", "Progressed", {
-    "SOC": [30000, 5000],       # 计划表
-    "New Drug": 15000,           # 标量
+    "SOC": [30000, 5000],       # Schedule
+    "New Drug": 15000,           # Scalar
 })
 ```
 
-> **与 `first_cycle_only` 的区别**：`first_cycle_only` 只在 cycle 0 生效（仅一次）；transition cost 在**每个周期**只要有人转移就会产生费用。Transition cost 不受半周期校正影响（事件型费用）。
+> **Difference from `first_cycle_only`**: `first_cycle_only` only applies at cycle 0 (once only); transition costs are incurred in **every cycle** whenever patients transition. Transition costs are not affected by half-cycle correction (event-type costs).
 
-#### 自定义费用 (Custom Costs)
+#### Custom Costs
 
-当 `set_transition_cost` 按单个状态对定义费用不够灵活时，可以用 `set_custom_cost` 传入自定义函数，直接基于转移矩阵和状态分布计算费用。支持 MarkovModel 和 PSMModel。
+When `set_transition_cost` with per-state-pair definitions is not flexible enough, use `set_custom_cost` to pass a custom function that calculates costs directly based on the transition matrix and state distribution. Supported by MarkovModel and PSMModel.
 
 ```python
-# 函数签名
+# Function signature
 # func(strategy, params, t, state_prev, state_curr, P, states) -> float
 
-# MarkovModel: 基于转移流量计算手术费
+# MarkovModel: calculate surgery cost based on transition flows
 def surgery_cost(strategy, params, t, state_prev, state_curr, P, states):
     i_from = states.index("PFS")
     i_to = states.index("Progressed")
@@ -474,7 +476,7 @@ def surgery_cost(strategy, params, t, state_prev, state_curr, P, states):
 
 model.set_custom_cost("surgery", surgery_cost)
 
-# PSMModel: 基于状态变化量计算进展费用 (无转移矩阵，P=None)
+# PSMModel: calculate progression cost based on state changes (no transition matrix, P=None)
 def progression_cost(strategy, params, t, state_prev, state_curr, P, states):
     i_prog = states.index("Progressed")
     new_prog = max(0, state_curr[i_prog] - state_prev[i_prog])
@@ -483,37 +485,37 @@ def progression_cost(strategy, params, t, state_prev, state_curr, P, states):
 psm.set_custom_cost("progression", progression_cost)
 ```
 
-> 自定义费用不受半周期校正影响（与转移费用一致）。函数通过 `params` 接收参数值，OWSA/PSA 的参数变化和抽样会自然传导。
+> Custom costs are not affected by half-cycle correction (consistent with transition costs). The function receives parameter values via `params`, and OWSA/PSA parameter variations and sampling propagate naturally.
 
 ---
 
-### 生存分析
+### Survival Analysis
 
-#### 参数化生存分布
+#### Parametric Survival Distributions
 
-10 种内置生存分布：
+10 built-in survival distributions:
 
-| 分布                               | 参数      | 风险形状特征                         |
-| ---------------------------------- | --------- | ------------------------------------ |
-| `Exponential(rate)`              | λ        | 常数风险                             |
-| `Weibull(shape, scale)`          | α, λ    | shape>1 递增，<1 递减                |
-| `LogLogistic(shape, scale)`      | α, λ    | shape>1 先升后降                     |
-| `SurvLogNormal(meanlog, sdlog)`  | μ, σ    | 先升后降                             |
-| `Gompertz(shape, rate)`          | a, b      | shape>0 递增，<0 递减                |
-| `GeneralizedGamma(mu, sigma, Q)` | μ, σ, Q | 灵活（含 Weibull、LogNormal 为特例） |
+| Distribution                       | Parameters | Hazard Shape Characteristics             |
+| ---------------------------------- | ---------- | ---------------------------------------- |
+| `Exponential(rate)`              | lambda     | Constant hazard                          |
+| `Weibull(shape, scale)`          | alpha, lambda | shape>1 increasing, <1 decreasing     |
+| `LogLogistic(shape, scale)`      | alpha, lambda | shape>1 rises then falls             |
+| `SurvLogNormal(meanlog, sdlog)`  | mu, sigma  | Rises then falls                         |
+| `Gompertz(shape, rate)`          | a, b       | shape>0 increasing, <0 decreasing        |
+| `GeneralizedGamma(mu, sigma, Q)` | mu, sigma, Q | Flexible (includes Weibull, LogNormal as special cases) |
 
-辅助分布：
+Auxiliary distributions:
 
-| 分布                                         | 说明                            |
-| -------------------------------------------- | ------------------------------- |
-| `ProportionalHazards(baseline, hr)`        | 等比例风险：h(t) = h₀(t) × HR |
-| `AcceleratedFailureTime(baseline, af)`     | 加速失效：S(t) = S₀(t/AF)      |
-| `KaplanMeier(times, probs)`                | 经验分布 + 外推                 |
-| `PiecewiseExponential(breakpoints, rates)` | 分段常数风险                    |
+| Distribution                                 | Description                          |
+| -------------------------------------------- | ------------------------------------ |
+| `ProportionalHazards(baseline, hr)`        | Proportional hazards: h(t) = h0(t) x HR |
+| `AcceleratedFailureTime(baseline, af)`     | Accelerated failure time: S(t) = S0(t/AF) |
+| `KaplanMeier(times, probs)`                | Empirical distribution + extrapolation |
+| `PiecewiseExponential(breakpoints, rates)` | Piecewise constant hazard            |
 
-每个分布都提供 `survival(t)`, `hazard(t)`, `pdf(t)`, `quantile(p)`, `cumulative_hazard(t)`, `restricted_mean(t_max)` 方法。
+Each distribution provides `survival(t)`, `hazard(t)`, `pdf(t)`, `quantile(p)`, `cumulative_hazard(t)`, `restricted_mean(t_max)` methods.
 
-#### IPD 生存曲线拟合
+#### IPD Survival Curve Fitting
 
 ```python
 import pyheor as ph
@@ -527,34 +529,34 @@ fitter = ph.SurvivalFitter(
 )
 fitter.fit()
 
-# AIC/BIC 比较表
+# AIC/BIC comparison table
 print(fitter.summary())
 
-# 自动选择最优模型
-best = fitter.best_model()           # 默认 AIC
-dist = best.distribution             # 可直接用于 PSM
-print(fitter.selection_report())     # 模型选择详细解读
+# Automatically select the best model
+best = fitter.best_model()           # Default: AIC
+dist = best.distribution             # Can be used directly in PSM
+print(fitter.selection_report())     # Detailed model selection report
 
-# 诊断图
-fitter.plot_fits()                   # KM + 所有拟合曲线
-fitter.plot_hazard()                 # 风险函数
+# Diagnostic plots
+fitter.plot_fits()                   # KM + all fitted curves
+fitter.plot_hazard()                 # Hazard functions
 fitter.plot_cumhazard_diagnostic()   # log(H) vs log(t)
-fitter.plot_qq()                     # Q-Q 图
+fitter.plot_qq()                     # Q-Q plot
 
-# 导出
+# Export
 fitter.to_excel("fitting_results.xlsx")
 ```
 
-**模型选择标准**：
+**Model Selection Criteria**:
 
-| 指标       | 公式                  | 说明                            |
-| ---------- | --------------------- | ------------------------------- |
-| AIC        | 2k - 2ln(L)           | 偏好拟合好+简洁的模型；适合预测 |
-| BIC        | k·ln(n) - 2ln(L)     | 比 AIC 更惩罚复杂度；适合大样本 |
-| ΔAIC      | AIC - AIC_min         | <2 差异不显著，>10 决定性差异   |
-| AIC Weight | exp(-0.5·ΔAIC) / Σ | 模型的相对可能性权重            |
+| Metric     | Formula               | Description                                          |
+| ---------- | --------------------- | ---------------------------------------------------- |
+| AIC        | 2k - 2ln(L)           | Favors good fit + parsimony; suitable for prediction |
+| BIC        | k*ln(n) - 2ln(L)      | Penalizes complexity more than AIC; suitable for large samples |
+| Delta AIC  | AIC - AIC_min          | <2 not significant, >10 decisive difference          |
+| AIC Weight | exp(-0.5*Delta AIC) / Sum | Relative likelihood weight of the model           |
 
-**IPD → PSM 一体化流程**：
+**IPD to PSM Integrated Workflow**:
 
 ```python
 fitter_os = ph.SurvivalFitter(time=df_os["time"], event=df_os["event"], label="OS")
@@ -567,46 +569,46 @@ psm.set_survival("SOC", "OS", fitter_os.best_model().distribution)
 psm.set_survival("SOC", "PFS", fitter_pfs.best_model().distribution)
 ```
 
-#### KM 曲线数字化重建
+#### KM Curve Digitization & Reconstruction
 
-从发表文献的 KM 曲线图反推 IPD，实现「文献 KM 图 → IPD → 参数拟合 → 建模」的完整流程。基于 Guyot et al. (2012) 算法。
+Reconstruct IPD from published KM curve plots, enabling the complete workflow: "Published KM plot -> IPD -> Parametric fitting -> Modeling." Based on the Guyot et al. (2012) algorithm.
 
 ```python
-# 1. 从数字化工具（如 WebPlotDigitizer）获取 KM 坐标
+# 1. Obtain KM coordinates from a digitization tool (e.g., WebPlotDigitizer)
 t_digitized = [0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 24]
 s_digitized = [1.0, 0.92, 0.83, 0.74, 0.66, 0.58, 0.50, 0.40, 0.32, 0.25, 0.20]
 
-# 2. 从文献中读取 number-at-risk 表
+# 2. Read the number-at-risk table from the publication
 t_risk = [0, 6, 12, 18, 24]
 n_risk = [120, 88, 60, 38, 22]
 
-# 3. 重建 IPD
+# 3. Reconstruct IPD
 ipd_time, ipd_event = ph.guyot_reconstruct(
     t_digitized, s_digitized, t_risk, n_risk, tot_events=96,
 )
 
-# 4. 直接喂入 SurvivalFitter
+# 4. Feed directly into SurvivalFitter
 fitter = ph.SurvivalFitter(ipd_time, ipd_event, label="OS")
 fitter.fit()
 ```
 
-**数字化坐标预处理**：`clean_digitized_km` 提供自动清洗（排序、去越界、异常值检测、强制单调等），`guyot_reconstruct` 内部也会自动调用。
+**Digitized Coordinate Preprocessing**: `clean_digitized_km` provides automatic cleaning (sorting, out-of-bounds removal, outlier detection, enforced monotonicity, etc.). `guyot_reconstruct` also calls it internally.
 
-参考文献：
+References:
 
 - Guyot P, Ades AE, Ouwens MJ, Welton NJ (2012). Enhanced secondary analysis of survival data. *BMC Med Res Methodol*, 12:9.
 - Liu N, Zhou Y, Lee JJ (2021). IPDfromKM. *BMC Med Res Methodol*.
 
 ---
 
-### 敏感性分析与报告
+### Sensitivity Analysis and Reporting
 
 #### OWSA & PSA
 
 ```python
-# OWSA（贴现率通过 Param 自动注册）
+# OWSA (discount rates auto-registered via Param)
 owsa = model.run_owsa(wtp=50000)
-print(owsa.summary(outcome="icer"))   # 按 ICER 影响幅度排序
+print(owsa.summary(outcome="icer"))   # Sorted by ICER impact magnitude
 owsa.plot_tornado(outcome="nmb", max_params=10)
 
 # PSA (Monte Carlo)
@@ -618,47 +620,47 @@ psa.plot_ceac()
 psa.plot_convergence()
 ```
 
-#### 一键报告 (`generate_report`)
+#### One-Click Report (`generate_report`)
 
-模型参数设置完毕后，一键运行全部分析并生成 Markdown 报告 + 配套图片：
+After model parameters are configured, run all analyses and generate a Markdown report + accompanying figures with a single call:
 
 ```python
 ph.generate_report(
     model,
-    "report.md",       # 输出路径，图片存入 report_files/
-    wtp=50000,          # WTP 阈值
-    n_sim=1000,         # PSA 模拟次数
-    max_params=10,      # 龙卷风图最多显示参数数
-    run_psa=None,       # None=自动检测（有 dist 就跑）
+    "report.md",       # Output path; figures saved to report_files/
+    wtp=50000,          # WTP threshold
+    n_sim=1000,         # Number of PSA simulations
+    max_params=10,      # Max parameters shown in tornado diagram
+    run_psa=None,       # None = auto-detect (runs if dist is defined)
 )
 ```
 
-报告内容包含：模型概述、参数表、基础分析结果、ICER、OWSA 龙卷风图及排序表、PSA 汇总统计及增量分析、CE 平面散点图、CEAC 曲线。所有模型类型（Markov / PSM / MicroSim / DES）均支持。
+The report includes: model overview, parameter table, base case results, ICER, OWSA tornado diagram and ranking table, PSA summary statistics and incremental analysis, CE plane scatter plot, and CEAC curve. All model types (Markov / PSM / MicroSim / DES) are supported.
 
 ---
 
-### 高级功能
+### Advanced Features
 
-#### 多策略比较 & NMB 分析
+#### Multi-Strategy Comparison & NMB Analysis
 
 ```python
-# 从确定性结果创建 CEAnalysis
+# Create CEAnalysis from deterministic results
 result = model.run_base_case()
 cea = ph.CEAnalysis.from_result(result)
 
-# 效率前沿：顺序 ICER + 支配/扩展支配检测
+# Efficiency frontier: sequential ICER + dominance/extended dominance detection
 print(cea.frontier())
 
-# NMB 排名
+# NMB ranking
 print(cea.nmb(wtp=100000))
-print(f"最优策略: {cea.optimal_strategy(wtp=100000)}")
+print(f"Optimal strategy: {cea.optimal_strategy(wtp=100000)}")
 
-# 可视化
+# Visualization
 cea.plot_frontier(wtp=100000)
 cea.plot_nmb_curve(wtp_range=(0, 200000))
 ```
 
-**PSA → CEAF & EVPI**：
+**PSA -> CEAF & EVPI**:
 
 ```python
 psa_result = model.run_psa(n_sim=2000)
@@ -669,36 +671,36 @@ print(f"EVPI at WTP=$100K: ${cea_psa.evpi_single(100000):,.0f}")
 cea_psa.plot_evpi(wtp_range=(0, 200000), population=100000)
 ```
 
-#### NMA 整合
+#### NMA Integration
 
-PyHEOR 的 NMA 模块负责**导入和使用** R 包（gemtc / multinma / bnma）产生的后验样本。
+PyHEOR's NMA module is responsible for **importing and using** posterior samples produced by R packages (gemtc / multinma / bnma).
 
 ```python
-# 加载后验样本 (支持宽/长格式 CSV)
+# Load posterior samples (supports wide/long format CSV)
 nma = ph.load_nma_samples("nma_hr_samples.csv", log_scale=True)
 print(nma.summary())
 
-# 批量注入模型参数
+# Batch inject into model parameters
 nma.add_params_to_model(model, param_prefix="hr",
                         treatments=["Drug_A", "Drug_B"])
 
-# 快速构建生存曲线
+# Quickly build survival curves
 baseline = ph.Weibull(shape=1.2, scale=8.0)
 curves = ph.make_ph_curves(baseline, nma)      # PH
 curves_aft = ph.make_aft_curves(baseline, nma)  # AFT
 ```
 
-| 类 / 函数 | 说明 |
+| Class / Function | Description |
 |---|---|
-| `load_nma_samples()` | 从 CSV/Excel/Feather 加载后验（宽/长格式，支持 log 转换） |
-| `NMAPosterior` | 后验容器，提供 `dist()` / `correlated()` / `summary()` / `add_params_to_model()` |
-| `PosteriorDist` | `Distribution` 子类，从后验列中有放回抽样 |
-| `CorrelatedPosterior` | 联合后验，同行抽样保留相关性 |
-| `make_ph_curves()` / `make_aft_curves()` | 从 NMA 后验 + 基线曲线 → PH/AFT 曲线字典 |
+| `load_nma_samples()` | Load posteriors from CSV/Excel/Feather (wide/long format, supports log transformation) |
+| `NMAPosterior` | Posterior container providing `dist()` / `correlated()` / `summary()` / `add_params_to_model()` |
+| `PosteriorDist` | `Distribution` subclass, samples with replacement from the posterior column |
+| `CorrelatedPosterior` | Joint posterior, same-row sampling to preserve correlations |
+| `make_ph_curves()` / `make_aft_curves()` | NMA posterior + baseline curve -> PH/AFT curve dictionary |
 
-#### 预算影响分析 (BIA)
+#### Budget Impact Analysis (BIA)
 
-预算影响分析估计在短期时间范围内（通常 1–5 年）引入新技术对预算的财务影响。遵循 ISPOR BIA 良好实践指南。
+Budget impact analysis estimates the financial impact of introducing a new technology on the budget over a short time horizon (typically 1-5 years). Follows the ISPOR BIA good practice guidelines.
 
 ```python
 bia = ph.BudgetImpactAnalysis(
@@ -714,48 +716,48 @@ bia.summary()
 bia.cost_by_strategy()
 ```
 
-**人群模型**：
+**Population Models**:
 
 ```python
-population=10000                                    # 固定人群
-population=[10000, 10500, 11000, 11500, 12000]      # 逐年指定
-population={"base": 10000, "growth_rate": 0.05}      # 复合增长
-population={"base": 10000, "annual_increase": 500}   # 线性增长
+population=10000                                    # Fixed population
+population=[10000, 10500, 11000, 11500, 12000]      # Specified per year
+population={"base": 10000, "growth_rate": 0.05}      # Compound growth
+population={"base": 10000, "annual_increase": 500}   # Linear growth
 ```
 
-**市场份额摄取曲线**：
+**Market Share Uptake Curves**:
 
 ```python
-ph.BudgetImpactAnalysis.linear_uptake(0.0, 0.4, 5)           # 线性
-ph.BudgetImpactAnalysis.sigmoid_uptake(0.0, 0.4, 5, steepness=1.5)  # S 型
+ph.BudgetImpactAnalysis.linear_uptake(0.0, 0.4, 5)           # Linear
+ph.BudgetImpactAnalysis.sigmoid_uptake(0.0, 0.4, 5, steepness=1.5)  # Sigmoid
 ```
 
-**从模型结果创建 / 情景分析 / 敏感性分析**：
+**Creating from Model Results / Scenario Analysis / Sensitivity Analysis**:
 
 ```python
-# 从模型结果
+# From model results
 bia = ph.BudgetImpactAnalysis.from_result(result, population=10000, ...)
 
-# 情景分析
+# Scenario analysis
 bia.scenario_analysis({
     "Base Case": {},
     "High Population": {"population": 15000},
     "Fast Uptake": {"market_share_new": {"SoC": 0.3, "New": 0.7}},
 })
 
-# 单因素敏感性
+# One-way sensitivity
 bia.one_way_sensitivity("population", values=[8000, 9000, 10000, 11000, 12000])
 
-# 龙卷风图
+# Tornado diagram
 bia.tornado({"population": (8000, 12000), "Drug B": (10000, 15000)})
 ```
 
-#### 模型校准
+#### Model Calibration
 
-模型校准用观测数据反推模型中无法直接观测的参数。基于 Vanni et al. (2011) 和 Alarid-Escudero et al. (2018)。
+Model calibration uses observed data to estimate model parameters that cannot be directly observed. Based on Vanni et al. (2011) and Alarid-Escudero et al. (2018).
 
 ```python
-# 定义校准目标
+# Define calibration targets
 targets = [
     ph.CalibrationTarget(
         name="10yr_healthy",
@@ -764,13 +766,13 @@ targets = [
     ),
 ]
 
-# 定义待校准参数
+# Define parameters to calibrate
 calib_params = [
     ph.CalibrationParam("p_HS", lower=0.01, upper=0.30),
     ph.CalibrationParam("p_SD", lower=0.01, upper=0.20),
 ]
 
-# 运行校准
+# Run calibration
 result = ph.calibrate(
     model, targets, calib_params,
     gof="wsse",
@@ -784,220 +786,220 @@ print(result.target_comparison())
 result.apply_to_model(model)
 ```
 
-| 搜索方法 | 参数 | 特点 |
-|------|------|------|
-| `nelder_mead` | `n_restarts=10` | 多起点无导数优化，精确但较慢 |
-| `random_search` | `n_samples=1000` | LHS 采样逐一评估，简单直观 |
+| Search Method | Parameters | Characteristics |
+|---------------|------------|-----------------|
+| `nelder_mead` | `n_restarts=10` | Multi-start derivative-free optimization, precise but slower |
+| `random_search` | `n_samples=1000` | LHS sampling with individual evaluation, simple and intuitive |
 
-| GoF 度量 | 公式 | 适用场景 |
-|------|------|----------|
-| `sse` | Σ(obs - pred)² | 默认，简单快速 |
-| `wsse` | Σ(obs - pred)²/SE² | 多目标量纲不同时 |
-| `loglik_normal` | -Σ log N(obs \| pred, SE²) | 统计原则化 |
+| GoF Metric | Formula | Use Case |
+|------------|---------|----------|
+| `sse` | Sum(obs - pred)^2 | Default, simple and fast |
+| `wsse` | Sum(obs - pred)^2/SE^2 | When multiple targets have different scales |
+| `loglik_normal` | -Sum log N(obs \| pred, SE^2) | Statistically principled |
 
 ---
 
-### 导出
+### Export
 
-#### Excel 导出
+#### Excel Export
 
 ```python
-# 结果数据导出 (多 Sheet)
+# Result data export (multi-sheet)
 ph.export_to_excel(result, "base_case.xlsx")
 ph.export_to_excel(owsa, "owsa.xlsx")
 ph.export_to_excel(psa, "psa.xlsx")
 
-# 多策略比较
+# Multi-strategy comparison
 ph.export_comparison_excel({"Strategy A": result_a, "Strategy B": result_b}, "comparison.xlsx")
 
-# IPD 拟合结果
+# IPD fitting results
 fitter.to_excel("fitting_results.xlsx")
 ```
 
-#### Excel 公式验证模型
+#### Excel Formula-Based Verification Model
 
-导出一个**用 Excel 公式独立计算**的完整模型文件，用于交叉验证 Python 结果：
+Export a complete model file that **independently computes using Excel formulas**, for cross-validating Python results:
 
 ```python
 result = model.run_base_case()
 ph.export_excel_model(result, "verification.xlsx")
 
-# 或直接从模型导出
+# Or export directly from the model
 ph.export_excel_model(model, "verification.xlsx")
 ```
 
-| 区域 | 内容 |
-|------|------|
-| **输入区** (黄色底色) | 转移概率矩阵、状态费用向量、效用权重、贴现率 |
-| **计算区** (公式) | `SUMPRODUCT` 计算 Trace, 费用, QALY; `SUM` 计算贴现总值 |
-| **Summary sheet** | Excel 公式结果 vs Python 结果 vs 差异 (应为 ~0) |
+| Section | Content |
+|---------|---------|
+| **Input Area** (yellow background) | Transition probability matrix, state cost vector, utility weights, discount rates |
+| **Calculation Area** (formulas) | `SUMPRODUCT` computes Trace, Costs, QALYs; `SUM` computes discounted totals |
+| **Summary sheet** | Excel formula results vs Python results vs difference (should be ~0) |
 
-**支持的模型类型**：
+**Supported Model Types**:
 
-| 模型 | Trace | 费用/QALY/贴现 | ICER |
-|------|-------|----------------|------|
-| Markov (时齐) | Excel 公式 | Excel 公式 | Excel 公式 |
-| Markov (时变) | Python 值 | Excel 公式 | Excel 公式 |
-| PSM | Python 生存值 → 状态概率公式 | Excel 公式 | Excel 公式 |
+| Model | Trace | Costs/QALYs/Discounting | ICER |
+|-------|-------|-------------------------|------|
+| Markov (time-homogeneous) | Excel formulas | Excel formulas | Excel formulas |
+| Markov (time-dependent) | Python values | Excel formulas | Excel formulas |
+| PSM | Python survival values -> state probability formulas | Excel formulas | Excel formulas |
 
-#### Excel Sheet 内容
+#### Excel Sheet Contents
 
-| 分析类型    | Sheet 内容                                                            |
-| ----------- | --------------------------------------------------------------------- |
-| Base Case   | Summary, State Trace, Cost/QALY by Cycle, ICER                        |
-| OWSA        | Tornado Data, Per-Parameter Results                                   |
-| PSA         | Summary Stats, All Simulations, CEAC Data                             |
-| PSM Base    | Summary, State Probabilities, Survival Data                           |
-| IPD Fitting | Model Comparison, KM Data, Per-Distribution Details, Selection Report |
-| 验证模型     | Summary (含差异), 每策略计算 Sheet (公式+输入)                          |
-
----
-
-## 可视化一览
-
-PyHEOR 共提供 **28 种**专业图表，覆盖全部模型类型和分析流程：
-
-### Markov 模型 (8 种)
-
-| 函数                          | 说明                              |
-| ----------------------------- | --------------------------------- |
-| `plot_transition_diagram()` | 状态转移图                        |
-| `plot_model_diagram()`      | TreeAge 风格模型图                |
-| `plot_trace()`              | Markov trace（队列轨迹）          |
-| `plot_tornado()`            | OWSA 龙卷风图                     |
-| `plot_owsa_param()`         | 单参数 OWSA 线图                  |
-| `plot_scatter()`            | CE 散点图（增量成本 vs 增量效果） |
-| `plot_ceac()`               | 成本-效果可接受曲线               |
-| `plot_convergence()`        | PSA 收敛诊断图                    |
-
-### PSM 模型 (4 种)
-
-| 函数                       | 说明                 |
-| -------------------------- | -------------------- |
-| `plot_survival_curves()` | 参数化生存曲线       |
-| `plot_state_area()`      | 面积图（各状态占比） |
-| `plot_psm_trace()`       | PSM 状态轨迹         |
-| `plot_psm_comparison()`  | 多策略生存曲线对比   |
-
-### 微观模拟 (3 种)
-
-| 函数                         | 说明                                      |
-| ---------------------------- | ----------------------------------------- |
-| `plot_microsim_trace()`    | 个体模拟状态占比轨迹                      |
-| `plot_microsim_survival()` | 经验生存曲线（基于模拟数据）              |
-| `plot_microsim_outcomes()` | 患者结局分布（QALYs / 费用 / LYs 直方图） |
-
-### IPD 拟合 (4 种)
-
-| 方法                                   | 说明                    |
-| -------------------------------------- | ----------------------- |
-| `fitter.plot_fits()`                 | KM + 所有参数拟合曲线   |
-| `fitter.plot_hazard()`               | 各分布风险函数          |
-| `fitter.plot_cumhazard_diagnostic()` | log(H) vs log(t) 诊断图 |
-| `fitter.plot_qq()`                   | Q-Q 分位数图            |
-
-### CEA / 多策略比较 (4 种)
-
-| 函数                   | 说明                               |
-| ---------------------- | ---------------------------------- |
-| `plot_ce_frontier()`   | 效率前沿图 + WTP 线 + ICER 标注   |
-| `plot_nmb_curve()`     | NMB 曲线（多策略随 WTP 变化）      |
-| `plot_ceaf()`          | 成本效果可接受前沿曲线 (CEAF)     |
-| `plot_evpi()`          | 完美信息期望价值 (EVPI) 曲线      |
-
-### 预算影响分析 (5 种)
-
-| 函数                         | 说明                             |
-| ---------------------------- | -------------------------------- |
-| `plot_budget_impact()`       | 年度预算影响柱状图 + 累计曲线    |
-| `plot_budget_comparison()`   | 当前 vs 新情景总费用对比         |
-| `plot_market_share()`        | 双面板市场份额堆叠面积图         |
-| `plot_detail()`              | 按策略堆叠费用明细图             |
-| `plot_tornado()`             | BIA 敏感性龙卷风图               |
+| Analysis Type   | Sheet Contents                                                        |
+| --------------- | --------------------------------------------------------------------- |
+| Base Case       | Summary, State Trace, Cost/QALY by Cycle, ICER                        |
+| OWSA            | Tornado Data, Per-Parameter Results                                   |
+| PSA             | Summary Stats, All Simulations, CEAC Data                             |
+| PSM Base        | Summary, State Probabilities, Survival Data                           |
+| IPD Fitting     | Model Comparison, KM Data, Per-Distribution Details, Selection Report |
+| Verification Model | Summary (with differences), Per-Strategy Calculation Sheet (formulas + inputs) |
 
 ---
 
-## 项目结构
+## Visualization Gallery
+
+PyHEOR provides **28** professional charts, covering all model types and analysis workflows:
+
+### Markov Model (8 types)
+
+| Function                        | Description                                  |
+| ------------------------------- | -------------------------------------------- |
+| `plot_transition_diagram()`   | State transition diagram                     |
+| `plot_model_diagram()`        | TreeAge-style model diagram                  |
+| `plot_trace()`                | Markov trace (cohort trajectory)             |
+| `plot_tornado()`              | OWSA tornado diagram                         |
+| `plot_owsa_param()`           | Single-parameter OWSA line plot              |
+| `plot_scatter()`              | CE scatter plot (incremental cost vs effect)  |
+| `plot_ceac()`                 | Cost-effectiveness acceptability curve        |
+| `plot_convergence()`          | PSA convergence diagnostic plot              |
+
+### PSM Model (4 types)
+
+| Function                     | Description                       |
+| ---------------------------- | --------------------------------- |
+| `plot_survival_curves()`   | Parametric survival curves        |
+| `plot_state_area()`        | Area chart (state proportions)    |
+| `plot_psm_trace()`         | PSM state trajectory              |
+| `plot_psm_comparison()`    | Multi-strategy survival curve comparison |
+
+### Microsimulation (3 types)
+
+| Function                       | Description                                         |
+| ------------------------------ | --------------------------------------------------- |
+| `plot_microsim_trace()`      | Individual simulation state proportion trajectory   |
+| `plot_microsim_survival()`   | Empirical survival curve (from simulated data)      |
+| `plot_microsim_outcomes()`   | Patient outcome distributions (QALYs / Costs / LYs histograms) |
+
+### IPD Fitting (4 types)
+
+| Method                                 | Description                  |
+| -------------------------------------- | ---------------------------- |
+| `fitter.plot_fits()`                 | KM + all parametric fit curves |
+| `fitter.plot_hazard()`               | Hazard functions by distribution |
+| `fitter.plot_cumhazard_diagnostic()` | log(H) vs log(t) diagnostic plot |
+| `fitter.plot_qq()`                   | Q-Q quantile plot            |
+
+### CEA / Multi-Strategy Comparison (4 types)
+
+| Function               | Description                                    |
+| ---------------------- | ---------------------------------------------- |
+| `plot_ce_frontier()`   | Efficiency frontier + WTP line + ICER labels   |
+| `plot_nmb_curve()`     | NMB curve (multiple strategies across WTP)     |
+| `plot_ceaf()`          | Cost-effectiveness acceptability frontier (CEAF) |
+| `plot_evpi()`          | Expected value of perfect information (EVPI) curve |
+
+### Budget Impact Analysis (5 types)
+
+| Function                       | Description                                    |
+| ------------------------------ | ---------------------------------------------- |
+| `plot_budget_impact()`       | Annual budget impact bar chart + cumulative curve |
+| `plot_budget_comparison()`   | Current vs new scenario total cost comparison  |
+| `plot_market_share()`        | Dual-panel market share stacked area chart     |
+| `plot_detail()`              | Stacked cost breakdown by strategy             |
+| `plot_tornado()`             | BIA sensitivity tornado diagram                |
+
+---
+
+## Project Structure
 
 ```text
 pyheor/
 ├── pyproject.toml
 ├── README.md
-├── src/pyheor/              # 包源码 (src layout)
-│   ├── __init__.py          # 包入口，统一导出
-│   ├── utils.py             # 工具函数 (C 补数, 贴现, 验证)
-│   ├── distributions.py     # PSA 概率分布 (Beta, Gamma, ...)
-│   ├── survival.py          # 10 种参数化生存分布
-│   ├── plotting.py          # 可视化 (28 种图表)
+├── src/pyheor/              # Package source (src layout)
+│   ├── __init__.py          # Package entry, unified exports
+│   ├── utils.py             # Utility functions (C complement, discounting, validation)
+│   ├── distributions.py     # PSA probability distributions (Beta, Gamma, ...)
+│   ├── survival.py          # 10 parametric survival distributions
+│   ├── plotting.py          # Visualization (28 chart types)
 │   │
-│   ├── models/              # ── 建模引擎 ──
-│   │   ├── markov.py        #  Markov 队列模型 (MarkovModel)
-│   │   ├── psm.py           #  分区生存模型 (PSMModel)
-│   │   ├── microsim.py      #  微观模拟 (MicroSimModel)
-│   │   └── des.py           #  离散事件模拟 (DESModel)
+│   ├── models/              # ── Modeling Engine ──
+│   │   ├── markov.py        #  Markov cohort model (MarkovModel)
+│   │   ├── psm.py           #  Partitioned survival model (PSMModel)
+│   │   ├── microsim.py      #  Microsimulation (MicroSimModel)
+│   │   └── des.py           #  Discrete event simulation (DESModel)
 │   │
-│   ├── analysis/            # ── 分析与决策 ──
-│   │   ├── results.py       #  结果类 (BaseResult, OWSAResult, PSAResult, ...)
-│   │   ├── comparison.py    #  多策略比较 / CEA (CEAnalysis)
-│   │   ├── bia.py           #  预算影响分析 (BudgetImpactAnalysis)
-│   │   └── calibration.py   #  模型校准 (Nelder-Mead, 随机搜索)
+│   ├── analysis/            # ── Analysis & Decision ──
+│   │   ├── results.py       #  Result classes (BaseResult, OWSAResult, PSAResult, ...)
+│   │   ├── comparison.py    #  Multi-strategy comparison / CEA (CEAnalysis)
+│   │   ├── bia.py           #  Budget impact analysis (BudgetImpactAnalysis)
+│   │   └── calibration.py   #  Model calibration (Nelder-Mead, random search)
 │   │
-│   ├── evidence/            # ── 数据与证据合成 ──
-│   │   ├── fitting.py       #  IPD 生存曲线拟合 (SurvivalFitter)
-│   │   ├── digitize.py      #  KM 曲线数字化重建 (Guyot method)
-│   │   └── nma.py           #  NMA 后验样本整合 (NMAPosterior)
+│   ├── evidence/            # ── Data & Evidence Synthesis ──
+│   │   ├── fitting.py       #  IPD survival curve fitting (SurvivalFitter)
+│   │   ├── digitize.py      #  KM curve digitization & reconstruction (Guyot method)
+│   │   └── nma.py           #  NMA posterior sample integration (NMAPosterior)
 │   │
-│   └── export/              # ── 导出 ──
-│       ├── excel.py         #  Excel 结果数据导出
-│       ├── excel_model.py   #  Excel 公式验证模型导出
-│       └── report.py        #  Markdown 一键报告
+│   └── export/              # ── Export ──
+│       ├── excel.py         #  Excel result data export
+│       ├── excel_model.py   #  Excel formula-based verification model export
+│       └── report.py        #  One-click Markdown report
 │
-├── tests/                   # pytest 测试套件 (243 个测试)
+├── tests/                   # pytest test suite (243 tests)
 └── examples/
-    ├── demo_hiv_model.py    #  Markov 模型示例 (HIV)
-    ├── demo_psm_model.py    #  PSM 模型示例 (肿瘤)
-    ├── demo_ipd_fitting.py  #  IPD 拟合示例
-    ├── demo_microsim.py     #  微观模拟示例
-    └── demo_comparison.py   #  多策略比较示例
+    ├── demo_hiv_model.py    #  Markov model example (HIV)
+    ├── demo_psm_model.py    #  PSM model example (oncology)
+    ├── demo_ipd_fitting.py  #  IPD fitting example
+    ├── demo_microsim.py     #  Microsimulation example
+    └── demo_comparison.py   #  Multi-strategy comparison example
 ```
 
 ---
 
-## 设计理念
+## Design Philosophy
 
-- **简洁的 API**：一个模型对象搞定 base case / OWSA / PSA，不需要分开调用
-- **灵活的参数系统**：`ph.C` 自动补数，lambda 函数定义时变概率/费用
-- **与 R 生态对齐**：分布参数化、方法命名参考 hesim / flexsurv / DARTH
-- **生产级可视化**：所有图表开箱即用，配色统一，支持自定义
-- **可验证性**：Excel 导出 trace 数据，方便与 TreeAge / Excel 模型交叉验证
-
----
-
-## 路线图
-
-- [X] Markov 队列模型 (cDTSTM)
-- [X] 单因素敏感性分析 (OWSA) + 龙卷风图
-- [X] 概率敏感性分析 (PSA) + CEAC + CE 散点图
-- [X] 灵活费用系统（首周期、时变、WLOS、自定义费用函数）
-- [X] 半周期校正多方法（梯形法 / 生命表法 / 无校正）& 可配置贴现率
-- [X] OWSA 龙卷风图 ICER 排序 & 贴现率通过 `Param` 直接参与敏感性分析
-- [X] 分区生存模型 (PSM)
-- [X] 10 种参数化生存分布
-- [X] Excel 多 Sheet 导出 + Excel 公式验证模型
-- [X] IPD 生存曲线拟合 + AIC/BIC 模型比较
-- [X] KM + 拟合曲线可视化 + 诊断图
-- [X] 微观模拟 (Individual-level simulation)
-- [X] 多队列比较 + NMB 分析 + CEAF + EVPI
-- [X] 网络 Meta 分析 (NMA) 整合
-- [X] 离散事件模拟 (DES) — 连续时间、竞争风险、HR/AFT 集成
-- [X] 预算影响分析 (BIA) — 人群模型、市场份额演变、摄取曲线、情景/敏感性分析
-- [X] 数字化 KM 曲线重建 (Guyot method)
-- [X] 模型校准 (Nelder-Mead 多起点优化, LHS 随机搜索, SSE/WSSE/似然 GoF)
-- [X] Markdown 一键报告 (`generate_report`)
-- [X] 正式测试套件 (pytest, 243 个测试覆盖全部模块)
+- **Concise API**: A single model object handles base case / OWSA / PSA without separate calls
+- **Flexible Parameter System**: `ph.C` auto-complement, lambda functions define time-dependent probabilities/costs
+- **Aligned with R Ecosystem**: Distribution parameterization and method naming reference hesim / flexsurv / DARTH
+- **Production-Quality Visualization**: All charts work out of the box, consistent color scheme, customizable
+- **Verifiability**: Excel export of trace data for easy cross-validation with TreeAge / Excel models
 
 ---
 
-## 许可证
+## Roadmap
+
+- [X] Markov cohort model (cDTSTM)
+- [X] One-way sensitivity analysis (OWSA) + tornado diagram
+- [X] Probabilistic sensitivity analysis (PSA) + CEAC + CE scatter plot
+- [X] Flexible cost system (first-cycle, time-dependent, WLOS, custom cost functions)
+- [X] Multi-method half-cycle correction (trapezoidal / life-table / none) & configurable discount rates
+- [X] OWSA tornado ICER ranking & discount rates directly included in sensitivity analysis via `Param`
+- [X] Partitioned survival model (PSM)
+- [X] 10 parametric survival distributions
+- [X] Multi-sheet Excel export + Excel formula-based verification model
+- [X] IPD survival curve fitting + AIC/BIC model comparison
+- [X] KM + fitted curve visualization + diagnostic plots
+- [X] Microsimulation (individual-level simulation)
+- [X] Multi-cohort comparison + NMB analysis + CEAF + EVPI
+- [X] Network meta-analysis (NMA) integration
+- [X] Discrete event simulation (DES) -- continuous time, competing risks, HR/AFT integration
+- [X] Budget impact analysis (BIA) -- population models, market share evolution, uptake curves, scenario/sensitivity analysis
+- [X] Digitized KM curve reconstruction (Guyot method)
+- [X] Model calibration (Nelder-Mead multi-start optimization, LHS random search, SSE/WSSE/likelihood GoF)
+- [X] One-click Markdown report (`generate_report`)
+- [X] Formal test suite (pytest, 243 tests covering all modules)
+
+---
+
+## License
 
 MIT License
