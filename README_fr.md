@@ -1000,6 +1000,7 @@ pyheor/
 - [ ] Sortie structurée (`to_dict` / `to_json`) pour résultats lisibles par les LLM
 - [ ] Interprétation automatique (`interpret(wtp)`) — génération de texte de conclusion standardisé
 - [ ] Interface de modélisation en langage naturel — définition de modèle par JSON Schema, construction et exécution automatiques
+- [ ] Agent HEOR (`pyheor-agent`) — agent piloté par l'API Claude réalisant un flux de recherche HEOR complet en langage naturel : sélection du modèle, extraction des paramètres, construction du modèle, analyse et génération de rapport ; couche de preuves optionnelle (documents fournis par l'utilisateur / recherche PubMed / paramètres directs) ; disponible en API Python (`HEORAgent`) et en CLI
 
 ---
 
