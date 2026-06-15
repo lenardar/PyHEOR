@@ -1001,6 +1001,7 @@ pyheor/
 - [ ] 自动解读 (`interpret(wtp)`)——标准化结论文本生成
 - [ ] 自然语言建模接口——JSON Schema 模型定义，自动构建与执行
 - [ ] HEOR Agent (`pyheor-agent`) — 基于 Claude API，自然语言驱动完整 HEOR 研究流程：选模型、提参、建模、运行、生成报告；证据层可选（用户提供文献 / PubMed 检索 / 直接给参数）；同时提供 Python API (`HEORAgent`) 和 CLI 两种入口
+- [ ] Rust 底层加速（低优先级）— 用 PyO3 + maturin 加速微观模拟个体循环、DES 事件队列和 PSA 并行计算
 
 ---
 

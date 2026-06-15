@@ -1001,6 +1001,7 @@ pyheor/
 - [ ] Auto-interpretation (`interpret(wtp)`) — standardized conclusion text generation
 - [ ] Natural language modeling interface — JSON Schema model definition, auto-build & execute
 - [ ] HEOR Agent (`pyheor-agent`) — Claude API-powered agent that completes a full HEOR research workflow from natural language: model selection, parameter extraction, model building, analysis, and report generation; optional evidence layer (user-provided documents / PubMed search / direct parameter input); available as both Python API (`HEORAgent`) and CLI
+- [ ] Rust core acceleration (low priority) — PyO3 + maturin bindings to accelerate microsimulation patient loops, DES event queues, and PSA parallelism
 
 ---
 
