@@ -6,15 +6,46 @@ in multiple ways (e.g., Beta by mean/sd or alpha/beta).
 """
 
 import numpy as np
+import inspect
 from abc import ABC, abstractmethod
 from typing import Optional
+
+
+def sample_distribution(distribution, n: int, rng) -> np.ndarray:
+    """Sample with a local RNG while supporting legacy ``sample(n)`` classes.
+
+    Third-party distributions written before the optional ``rng`` argument
+    may still use ``np.random`` internally. For that compatibility path, a
+    seed is drawn from the model-local generator and NumPy's caller state is
+    restored immediately after sampling.
+    """
+    try:
+        parameters = inspect.signature(distribution.sample).parameters.values()
+        accepts_rng = any(
+            parameter.name == "rng"
+            or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        accepts_rng = False
+
+    if accepts_rng:
+        return distribution.sample(n, rng=rng)
+
+    caller_state = np.random.get_state()
+    legacy_seed = int(rng.integers(0, 2**32, dtype=np.uint32))
+    try:
+        np.random.seed(legacy_seed)
+        return distribution.sample(n)
+    finally:
+        np.random.set_state(caller_state)
 
 
 class Distribution(ABC):
     """Base class for probability distributions used in PSA."""
     
     @abstractmethod
-    def sample(self, n: int = 1) -> np.ndarray:
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
         """Draw n samples from the distribution."""
         pass
     
@@ -73,8 +104,9 @@ class Beta(Distribution):
         if self.alpha <= 0 or self.beta <= 0:
             raise ValueError(f"Alpha ({self.alpha:.4f}) and beta ({self.beta:.4f}) must be > 0")
     
-    def sample(self, n: int = 1) -> np.ndarray:
-        return np.random.beta(self.alpha, self.beta, size=n)
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        generator = rng if rng is not None else np.random
+        return generator.beta(self.alpha, self.beta, size=n)
     
     @property
     def mean(self):
@@ -118,8 +150,9 @@ class Gamma(Distribution):
         else:
             raise ValueError("Provide either (mean, sd) or (shape, rate)")
     
-    def sample(self, n: int = 1) -> np.ndarray:
-        return np.random.gamma(self.shape, 1.0 / self.rate, size=n)
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        generator = rng if rng is not None else np.random
+        return generator.gamma(self.shape, 1.0 / self.rate, size=n)
     
     @property
     def mean(self):
@@ -144,8 +177,9 @@ class Normal(Distribution):
         self.mean_val = float(mean)
         self.sd = float(sd)
     
-    def sample(self, n: int = 1) -> np.ndarray:
-        return np.random.normal(self.mean_val, self.sd, size=n)
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        generator = rng if rng is not None else np.random
+        return generator.normal(self.mean_val, self.sd, size=n)
     
     @property
     def mean(self):
@@ -186,8 +220,9 @@ class LogNormal(Distribution):
         else:
             raise ValueError("Provide either (meanlog, sdlog) or (mean, sd)")
     
-    def sample(self, n: int = 1) -> np.ndarray:
-        return np.random.lognormal(self.meanlog, self.sdlog, size=n)
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        generator = rng if rng is not None else np.random
+        return generator.lognormal(self.meanlog, self.sdlog, size=n)
     
     @property
     def mean(self):
@@ -212,8 +247,9 @@ class Uniform(Distribution):
         self.low = float(low)
         self.high = float(high)
     
-    def sample(self, n: int = 1) -> np.ndarray:
-        return np.random.uniform(self.low, self.high, size=n)
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        generator = rng if rng is not None else np.random
+        return generator.uniform(self.low, self.high, size=n)
     
     @property
     def mean(self):
@@ -241,8 +277,9 @@ class Triangular(Distribution):
         self.mode = float(mode)
         self.high = float(high)
     
-    def sample(self, n: int = 1) -> np.ndarray:
-        return np.random.triangular(self.low, self.mode, self.high, size=n)
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        generator = rng if rng is not None else np.random
+        return generator.triangular(self.low, self.mode, self.high, size=n)
     
     @property
     def mean(self):
@@ -269,8 +306,9 @@ class Dirichlet(Distribution):
     def __init__(self, alpha):
         self.alpha = np.asarray(alpha, dtype=float)
     
-    def sample(self, n: int = 1) -> np.ndarray:
-        return np.random.dirichlet(self.alpha, size=n)
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        generator = rng if rng is not None else np.random
+        return generator.dirichlet(self.alpha, size=n)
     
     @property
     def mean(self):
@@ -292,7 +330,7 @@ class Fixed(Distribution):
     def __init__(self, value: float):
         self.value = float(value)
     
-    def sample(self, n: int = 1) -> np.ndarray:
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
         return np.full(n, self.value)
     
     @property

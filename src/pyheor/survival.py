@@ -304,7 +304,14 @@ class Gompertz(SurvivalDistribution):
         t = np.asarray(t, dtype=float)
         if abs(self.shape) < 1e-12:
             return np.exp(-self.rate * t)
-        return np.exp(-self.rate / self.shape * (np.exp(self.shape * t) - 1))
+        # For large positive shape * time, expm1 correctly tends to infinity
+        # and survival tends to zero. Suppress that expected intermediate
+        # overflow rather than emitting a warning for a valid tail value.
+        with np.errstate(over="ignore", invalid="ignore"):
+            cumulative_hazard = (
+                self.rate / self.shape * np.expm1(self.shape * t)
+            )
+            return np.exp(-cumulative_hazard)
 
     def hazard(self, t):
         t = np.asarray(t, dtype=float)

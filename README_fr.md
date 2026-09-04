@@ -370,8 +370,8 @@ model = ph.MarkovModel(
 
 | Valeur                     | Description                                               |
 | -------------------------- | --------------------------------------------------------- |
-| `True` / `"trapezoidal"` | Méthode trapézoïdale : poids des premier et dernier cycles ×0.5 (par défaut) |
-| `"life-table"`            | Méthode table de mortalité : moyenne des lignes adjacentes du trace (cohérent avec R heemod) |
+| `True` / `"trapezoidal"` | Méthode trapézoïdale : occupation moyenne des points de trace adjacents pour chaque intervalle (par défaut) |
+| `"life-table"`            | Alias de compatibilité de `"trapezoidal"` ; produit des résultats identiques |
 | `False` / `None`          | Pas de correction                                         |
 
 ```python
@@ -410,27 +410,32 @@ model.set_transitions("Strategy", lambda p, t: [
 
 ```python
 # Coût d'état de base
-model.set_state_cost("Sick", "Treatment", lambda p, t: 3000)
+model.set_state_cost("medical", {"Treatment": {"Sick": 3000}})
 
 # Coût dépendant du temps
-model.set_state_cost("Sick", "Treatment", lambda p, t: 3000 if t < 5 else 2000)
+model.set_state_cost("medical", lambda p, t: {
+    "Treatment": {"Sick": 3000 if t < 5 else 2000}
+})
 
-# Coût ponctuel du premier cycle
-model.set_state_cost("Sick", "Treatment", lambda p, t: 50000,
+# Taux de coût encouru uniquement pendant le premier intervalle
+model.set_state_cost("induction", {"Treatment": {"Sick": 50000}},
                      first_cycle_only=True)
 
+# Coût ponctuel au début du modèle
+model.set_state_cost("init", {"Sick": 50000}, method="starting")
+
 # Restreint à des cycles spécifiques
-model.set_state_cost("Sick", "Treatment", lambda p, t: p["c_drug"],
-                     apply_cycles=(0, 24))  # Uniquement les 24 premiers cycles
+model.set_state_cost("drug", {"Treatment": {"Sick": "c_drug"}},
+                     apply_cycles=range(24))  # Uniquement les 24 premiers intervalles
 
 # Méthode WLOS (Weighted Length of Stay)
-model.set_state_cost("Sick", "Treatment", lambda p, t: 5000,
+model.set_state_cost("medical", {"Treatment": {"Sick": 5000}},
                      method="wlos")
 ```
 
 #### Coûts de transition
 
-Coûts déclenchés lors des transitions d'états (ex. : coûts chirurgicaux lors de la progression, coûts d'hospitalisation lors du transfert en soins intensifs). Calculés automatiquement à partir des **flux de transition** par cycle : `trace[t-1, de] × P[de→vers] × coût unitaire`.
+Coûts déclenchés lors des transitions d'états (ex. : coûts chirurgicaux lors de la progression, coûts d'hospitalisation lors du transfert en soins intensifs). Calculés automatiquement à partir du **flux de transition** de chaque intervalle : `trace[i, de] × P_i[de→vers] × coût unitaire`.
 
 ```python
 # Coût chirurgical lors de la transition de Healthy à Sick
@@ -463,7 +468,7 @@ model.set_transition_cost("rescue", "PFS", "Progressed", {
 })
 ```
 
-> **Différence avec `first_cycle_only`** : `first_cycle_only` ne s'applique qu'au cycle 0 (une seule fois) ; les coûts de transition sont encourus à **chaque cycle** dès que des patients transitent. Les coûts de transition ne sont pas affectés par la correction de demi-cycle (coûts de type événementiel).
+> **Différence avec `first_cycle_only`** : `first_cycle_only` est un taux encouru uniquement pendant l'intervalle 0 ; un coût de transition est une somme ponctuelle encourue lors de la transition. Les coûts de transition ne sont ni multipliés par la durée du cycle ni affectés par la correction de demi-cycle.
 
 #### Coûts personnalisés
 
@@ -622,17 +627,19 @@ ph.export_excel_model(model, "verification.xlsx")
 
 | Section | Contenu |
 |---------|---------|
-| **Zone d'entrée** (fond jaune) | Matrice de probabilités de transition, vecteur de coûts d'état, poids d'utilité, taux d'actualisation |
-| **Zone de calcul** (formules) | `SUMPRODUCT` calcule Trace, Coûts, QALYs ; `SUM` calcule les totaux actualisés |
+| **Zone d'entrée** (fond jaune) | Matrice de transition, coûts d'état et de transition, paramètres de survie, utilités et actualisation |
+| **Zone de calcul** (formules) | Trace/probabilités d'état, occupation, flux, coûts, QALYs, actualisation et totaux |
 | **Feuille résumé** | Résultats formules Excel vs résultats Python vs différence (devrait être ~0) |
 
 **Types de modèles pris en charge** :
 
 | Modèle | Trace | Coûts/QALYs/Actualisation | RCEI |
 |--------|-------|---------------------------|------|
-| Markov (homogène dans le temps) | Formules Excel | Formules Excel | Formules Excel |
-| Markov (dépendant du temps) | Valeurs Python | Formules Excel | Formules Excel |
-| PSM | Valeurs de survie Python → formules de probabilité d'état | Formules Excel | Formules Excel |
+| Markov (homogène dans le temps) | Formules Excel depuis une matrice modifiable | Formules Excel | Formules Excel |
+| Markov (dépendant du temps) | Formules Excel depuis une matrice modifiable par intervalle | Formules Excel | Formules Excel |
+| PSM | Formules Excel pour les courbes paramétriques courantes ; entrées externes clairement signalées sinon | Formules Excel | Formules Excel |
+
+Les matrices variables sont exposées comme entrées Excel explicites, jamais comme une trace Python cachée. Les callbacks Python de coût et toute logique impossible à traduire fidèlement provoquent une erreur explicite.
 
 #### Contenu des feuilles Excel
 

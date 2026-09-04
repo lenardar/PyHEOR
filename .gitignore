@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 reproduce/
+docs/model-semantics.md
 .venv/
 .python-version

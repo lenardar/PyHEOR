@@ -14,10 +14,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from ..distributions import Distribution
+from ..distributions import Distribution, sample_distribution
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
-    normalize_hcc, life_table_corrected_trace,
+    normalize_hcc, interval_occupancy, validate_transition_matrix,
 )
 
 
@@ -97,7 +97,8 @@ class CohortStateTransitionModel:
     strategies : list of str or dict
         Treatment strategies. If dict, maps short names to display labels.
     n_cycles : int
-        Number of model cycles to simulate.
+        Number of model intervals to simulate. The state trace contains
+        ``n_cycles + 1`` observation points, including time zero.
     cycle_length : float
         Length of each cycle in years (default: 1.0).
     dr_cost : float or Param
@@ -109,8 +110,8 @@ class CohortStateTransitionModel:
     half_cycle_correction : bool or str or None
         Half-cycle correction method. Options:
 
-        - True or ``"trapezoidal"``: endpoint weighting [0.5, 1, ..., 1, 0.5]
-        - ``"life-table"``: average adjacent trace rows (heemod-style)
+        - True, ``"trapezoidal"``, or ``"life-table"``: average the two
+          adjacent state observations within each interval.
         - False or None: no correction
 
         Default: True (trapezoidal).
@@ -119,6 +120,9 @@ class CohortStateTransitionModel:
     state_type : dict, optional
         Map state names to type: "alive" or "dead". Used for LY calculation.
         By default, the last state is considered "dead".
+    discount_convention : str
+        ``"discrete"`` uses ``(1 + rate) ** -time``; ``"continuous"`` uses
+        ``exp(-rate * time)``. Default: ``"discrete"``.
     
     Examples
     --------
@@ -143,9 +147,14 @@ class CohortStateTransitionModel:
         half_cycle_correction: Union[bool, str, None] = True,
         initial_state: Union[str, int] = 0,
         state_type: Optional[Dict[str, str]] = None,
+        discount_convention: str = "discrete",
     ):
         # States
         self.states = list(states)
+        if not self.states:
+            raise ValueError("states must contain at least one state")
+        if len(set(self.states)) != len(self.states):
+            raise ValueError(f"State names must be unique, got {self.states!r}")
         self.n_states = len(self.states)
         
         # Strategies
@@ -155,11 +164,31 @@ class CohortStateTransitionModel:
         else:
             self.strategy_names = list(strategies)
             self.strategy_labels = {s: s for s in self.strategy_names}
+        if not self.strategy_names:
+            raise ValueError("strategies must contain at least one strategy")
+        if len(set(self.strategy_names)) != len(self.strategy_names):
+            raise ValueError(
+                f"Strategy names must be unique, got {self.strategy_names!r}"
+            )
         self.n_strategies = len(self.strategy_names)
         
         # Model cycles
-        self.n_cycles = n_cycles
-        self.cycle_length = cycle_length
+        if isinstance(n_cycles, bool) or not isinstance(n_cycles, (int, np.integer)):
+            raise TypeError(f"n_cycles must be an integer, got {type(n_cycles).__name__}")
+        if n_cycles <= 0:
+            raise ValueError(f"n_cycles must be positive, got {n_cycles!r}")
+        if not np.isfinite(cycle_length) or cycle_length <= 0:
+            raise ValueError(
+                f"cycle_length must be a positive finite number, got {cycle_length!r}"
+            )
+        if discount_convention not in {"discrete", "continuous"}:
+            raise ValueError(
+                f"Unknown discount_convention {discount_convention!r}; "
+                "expected 'discrete' or 'continuous'."
+            )
+        self.n_cycles = int(n_cycles)
+        self.cycle_length = float(cycle_length)
+        self.discount_convention = discount_convention
         self._hcc_method = normalize_hcc(half_cycle_correction)
 
         # Parameters (init early so discount rates can register into it)
@@ -180,15 +209,41 @@ class CohortStateTransitionModel:
             self.params["dr_qaly"] = dr_qaly
         else:
             self.dr_qaly = float(dr_qaly)
+        discount_factor(0, self.dr_cost, convention=self.discount_convention)
+        discount_factor(0, self.dr_qaly, convention=self.discount_convention)
         
         # Initial state
         if isinstance(initial_state, str):
+            if initial_state not in self.states:
+                raise ValueError(
+                    f"Unknown initial_state {initial_state!r}; "
+                    f"available states are {self.states!r}"
+                )
             self.initial_state_idx = self.states.index(initial_state)
         else:
             self.initial_state_idx = int(initial_state)
+            if not 0 <= self.initial_state_idx < self.n_states:
+                raise ValueError(
+                    f"initial_state index must be between 0 and "
+                    f"{self.n_states - 1}, got {self.initial_state_idx}"
+                )
         
         # State types (alive vs dead) for LY calculation
         if state_type is not None:
+            unknown_states = set(state_type) - set(self.states)
+            if unknown_states:
+                raise ValueError(
+                    f"state_type contains unknown states: {sorted(unknown_states)!r}"
+                )
+            invalid_types = {
+                name: value for name, value in state_type.items()
+                if value not in {"alive", "dead"}
+            }
+            if invalid_types:
+                raise ValueError(
+                    "state_type values must be 'alive' or 'dead'; "
+                    f"got {invalid_types!r}"
+                )
             self._alive_states = [
                 i for i, s in enumerate(self.states) 
                 if state_type.get(s, "alive") == "alive"
@@ -330,6 +385,8 @@ class CohortStateTransitionModel:
                 f"Unknown strategy '{strategy}'. "
                 f"Available: {self.strategy_names}"
             )
+        if not callable(transitions):
+            self._resolve_transition_data(transitions, self._get_base_params(), 0, strategy)
         self._transitions[strategy] = transitions
         return self
     
@@ -402,6 +459,39 @@ class CohortStateTransitionModel:
         ...     "Progressed": 1000,
         ... })
         """
+        if method not in {"wlos", "starting"}:
+            raise ValueError(
+                f"Unknown cost method {method!r}; expected 'wlos' or 'starting'."
+            )
+        if method == "starting" and first_cycle_only:
+            raise ValueError(
+                "first_cycle_only cannot be combined with method='starting'; "
+                "a starting cost already occurs once at t=0."
+            )
+        if method == "starting" and apply_cycles is not None:
+            raise ValueError(
+                "apply_cycles cannot be combined with method='starting'; "
+                "a starting cost occurs once at t=0."
+            )
+        if apply_cycles is not None:
+            try:
+                apply_cycles = tuple(apply_cycles)
+            except TypeError as exc:
+                raise TypeError("apply_cycles must be an iterable of interval indices") from exc
+            invalid_cycles = [
+                cycle for cycle in apply_cycles
+                if isinstance(cycle, bool)
+                or not isinstance(cycle, (int, np.integer))
+                or not 0 <= int(cycle) < self.n_cycles
+            ]
+            if invalid_cycles:
+                raise ValueError(
+                    f"apply_cycles contains invalid interval indices {invalid_cycles!r}; "
+                    f"expected integers from 0 to {self.n_cycles - 1}."
+                )
+            apply_cycles = tuple(int(cycle) for cycle in apply_cycles)
+        if not callable(values):
+            self._validate_state_mapping(values, "state cost")
         self._costs[category] = _CostDef(
             name=category,
             values=values,
@@ -424,9 +514,10 @@ class CohortStateTransitionModel:
     ) -> "CohortStateTransitionModel":
         """Define costs triggered when patients transition between states.
         
-        In a cohort model, the cost is applied to the **flow** of patients
-        transitioning from one state to another each cycle:
-        ``cost_t = trace[t-1, from] × P[from, to] × unit_cost``.
+        In a cohort model, the cost is applied to the **flow** of patients.
+        For interval ``t`` (0-based), the event cost is
+        ``trace[t, from] × P[t, from, to] × unit_cost`` and is paid at
+        the end of that interval.
         
         **Cost schedule (费用计划表)**: Pass a ``list`` to define costs that
         span multiple cycles after each transition event. For example,
@@ -511,7 +602,8 @@ class CohortStateTransitionModel:
         this method gives full access to the transition matrix and state
         distribution, allowing arbitrary cost logic.
 
-        The user-supplied function is called once per cycle (t = 1 … n_cycles)
+        The user-supplied function is called once per interval
+        (``t = 0, ..., n_cycles - 1``)
         for each strategy.  Its return value is the **undiscounted cost** for
         that cycle and category.
 
@@ -524,9 +616,9 @@ class CohortStateTransitionModel:
 
             - **strategy** (str): Current strategy name.
             - **params** (dict): Parameter values ``{name: float}``.
-            - **t** (int): Current cycle number (1-based).
-            - **state_prev** (np.ndarray): State proportion vector at *t − 1*.
-            - **state_curr** (np.ndarray): State proportion vector at *t*.
+            - **t** (int): Current interval index (0-based).
+            - **state_prev** (np.ndarray): State proportions at interval start.
+            - **state_curr** (np.ndarray): State proportions at interval end.
             - **P** (np.ndarray): Transition probability matrix at cycle *t*.
             - **states** (list[str]): State names (same order as array indices).
 
@@ -569,21 +661,25 @@ class CohortStateTransitionModel:
         val = tc['value']
         # Strategy-specific dict → get this strategy's value
         if isinstance(val, dict):
+            unknown = set(val) - set(self.strategy_names)
+            if unknown:
+                raise ValueError(
+                    f"Transition cost '{tc['category']}' contains unknown "
+                    f"strategies: {sorted(unknown)!r}"
+                )
             val = val.get(strategy, 0)
         # Already a schedule (list/tuple)
         if isinstance(val, (list, tuple)):
             resolved = []
             for v in val:
-                if isinstance(v, str):
-                    v = params.get(v, 0)
-                resolved.append(float(v))
+                resolved.append(resolve_value(v, params))
             return resolved
         # Callable → signal to engine to use per-cycle evaluation
         if callable(val):
             return None
         # Scalar: parameter reference or float → single-element schedule
         if isinstance(val, str):
-            val = params.get(val, 0)
+            val = resolve_value(val, params)
         return [float(val)]
 
     # =========================================================================
@@ -617,6 +713,8 @@ class CohortStateTransitionModel:
         ...     "Dead": 0.0,
         ... })
         """
+        if not callable(values):
+            self._validate_state_mapping(values, "utility")
         self._utility = values
         return self
     
@@ -627,44 +725,127 @@ class CohortStateTransitionModel:
     def _get_base_params(self) -> Dict[str, float]:
         """Get base case parameter values as a dict."""
         return {name: p.base for name, p in self.params.items()}
-    
+
+    def _resolve_transition_data(
+        self, transitions: Any, params: Dict[str, float], cycle: int,
+        strategy: str,
+    ) -> np.ndarray:
+        """Resolve and validate one transition matrix without repairing it."""
+        matrix_data = transitions(params, cycle) if callable(transitions) else transitions
+
+        if isinstance(matrix_data, np.ndarray):
+            try:
+                matrix = matrix_data.astype(float, copy=True)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Transition matrix for strategy {strategy!r}, interval {cycle} "
+                    "must contain only numeric probabilities."
+                ) from exc
+        else:
+            try:
+                rows = list(matrix_data)
+            except TypeError as exc:
+                raise TypeError(
+                    f"Transition matrix for strategy {strategy!r}, interval {cycle} "
+                    "must be a 2D array or iterable of rows."
+                ) from exc
+
+            if len(rows) != self.n_states:
+                raise ValueError(
+                    f"Transition matrix for strategy {strategy!r}, interval {cycle} "
+                    f"has {len(rows)} rows; expected {self.n_states}."
+                )
+            resolved = []
+            for row_index, row in enumerate(rows):
+                try:
+                    values = list(row)
+                except TypeError as exc:
+                    raise TypeError(
+                        f"Transition row {row_index} for strategy {strategy!r}, "
+                        f"interval {cycle} is not iterable."
+                    ) from exc
+                if len(values) != self.n_states:
+                    raise ValueError(
+                        f"Transition row {row_index} for strategy {strategy!r}, "
+                        f"interval {cycle} has {len(values)} values; "
+                        f"expected {self.n_states}."
+                    )
+                resolved_row = []
+                for value in values:
+                    if isinstance(value, _Complement) or value is C:
+                        resolved_row.append(C)
+                    elif callable(value):
+                        resolved_row.append(float(value(params, cycle)))
+                    else:
+                        resolved_row.append(float(value))
+                resolved.append(resolved_row)
+            matrix = resolve_complement(resolved)
+
+        expected_shape = (self.n_states, self.n_states)
+        if matrix.shape != expected_shape:
+            raise ValueError(
+                f"Transition matrix for strategy {strategy!r}, interval {cycle} "
+                f"has shape {matrix.shape}; expected {expected_shape}."
+            )
+        try:
+            validate_transition_matrix(matrix)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid transition matrix for strategy {strategy!r}, "
+                f"interval {cycle}: {exc}"
+            ) from exc
+        return matrix
+
     def _get_transition_matrix(self, strategy: str, params: Dict[str, float],
                                cycle: int) -> np.ndarray:
         """Compute the transition probability matrix for a given context."""
-        trans = self._transitions[strategy]
-        
-        if callable(trans):
-            matrix_data = trans(params, cycle)
-        else:
-            matrix_data = trans
-        
-        # Handle numpy arrays (no C sentinel)
-        if isinstance(matrix_data, np.ndarray):
-            P = matrix_data.copy().astype(float)
-        else:
-            # List of lists - resolve numbers and C sentinels
-            resolved = []
-            for row in matrix_data:
-                resolved_row = []
-                for val in row:
-                    if isinstance(val, _Complement) or val is C:
-                        resolved_row.append(C)
-                    elif callable(val):
-                        resolved_row.append(float(val(params, cycle)))
-                    else:
-                        resolved_row.append(float(val))
-                resolved.append(resolved_row)
-            P = resolve_complement(resolved)
-        
-        # Clip small numerical errors
-        P = np.clip(P, 0.0, 1.0)
-        
-        # Ensure rows sum to 1 (renormalize if needed)
-        row_sums = P.sum(axis=1, keepdims=True)
-        mask = row_sums.flatten() > 0
-        P[mask] = P[mask] / row_sums[mask]
-        
-        return P
+        if strategy not in self._transitions:
+            raise ValueError(
+                f"No transition matrix configured for strategy {strategy!r}."
+            )
+        return self._resolve_transition_data(
+            self._transitions[strategy], params, cycle, strategy
+        )
+
+    def _validate_state_mapping(self, values: Any, label: str) -> None:
+        """Validate state/strategy keys while allowing omitted known states."""
+        if not isinstance(values, dict):
+            raise TypeError(
+                f"{label} values must be a mapping or callable, "
+                f"got {type(values).__name__}."
+            )
+        if not values:
+            return
+
+        keys = set(values)
+        state_names = set(self.states)
+        strategy_names = set(self.strategy_names)
+
+        if keys <= strategy_names and all(
+            isinstance(value, dict) for value in values.values()
+        ):
+            for strategy, state_values in values.items():
+                unknown = set(state_values) - state_names
+                if unknown:
+                    raise ValueError(
+                        f"{label} for strategy {strategy!r} contains unknown "
+                        f"states: {sorted(unknown)!r}."
+                    )
+            return
+
+        if keys <= state_names:
+            return
+
+        unknown = keys - state_names - strategy_names
+        if unknown:
+            raise ValueError(
+                f"{label} contains unknown state or strategy names: "
+                f"{sorted(unknown)!r}."
+            )
+        raise ValueError(
+            f"{label} mixes state-level and strategy-level keys; "
+            "use either {state: value} or {strategy: {state: value}}."
+        )
     
     def _resolve_state_values(self, values: Any, strategy: str,
                               params: Dict[str, float], t: int) -> np.ndarray:
@@ -678,34 +859,27 @@ class CohortStateTransitionModel:
         # Evaluate callable first
         if callable(values):
             values = values(params, t)
-        
+        self._validate_state_mapping(values, "Resolved state value")
+
         result = np.zeros(self.n_states)
         
         if not values:
             return result
         
-        # Inspect structure
-        first_key = next(iter(values))
-        
-        if isinstance(first_key, str) and first_key in self.strategy_names:
+        if set(values) <= set(self.strategy_names) and all(
+            isinstance(value, dict) for value in values.values()
+        ):
             # Format: {strategy: {state: value}}
             if strategy in values:
                 state_vals = values[strategy]
-                if isinstance(state_vals, dict):
-                    for state_name, val in state_vals.items():
-                        if state_name in self.states:
-                            idx = self.states.index(state_name)
-                            result[idx] = resolve_value(val, params, t)
-                else:
-                    # state_vals might be a single value for all states
-                    v = resolve_value(state_vals, params, t)
-                    result[:] = v
+                for state_name, val in state_vals.items():
+                    idx = self.states.index(state_name)
+                    result[idx] = resolve_value(val, params, t)
         else:
             # Format: {state: value} — same for all strategies
             for state_name, val in values.items():
-                if state_name in self.states:
-                    idx = self.states.index(state_name)
-                    result[idx] = resolve_value(val, params, t)
+                idx = self.states.index(state_name)
+                result[idx] = resolve_value(val, params, t)
         
         return result
     
@@ -748,185 +922,174 @@ class CohortStateTransitionModel:
             Results keyed by strategy name, each containing:
             trace, costs, qalys, lys, totals.
         """
+        missing = [
+            strategy for strategy in self.strategy_names
+            if strategy not in self._transitions
+        ]
+        if missing:
+            raise ValueError(
+                f"Missing transition matrices for strategies: {missing!r}"
+            )
+
         results = {}
-        
+        n_intervals = self.n_cycles
+        interval_index = np.arange(n_intervals, dtype=float)
+        flow_df_cost = discount_factor(
+            interval_index + 0.5, self.dr_cost, self.cycle_length,
+            self.discount_convention,
+        )
+        flow_df_qaly = discount_factor(
+            interval_index + 0.5, self.dr_qaly, self.cycle_length,
+            self.discount_convention,
+        )
+        event_df_cost = discount_factor(
+            interval_index + 1.0, self.dr_cost, self.cycle_length,
+            self.discount_convention,
+        )
+
+        alive_mask = np.zeros(self.n_states)
+        alive_mask[self._alive_states] = 1.0
+
         for strategy in self.strategy_names:
-            # --- Markov trace ---
-            trace = np.zeros((self.n_cycles + 1, self.n_states))
+            matrices = [
+                self._get_transition_matrix(strategy, params, interval)
+                for interval in range(n_intervals)
+            ]
+
+            trace = np.zeros((n_intervals + 1, self.n_states))
             trace[0, self.initial_state_idx] = 1.0
-            
-            for t in range(1, self.n_cycles + 1):
-                P = self._get_transition_matrix(strategy, params, t)
-                trace[t] = trace[t - 1] @ P
-            
-            # --- Per-cycle rewards (undiscounted) ---
-            costs_by_cat = {cat: np.zeros(self.n_cycles + 1) for cat in self._costs}
-            qalys = np.zeros(self.n_cycles + 1)
-            lys = np.zeros(self.n_cycles + 1)
-            
-            alive_mask = np.zeros(self.n_states)
-            for i in self._alive_states:
-                alive_mask[i] = 1.0
-            
-            for t in range(self.n_cycles + 1):
-                state_probs = trace[t]
-                
-                # Utilities → QALYs
-                u = self._get_utilities(strategy, params, t)
-                qalys[t] = np.dot(state_probs, u) * self.cycle_length
-                
-                # Life years
-                lys[t] = np.dot(state_probs, alive_mask) * self.cycle_length
-                
-                # Costs per category
-                for cat in self._costs:
-                    cost_def = self._costs[cat]
-                    c = self._get_state_costs(cat, strategy, params, t)
-                    
-                    if cost_def.method == "wlos":
-                        # Annual cost → per-cycle cost
-                        costs_by_cat[cat][t] = np.dot(state_probs, c) * self.cycle_length
-                    elif cost_def.method == "starting":
-                        # One-time cost, no cycle_length scaling
-                        costs_by_cat[cat][t] = np.dot(state_probs, c)
-                    else:
-                        costs_by_cat[cat][t] = np.dot(state_probs, c) * self.cycle_length
-            
-            # --- Transition costs (flow-based, schedule-aware) ---
-            if self._transition_costs:
-                # Group by category, keeping global index for inflow tracking
-                tc_cats: Dict[str, list] = {}
-                for i, tc in enumerate(self._transition_costs):
-                    cat = tc['category']
-                    if cat not in tc_cats:
-                        tc_cats[cat] = []
-                    tc_cats[cat].append((i, tc))
-                
-                # Inflow history matrix: [tc_index, cycle] → flow
-                n_tc = len(self._transition_costs)
-                tc_inflows = np.zeros((n_tc, self.n_cycles + 1))
-                
-                # Pre-resolve schedules (None = callable, handled per-cycle)
-                tc_schedules = [
-                    self._get_tc_schedule(tc, strategy, params)
-                    for tc in self._transition_costs
-                ]
-                
-                for cat, tc_list in tc_cats.items():
-                    tc_costs = np.zeros(self.n_cycles + 1)
-                    for t in range(1, self.n_cycles + 1):
-                        P = self._get_transition_matrix(strategy, params, t)
-                        for idx, tc in tc_list:
-                            fi, ti = tc['from_idx'], tc['to_idx']
-                            flow = trace[t - 1, fi] * P[fi, ti]
-                            tc_inflows[idx, t] = flow
-                            
-                            schedule = tc_schedules[idx]
-                            if schedule is None:
-                                # Callable: evaluate per-cycle (no schedule)
-                                val = tc['value']
-                                if isinstance(val, dict):
-                                    val = val.get(strategy, 0)
-                                if callable(val):
-                                    tc_costs[t] += flow * float(val(params, t))
-                            else:
-                                # Schedule convolution:
-                                # cost[t] += Σ_k inflow[t-k] × schedule[k]
-                                for k, sched_val in enumerate(schedule):
-                                    past_t = t - k
-                                    if past_t >= 1:
-                                        tc_costs[t] += tc_inflows[idx, past_t] * sched_val
-                    costs_by_cat[cat] = costs_by_cat.get(cat, np.zeros(self.n_cycles + 1)) + tc_costs
+            for interval, matrix in enumerate(matrices):
+                trace[interval + 1] = trace[interval] @ matrix
 
-            # --- Custom costs (user-defined functions) ---
-            if self._custom_costs:
-                for cc in self._custom_costs:
-                    cat = cc['category']
-                    cc_costs = np.zeros(self.n_cycles + 1)
-                    for t in range(1, self.n_cycles + 1):
-                        P = self._get_transition_matrix(strategy, params, t)
-                        cost_val = cc['func'](
-                            strategy, params, t,
-                            trace[t - 1], trace[t], P, self.states
-                        )
-                        cc_costs[t] = float(cost_val)
-                    costs_by_cat[cat] = (
-                        costs_by_cat.get(cat, np.zeros(self.n_cycles + 1))
-                        + cc_costs
+            start_occupancy = interval_occupancy(trace, None)
+            reward_occupancy = interval_occupancy(trace, self._hcc_method)
+
+            qalys = np.zeros(n_intervals)
+            qalys_hcc = np.zeros(n_intervals)
+            lys = start_occupancy @ alive_mask * self.cycle_length
+            lys_hcc = reward_occupancy @ alive_mask * self.cycle_length
+
+            state_costs_raw = {
+                category: np.zeros(n_intervals) for category in self._costs
+            }
+            state_costs_hcc = {
+                category: np.zeros(n_intervals) for category in self._costs
+            }
+            starting_costs = {
+                category: np.zeros(n_intervals) for category in self._costs
+            }
+            event_costs: Dict[str, np.ndarray] = {}
+
+            for interval in range(n_intervals):
+                utility = self._get_utilities(strategy, params, interval)
+                qalys[interval] = (
+                    np.dot(start_occupancy[interval], utility)
+                    * self.cycle_length
+                )
+                qalys_hcc[interval] = (
+                    np.dot(reward_occupancy[interval], utility)
+                    * self.cycle_length
+                )
+
+                for category, cost_def in self._costs.items():
+                    costs = self._get_state_costs(
+                        category, strategy, params, interval
                     )
-
-            # --- Half-cycle correction ---
-            # Collect categories excluded from HCC (event-based, not state-based)
-            no_hcc_cats = set()
-            if self._transition_costs:
-                for tc in self._transition_costs:
-                    if tc['category'] not in self._costs:
-                        no_hcc_cats.add(tc['category'])
-            if self._custom_costs:
-                for cc in self._custom_costs:
-                    if cc['category'] not in self._costs:
-                        no_hcc_cats.add(cc['category'])
-
-            if self._hcc_method == "trapezoidal":
-                hcc_weights = np.ones(self.n_cycles + 1)
-                hcc_weights[0] = 0.5
-                hcc_weights[-1] = 0.5
-
-                qalys_hcc = qalys * hcc_weights
-                lys_hcc = lys * hcc_weights
-
-                costs_hcc = {}
-                for cat in costs_by_cat:
-                    if cat in no_hcc_cats:
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
-                    elif cat in self._costs and self._costs[cat].method in ("starting",):
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
+                    if cost_def.method == "starting":
+                        if interval == 0:
+                            amount = float(np.dot(trace[0], costs))
+                            starting_costs[category][0] = amount
                     else:
-                        costs_hcc[cat] = costs_by_cat[cat] * hcc_weights
+                        state_costs_raw[category][interval] = (
+                            np.dot(start_occupancy[interval], costs)
+                            * self.cycle_length
+                        )
+                        state_costs_hcc[category][interval] = (
+                            np.dot(reward_occupancy[interval], costs)
+                            * self.cycle_length
+                        )
 
-            elif self._hcc_method == "life-table":
-                corrected = life_table_corrected_trace(trace)
+            for transition_cost in self._transition_costs:
+                category = transition_cost['category']
+                category_events = event_costs.setdefault(
+                    category, np.zeros(n_intervals)
+                )
+                from_index = transition_cost['from_idx']
+                to_index = transition_cost['to_idx']
+                inflows = np.array([
+                    trace[interval, from_index]
+                    * matrices[interval][from_index, to_index]
+                    for interval in range(n_intervals)
+                ])
+                schedule = self._get_tc_schedule(
+                    transition_cost, strategy, params
+                )
 
-                qalys_hcc = np.zeros(self.n_cycles + 1)
-                lys_hcc = np.zeros(self.n_cycles + 1)
-                for t in range(self.n_cycles + 1):
-                    u = self._get_utilities(strategy, params, t)
-                    qalys_hcc[t] = np.dot(corrected[t], u) * self.cycle_length
-                    lys_hcc[t] = np.dot(corrected[t], alive_mask) * self.cycle_length
+                if schedule is None:
+                    value = transition_cost['value']
+                    if isinstance(value, dict):
+                        value = value.get(strategy, 0)
+                    for interval, flow in enumerate(inflows):
+                        category_events[interval] += (
+                            flow * resolve_value(value, params, interval)
+                        )
+                else:
+                    for source_interval, flow in enumerate(inflows):
+                        for offset, amount in enumerate(schedule):
+                            target_interval = source_interval + offset
+                            if target_interval < n_intervals:
+                                category_events[target_interval] += flow * amount
 
-                costs_hcc = {}
-                for cat in costs_by_cat:
-                    if cat in no_hcc_cats:
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
-                    elif cat in self._costs and self._costs[cat].method in ("starting",):
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
-                    else:
-                        costs_hcc[cat] = np.zeros(self.n_cycles + 1)
-                        for t in range(self.n_cycles + 1):
-                            c = self._get_state_costs(cat, strategy, params, t)
-                            costs_hcc[cat][t] = (
-                                np.dot(corrected[t], c) * self.cycle_length
-                            )
+            for custom_cost in self._custom_costs:
+                category = custom_cost['category']
+                category_events = event_costs.setdefault(
+                    category, np.zeros(n_intervals)
+                )
+                for interval, matrix in enumerate(matrices):
+                    amount = float(custom_cost['func'](
+                        strategy, params, interval,
+                        trace[interval], trace[interval + 1],
+                        matrix, self.states,
+                    ))
+                    if not np.isfinite(amount):
+                        raise ValueError(
+                            f"Custom cost {category!r} returned a non-finite "
+                            f"value for strategy {strategy!r}, interval {interval}."
+                        )
+                    category_events[interval] += amount
 
-            else:
-                # No correction
-                qalys_hcc = qalys.copy()
-                lys_hcc = lys.copy()
-                costs_hcc = {cat: arr.copy() for cat, arr in costs_by_cat.items()}
-            
-            # --- Discounting ---
-            cycles = np.arange(self.n_cycles + 1, dtype=float)
-            df_c = discount_factor(cycles, self.dr_cost, self.cycle_length)
-            df_q = discount_factor(cycles, self.dr_qaly, self.cycle_length)
-            
-            discounted_costs = {cat: costs_hcc[cat] * df_c for cat in costs_hcc}
-            discounted_qalys = qalys_hcc * df_q
-            discounted_lys = lys_hcc * df_q
-            
-            # --- Totals ---
+            categories = list(dict.fromkeys([*self._costs, *event_costs]))
+            costs_by_cycle = {}
+            costs_hcc = {}
+            discounted_costs = {}
+            for category in categories:
+                state_raw = state_costs_raw.get(
+                    category, np.zeros(n_intervals)
+                )
+                state_hcc = state_costs_hcc.get(
+                    category, np.zeros(n_intervals)
+                )
+                at_start = starting_costs.get(
+                    category, np.zeros(n_intervals)
+                )
+                at_event = event_costs.get(
+                    category, np.zeros(n_intervals)
+                )
+                costs_by_cycle[category] = state_raw + at_start + at_event
+                costs_hcc[category] = state_hcc + at_start + at_event
+                discounted_costs[category] = (
+                    state_hcc * flow_df_cost
+                    + at_start
+                    + at_event * event_df_cost
+                )
+
+            discounted_qalys = qalys_hcc * flow_df_qaly
+            discounted_lys = lys_hcc * flow_df_qaly
+
             results[strategy] = {
                 'trace': trace,
-                'costs_by_cycle': costs_by_cat,
+                'interval_times': (interval_index + 0.5) * self.cycle_length,
+                'costs_by_cycle': costs_by_cycle,
                 'qalys_by_cycle': qalys,
                 'lys_by_cycle': lys,
                 'costs_hcc': costs_hcc,
@@ -936,13 +1099,13 @@ class CohortStateTransitionModel:
                 'discounted_qalys': discounted_qalys,
                 'discounted_lys': discounted_lys,
                 'total_costs': {
-                    cat: float(np.sum(discounted_costs[cat]))
-                    for cat in discounted_costs
+                    category: float(np.sum(values))
+                    for category, values in discounted_costs.items()
                 },
                 'total_qalys': float(np.sum(discounted_qalys)),
                 'total_lys': float(np.sum(discounted_lys)),
             }
-        
+
         return results
     
     # =========================================================================
@@ -1082,9 +1245,12 @@ class CohortStateTransitionModel:
             Results with CEAC, CE plane, and summary statistics.
         """
         from ..analysis.results import PSAResult
-        
-        if seed is not None:
-            np.random.seed(seed)
+
+        if isinstance(n_sim, bool) or not isinstance(n_sim, (int, np.integer)):
+            raise TypeError("n_sim must be a positive integer")
+        if n_sim <= 0:
+            raise ValueError("n_sim must be a positive integer")
+        rng = np.random.default_rng(seed)
         
         # Sample parameters
         sampled_params = []
@@ -1092,7 +1258,7 @@ class CohortStateTransitionModel:
             p = self._get_base_params()
             for name, param in self.params.items():
                 if param.dist is not None:
-                    p[name] = float(param.dist.sample(1)[0])
+                    p[name] = float(sample_distribution(param.dist, 1, rng)[0])
             sampled_params.append(p)
         
         # Run simulations
@@ -1125,6 +1291,7 @@ class CohortStateTransitionModel:
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
             f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
+            f"  Discount convention: {self.discount_convention}",
             f"  Half-cycle correction: {self._hcc_method or 'None'}",
             f"  Parameters ({len(self.params)}):",
         ]

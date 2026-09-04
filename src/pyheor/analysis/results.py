@@ -10,6 +10,29 @@ import pandas as pd
 from typing import Any, Dict, List, Optional
 
 
+def classify_incremental(
+    delta_cost: float, delta_effect: float, tol: float = 1e-10,
+):
+    """Return a numeric ICER when meaningful and a quadrant label."""
+    if abs(delta_effect) <= tol:
+        if delta_cost > tol:
+            return np.nan, "Dominated"
+        if delta_cost < -tol:
+            return np.nan, "Dominant"
+        return np.nan, "No difference"
+
+    if delta_effect > 0:
+        if delta_cost <= tol:
+            return np.nan, "Dominant"
+        value = delta_cost / delta_effect
+        return value, f"{value:,.0f}"
+
+    if delta_cost >= -tol:
+        return np.nan, "Dominated"
+    value = delta_cost / delta_effect
+    return value, f"{value:,.0f} (less effective, less costly)"
+
+
 class BaseResult:
     """Results from a deterministic base case analysis.
     
@@ -84,15 +107,7 @@ class BaseResult:
             inc_qaly = r['total_qalys'] - comp_qaly
             inc_ly = r['total_lys'] - comp_ly
             
-            if abs(inc_qaly) < 1e-10:
-                icer_val = float('inf') if inc_cost > 0 else float('-inf')
-                icer_str = "Dominated" if inc_cost > 0 else "Dominant"
-            elif inc_cost < 0 and inc_qaly > 0:
-                icer_val = inc_cost / inc_qaly
-                icer_str = "Dominant"
-            else:
-                icer_val = inc_cost / inc_qaly
-                icer_str = f"{icer_val:,.0f}"
+            icer_val, icer_str = classify_incremental(inc_cost, inc_qaly)
             
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -589,15 +604,7 @@ class PSMBaseResult:
             inc_qaly = r['total_qalys'] - comp_qaly
             inc_ly = r['total_lys'] - comp_ly
 
-            if abs(inc_qaly) < 1e-10:
-                icer_val = float('inf') if inc_cost > 0 else float('-inf')
-                icer_str = "Dominated" if inc_cost > 0 else "Dominant"
-            elif inc_cost < 0 and inc_qaly > 0:
-                icer_val = inc_cost / inc_qaly
-                icer_str = "Dominant"
-            else:
-                icer_val = inc_cost / inc_qaly
-                icer_str = f"{icer_val:,.0f}"
+            icer_val, icer_str = classify_incremental(inc_cost, inc_qaly)
 
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],

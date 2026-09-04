@@ -14,10 +14,10 @@ The Excel file contains:
 
 Supports:
 
-- **MarkovModel**: Full formula-based trace (time-homogeneous) or
-  Python trace + formula-based downstream (time-varying)
-- **PSMModel**: Python survival values + formula-based state probabilities,
-  costs, QALYs, discounting
+- **MarkovModel**: Full formula-based trace, including interval-specific
+  transition matrices and state/transition-event costs
+- **PSMModel**: Explicit survival inputs feeding formula-based state
+  probabilities, costs, QALYs, and discounting
 
 Usage
 -----
@@ -30,8 +30,6 @@ Usage
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
-from typing import Any, Dict, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter as CL
@@ -85,22 +83,21 @@ def export_excel_model(model_or_result, filepath: str, params: dict = None):
     from ..models.psm import PSMModel
     from ..analysis.results import BaseResult, PSMBaseResult
 
-    result = None
     if isinstance(model_or_result, (BaseResult, PSMBaseResult)):
         model = model_or_result.model
         params = model_or_result.params
-        result = model_or_result
     else:
         model = model_or_result
         if params is None:
             params = {name: p.base for name, p in model.params.items()}
 
-    # Pre-compute Python results for comparison
-    py_results = model._simulate_single(params)
-
     if isinstance(model, MarkovModel):
+        _validate_markov_excel_support(model, params)
+        py_results = model._simulate_single(params)
         _build_markov_excel(model, filepath, params, py_results)
     elif isinstance(model, PSMModel):
+        _validate_psm_excel_support(model, params)
+        py_results = model._simulate_single(params)
         _build_psm_excel(model, filepath, params, py_results)
     else:
         raise TypeError(
@@ -128,11 +125,9 @@ def _build_markov_excel(model, filepath, params, py_results):
     hcc_method = model.half_cycle_correction  # str or None
     initial_idx = model.initial_state_idx
 
-    cost_cats = list(model._costs.keys())
+    transition_cats = [tc["category"] for tc in model._transition_costs]
+    cost_cats = list(dict.fromkeys([*model._costs, *transition_cats]))
     n_cats = len(cost_cats)
-
-    # --- Detect time-homogeneity ---
-    is_time_homo = _check_time_homo_trans(model, params, n_cycles)
 
     # --- Per-strategy sheets ---
     summary_refs = {}
@@ -140,16 +135,20 @@ def _build_markov_excel(model, filepath, params, py_results):
     for s_idx, strategy in enumerate(model.strategy_names):
         label = model.strategy_labels[strategy]
         sname = _safe_sheet(f"Calc_{label}")
+        matrices = [
+            model._get_transition_matrix(strategy, params, interval)
+            for interval in range(n_cycles)
+        ]
+        is_time_homogeneous = all(
+            np.allclose(matrices[0], matrix, atol=1e-10, rtol=0)
+            for matrix in matrices[1:]
+        )
 
         if s_idx == 0:
             ws = wb.active
             ws.title = sname
         else:
             ws = wb.create_sheet(title=sname)
-
-        # Evaluate transition matrix (cycle 1 for time-homo)
-        P = model._get_transition_matrix(strategy, params, 1)
-        PT = P.T  # rows=to-state  cols=from-state
 
         # ============================================
         # INPUT SECTION (yellow-filled cells)
@@ -164,31 +163,97 @@ def _build_markov_excel(model, filepath, params, py_results):
         ROW_DR_C = _write_setting(ws, r, "Discount Rate (Costs)", dr_c); r += 1
         ROW_DR_Q = _write_setting(ws, r, "Discount Rate (QALYs)", dr_q); r += 1
         ROW_CL   = _write_setting(ws, r, "Cycle Length (years)", cl_val); r += 1
+        _write_setting(ws, r, "Discount Convention", model.discount_convention); r += 1
         _write_setting(ws, r, "N Cycles", n_cycles); r += 1
         _write_setting(ws, r, "Half-cycle Correction", hcc_method or "No"); r += 1
         _write_setting(ws, r, "Initial State", states[initial_idx]); r += 2
 
-        # -- Transition Matrix (Transposed: rows=to, cols=from) --
-        ws.cell(r, 1, "转移概率矩阵 (P^T: 行=目标态, 列=来源态)").font = _SECTION_FONT
-        if not is_time_homo:
-            ws.cell(r, n + 3,
-                    "⚠ 时变模型: 仅显示第1周期矩阵，Trace为Python预计算值"
-                    ).font = Font(italic=True, color="FF0000")
+        # -- Transition matrices (transposed: rows=to, cols=from) --
+        matrix_label = (
+            "转移概率矩阵 (P^T: 行=目标态, 列=来源态)"
+            if is_time_homogeneous
+            else "各区间转移概率矩阵 (P_t^T: 行=目标态, 列=来源态)"
+        )
+        ws.cell(r, 1, matrix_label).font = _SECTION_FONT
         r += 1
-        ws.cell(r, 1, "To \\ From")
-        for j in range(n):
-            ws.cell(r, 2 + j, states[j]).font = _HEADER_FONT
-        r += 1
-
-        MATRIX_R0 = r  # first data row of matrix
-        for i in range(n):
-            ws.cell(r, 1, states[i])
+        matrices_to_write = matrices[:1] if is_time_homogeneous else matrices
+        matrix_cells = []
+        for interval, matrix in enumerate(matrices_to_write):
+            if not is_time_homogeneous:
+                ws.cell(r, 1, f"Interval {interval}").font = _HEADER_FONT
+                r += 1
+            ws.cell(r, 1, "To \\ From")
             for j in range(n):
-                c = ws.cell(r, 2 + j, PT[i, j])
-                c.fill = _INPUT_FILL
-                c.number_format = _FMT_PROB
+                ws.cell(r, 2 + j, states[j]).font = _HEADER_FONT
             r += 1
-        r += 1
+            first_matrix_row = r
+            for to_idx in range(n):
+                ws.cell(r, 1, states[to_idx])
+                for from_idx in range(n):
+                    cell = ws.cell(r, 2 + from_idx, matrix[from_idx, to_idx])
+                    cell.fill = _INPUT_FILL
+                    cell.number_format = _FMT_PROB
+                r += 1
+            matrix_range = (
+                f"{CL(2)}{first_matrix_row}:"
+                f"{CL(1 + n)}{first_matrix_row + n - 1}"
+            )
+            ws.cell(r, 1, "Validation")
+            sum_checks = ",".join(
+                f"ABS(SUM({CL(2 + from_idx)}{first_matrix_row}:"
+                f"{CL(2 + from_idx)}{first_matrix_row + n - 1})-1)<1E-8"
+                for from_idx in range(n)
+            )
+            ws.cell(
+                r, 2,
+                f'=IF(AND(MIN({matrix_range})>=0,MAX({matrix_range})<=1,'
+                f'{sum_checks}),"OK","ERROR")',
+            )
+            matrix_cells.append([
+                [
+                    f"${CL(2 + from_idx)}${first_matrix_row + to_idx}"
+                    for from_idx in range(n)
+                ]
+                for to_idx in range(n)
+            ])
+            r += 1
+        if is_time_homogeneous:
+            matrix_cells *= n_cycles
+
+        # -- Transition-event costs --
+        transition_inputs = []
+        if model._transition_costs:
+            ws.cell(r, 1, "转移事件费用 (期末发生；列为事件后间隔)").font = _SECTION_FONT
+            r += 1
+            ws.cell(r, 1, "Category / Transition").font = _HEADER_FONT
+            max_schedule = max(
+                len(model._get_tc_schedule(tc_def, strategy, params))
+                for tc_def in model._transition_costs
+            )
+            for offset in range(max_schedule):
+                ws.cell(r, 2 + offset, f"Offset {offset}").font = _HEADER_FONT
+            r += 1
+            for tc_def in model._transition_costs:
+                schedule = model._get_tc_schedule(tc_def, strategy, params)
+                ws.cell(
+                    r, 1,
+                    f"{tc_def['category']}: "
+                    f"{tc_def['from_state']} → {tc_def['to_state']}",
+                )
+                refs = []
+                for offset, amount in enumerate(schedule):
+                    cell = ws.cell(r, 2 + offset, amount)
+                    cell.fill = _INPUT_FILL
+                    cell.number_format = _FMT_COST
+                    refs.append(f"${CL(2 + offset)}${r}")
+                transition_inputs.append({
+                    "category": tc_def["category"],
+                    "from_idx": tc_def["from_idx"],
+                    "to_idx": tc_def["to_idx"],
+                    "schedule_refs": refs,
+                })
+                r += 1
+            r += 1
 
         # -- State Costs --
         ws.cell(r, 1, "状态费用 (年度费率)").font = _SECTION_FONT
@@ -198,7 +263,7 @@ def _build_markov_excel(model, filepath, params, py_results):
         r += 1
 
         cost_input_rows = {}
-        for cat in cost_cats:
+        for cat in model._costs:
             vec = model._get_state_costs(cat, strategy, params, 0)
             ws.cell(r, 1, cat)
             for j in range(n):
@@ -207,7 +272,7 @@ def _build_markov_excel(model, filepath, params, py_results):
                 c.number_format = _FMT_COST
             cost_input_rows[cat] = r
             r += 1
-        if not cost_cats:
+        if not model._costs:
             ws.cell(r, 1, "(无)")
             r += 1
         r += 1
@@ -250,7 +315,8 @@ def _build_markov_excel(model, filepath, params, py_results):
         tc = 3                                     # trace col start
         te = tc + n - 1                            # trace col end
         COL_RS = te + 1                            # row sum
-        COL_DFC = COL_RS + 1                       # DF cost
+        COL_VALID = COL_RS + 1                     # trace validation
+        COL_DFC = COL_VALID + 1                    # DF cost
         COL_DFQ = COL_DFC + 1                      # DF qaly
         COL_HCC = COL_DFQ + 1
 
@@ -273,7 +339,8 @@ def _build_markov_excel(model, filepath, params, py_results):
         for j in range(n):
             hdrs.append((tc + j, f"P({states[j]})"))
         hdrs += [
-            (COL_RS, "RowSum"), (COL_DFC, "DF(cost)"),
+            (COL_RS, "RowSum"), (COL_VALID, "Validation"),
+            (COL_DFC, "DF(cost)"),
             (COL_DFQ, "DF(qaly)"), (COL_HCC, "HCC"),
         ]
         for cat in cost_cats:
@@ -291,20 +358,20 @@ def _build_markov_excel(model, filepath, params, py_results):
         drq = f"$B${ROW_DR_Q}"
         cl_ref = f"$B${ROW_CL}"
         # cost vector refs  {cat: "$B$rr:${CL(1+n)}$rr"}
-        cvr = {cat: f"${CL(2)}${cost_input_rows[cat]}:${CL(1+n)}${cost_input_rows[cat]}"
-               for cat in cost_cats}
+        cvr = {
+            cat: f"${CL(2)}${cost_input_rows[cat]}:${CL(1+n)}${cost_input_rows[cat]}"
+            for cat in model._costs
+        }
         util_r = f"${CL(2)}${UTIL_ROW}:${CL(1+n)}${UTIL_ROW}"
         alive_r = f"${CL(2)}${ALIVE_ROW}:${CL(1+n)}${ALIVE_ROW}"
 
-        # P^T row ref for each "to state j"  (time-homo only)
-        pt_rows = {}
-        for j in range(n):
-            mr = MATRIX_R0 + j
-            pt_rows[j] = f"${CL(2)}${mr}:${CL(1+n)}${mr}"
+        # P_t^T row references, one set for each model interval.
+        pt_rows = [
+            [f"{cells[to_idx][0]}:{cells[to_idx][-1]}" for to_idx in range(n)]
+            for cells in matrix_cells
+        ]
 
         # -- Data Rows --
-        py_trace = py_results[strategy]['trace']  # for time-varying fallback
-
         for t in range(n_cycles + 1):
             rr = D0 + t  # current row
 
@@ -318,69 +385,102 @@ def _build_markov_excel(model, filepath, params, py_results):
                 for j in range(n):
                     ws.cell(rr, tc + j, 1.0 if j == initial_idx else 0.0)
             else:
-                if is_time_homo:
-                    prev_tr = f"{CL(tc)}{rr - 1}:{CL(te)}{rr - 1}"
-                    for j in range(n):
-                        ws.cell(rr, tc + j,
-                                f"=SUMPRODUCT({prev_tr},{pt_rows[j]})")
-                else:
-                    # Time-varying: write Python trace values
-                    for j in range(n):
-                        ws.cell(rr, tc + j, float(py_trace[t, j]))
+                prev_tr = f"{CL(tc)}{rr - 1}:{CL(te)}{rr - 1}"
+                for j in range(n):
+                    ws.cell(rr, tc + j,
+                            f"=SUMPRODUCT({prev_tr},{pt_rows[t - 1][j]})")
 
             # Row Sum
             ws.cell(rr, COL_RS, f"=SUM({CL(tc)}{rr}:{CL(te)}{rr})")
+            ws.cell(
+                rr, COL_VALID,
+                f'=IF(AND(MIN({CL(tc)}{rr}:{CL(te)}{rr})>=-1E-10,'
+                f'ABS({CL(COL_RS)}{rr}-1)<1E-8),"OK","ERROR")',
+            )
 
-            # Discount Factors
-            time_c = f"{CL(COL_TIM)}{rr}"
-            ws.cell(rr, COL_DFC, f"=1/(1+{drc})^{time_c}")
-            ws.cell(rr, COL_DFQ, f"=1/(1+{drq})^{time_c}")
+            # The final row is an observation point only. It has no rewards.
+            if t == n_cycles:
+                continue
 
-            # HCC
-            if hcc_method == "trapezoidal" and (t == 0 or t == n_cycles):
-                ws.cell(rr, COL_HCC, 0.5)
-            else:
-                ws.cell(rr, COL_HCC, 1.0)
+            # Flow rewards occur at the interval midpoint.
+            time_c = f"({CL(COL_TIM)}{rr}+{cl_ref}/2)"
+            ws.cell(
+                rr, COL_DFC,
+                _discount_formula(time_c, drc, model.discount_convention),
+            )
+            ws.cell(
+                rr, COL_DFQ,
+                _discount_formula(time_c, drq, model.discount_convention),
+            )
+            ws.cell(
+                rr, COL_HCC,
+                "Average endpoints" if hcc_method == "trapezoidal" else "Start",
+            )
 
             df_c_cell = f"{CL(COL_DFC)}{rr}"
             df_q_cell = f"{CL(COL_DFQ)}{rr}"
-            hcc_cell = f"{CL(COL_HCC)}{rr}"
+            next_tr_range = f"{CL(tc)}{rr + 1}:{CL(te)}{rr + 1}"
+            if hcc_method == "trapezoidal":
+                occupancy = f"({tr_range}+{next_tr_range})/2"
+            else:
+                occupancy = tr_range
 
             # --- Costs ---
             for cat in cost_cats:
-                cdef = model._costs[cat]
-                base = f"SUMPRODUCT({tr_range},{cvr[cat]})"
-
-                if cdef.method == "wlos":
+                state_raw = "0"
+                state_disc = "0"
+                if cat in model._costs:
+                    cdef = model._costs[cat]
+                    base = f"SUMPRODUCT({occupancy},{cvr[cat]})"
                     inner = f"{base}*{cl_ref}"
-                else:
-                    inner = base
 
-                if cdef.first_cycle_only:
-                    raw_f = f"=IF({CL(COL_CYC)}{rr}=0,{inner},0)"
-                elif cdef.apply_cycles is not None:
-                    # Specific cycles: store value
-                    val = py_results[strategy]['costs_by_cycle'].get(
-                        cat, np.zeros(n_cycles + 1))[t]
-                    ws.cell(rr, craw[cat], val)
-                    ws.cell(rr, craw[cat]).number_format = _FMT_COST
-                    raw_ref = f"{CL(craw[cat])}{rr}"
-                    ws.cell(rr, cdisc[cat],
-                            f"={raw_ref}*{df_c_cell}*{hcc_cell}")
-                    ws.cell(rr, cdisc[cat]).number_format = _FMT_COST
-                    continue
-                else:
-                    raw_f = f"={inner}"
+                    if cdef.first_cycle_only:
+                        state_raw = f"IF({CL(COL_CYC)}{rr}=0,{inner},0)"
+                    elif cdef.apply_cycles is not None:
+                        checks = ",".join(
+                            f"{CL(COL_CYC)}{rr}={cycle}"
+                            for cycle in cdef.apply_cycles
+                        )
+                        condition = f"OR({checks})" if checks else "FALSE"
+                        state_raw = f"IF({condition},{inner},0)"
+                    else:
+                        state_raw = inner
 
-                ws.cell(rr, craw[cat], raw_f)
+                    if cdef.method == "starting":
+                        starting = f"SUMPRODUCT({tr_range},{cvr[cat]})"
+                        state_raw = f"IF({CL(COL_CYC)}{rr}=0,{starting},0)"
+                        state_disc = state_raw
+                    else:
+                        state_disc = f"({state_raw})*{df_c_cell}"
+
+                event_terms = []
+                for event in transition_inputs:
+                    if event["category"] != cat:
+                        continue
+                    for offset, amount_ref in enumerate(event["schedule_refs"]):
+                        source_interval = t - offset
+                        if source_interval < 0:
+                            continue
+                        probability = matrix_cells[source_interval][
+                            event["to_idx"]
+                        ][event["from_idx"]]
+                        source_row = D0 + source_interval
+                        source_trace = f"{CL(tc + event['from_idx'])}{source_row}"
+                        event_terms.append(
+                            f"{source_trace}*{probability}*{amount_ref}"
+                        )
+                event_raw = "+".join(event_terms) if event_terms else "0"
+                event_time = f"({CL(COL_TIM)}{rr}+{cl_ref})"
+                event_df = _discount_formula(
+                    event_time, drc, model.discount_convention,
+                )[1:]
+
+                ws.cell(rr, craw[cat], f"={state_raw}+({event_raw})")
                 ws.cell(rr, craw[cat]).number_format = _FMT_COST
-
-                raw_ref = f"{CL(craw[cat])}{rr}"
-                if cdef.method == "starting":
-                    ws.cell(rr, cdisc[cat], f"={raw_ref}*{df_c_cell}")
-                else:
-                    ws.cell(rr, cdisc[cat],
-                            f"={raw_ref}*{df_c_cell}*{hcc_cell}")
+                ws.cell(
+                    rr, cdisc[cat],
+                    f"={state_disc}+({event_raw})*({event_df})",
+                )
                 ws.cell(rr, cdisc[cat]).number_format = _FMT_COST
 
             # Total discounted cost
@@ -393,47 +493,20 @@ def _build_markov_excel(model, filepath, params, py_results):
 
             # --- QALYs ---
             ws.cell(rr, COL_QR,
-                    f"=SUMPRODUCT({tr_range},{util_r})*{cl_ref}")
+                    f"=SUMPRODUCT({occupancy},{util_r})*{cl_ref}")
             ws.cell(rr, COL_QD,
-                    f"={CL(COL_QR)}{rr}*{df_q_cell}*{hcc_cell}")
+                    f"={CL(COL_QR)}{rr}*{df_q_cell}")
             ws.cell(rr, COL_QD).number_format = _FMT_PROB
 
             # --- LYs ---
             ws.cell(rr, COL_LR,
-                    f"=SUMPRODUCT({tr_range},{alive_r})*{cl_ref}")
+                    f"=SUMPRODUCT({occupancy},{alive_r})*{cl_ref}")
             ws.cell(rr, COL_LD,
-                    f"={CL(COL_LR)}{rr}*{df_q_cell}*{hcc_cell}")
-
-        # -- Handle transition costs (add as pre-computed values) --
-        tc_note_row = None
-        if model._transition_costs:
-            # Add extra cost columns for transition costs
-            tc_col_start = COL_LD + 2
-            tc_cats_done = set()
-            tc_col_map = {}
-            for tc_def in model._transition_costs:
-                tcat = tc_def['category']
-                if tcat not in tc_cats_done:
-                    ws.cell(HDR, tc_col_start, f"{tcat}(tc,disc)")
-                    ws.cell(HDR, tc_col_start).font = _HEADER_FONT
-                    tc_col_map[tcat] = tc_col_start
-                    tc_col_start += 1
-                    tc_cats_done.add(tcat)
-
-            # Write pre-computed discounted transition costs
-            for tcat in tc_col_map:
-                if tcat in py_results[strategy].get('discounted_costs', {}):
-                    arr = py_results[strategy]['discounted_costs'][tcat]
-                    for t in range(n_cycles + 1):
-                        rr = D0 + t
-                        ws.cell(rr, tc_col_map[tcat], float(arr[t]))
-                        ws.cell(rr, tc_col_map[tcat]).number_format = _FMT_COST
-
-            tc_note_row = D0 + n_cycles + 2
+                    f"={CL(COL_LR)}{rr}*{df_q_cell}")
 
         # -- Totals Row --
         TR = D0 + n_cycles + 1
-        DL = D0 + n_cycles  # data last row
+        DL = D0 + n_cycles - 1  # last interval row; final trace row has no rewards
         ws.cell(TR, COL_CYC, "TOTAL").font = _HEADER_FONT
 
         sum_cols = (
@@ -445,26 +518,6 @@ def _build_markov_excel(model, filepath, params, py_results):
                     f"=SUM({CL(sc)}{D0}:{CL(sc)}{DL})")
             ws.cell(TR, sc).font = _HEADER_FONT
             ws.cell(TR, sc).number_format = _FMT_COST
-
-        # If transition costs exist, add them to total cost
-        if model._transition_costs and tc_col_map:
-            # Adjust total cost in totals row to include tc
-            tc_sum_parts = []
-            for tcat, tcc in tc_col_map.items():
-                ws.cell(TR, tcc, f"=SUM({CL(tcc)}{D0}:{CL(tcc)}{DL})")
-                ws.cell(TR, tcc).font = _HEADER_FONT
-                ws.cell(TR, tcc).number_format = _FMT_COST
-                tc_sum_parts.append(f"{CL(tcc)}{TR}")
-            # Overwrite total cost to include transition costs
-            base_tc = f"SUM({CL(COL_TC)}{D0}:{CL(COL_TC)}{DL})"
-            tc_extra = "+".join(tc_sum_parts)
-            ws.cell(TR, COL_TC, f"={base_tc}+{tc_extra}")
-
-        if tc_note_row:
-            ws.cell(tc_note_row, 1,
-                    "Note: Transition costs (tc) are pre-computed from Python "
-                    "(schedule-based convolution cannot be replicated in Excel formulas)."
-                    ).font = _NOTE_FONT
 
         # Store refs for Summary
         summary_refs[strategy] = {
@@ -484,11 +537,9 @@ def _build_markov_excel(model, filepath, params, py_results):
     # ============================================
     _build_summary_sheet(wb, model, summary_refs, py_results)
 
+    _enable_excel_recalculation(wb)
     wb.save(filepath)
     print(f"✅ Excel 验证模型已导出: {filepath}")
-    if not is_time_homo:
-        print("   ⚠ 时变模型: Trace 为 Python 预计算值; "
-              "费用/QALY/贴现/ICER 仍为 Excel 公式。")
 
 
 # =====================================================================
@@ -535,8 +586,22 @@ def _build_psm_excel(model, filepath, params, py_results):
         ROW_DR_C = _write_setting(ws, r, "Discount Rate (Costs)", dr_c); r += 1
         ROW_DR_Q = _write_setting(ws, r, "Discount Rate (QALYs)", dr_q); r += 1
         ROW_CL   = _write_setting(ws, r, "Cycle Length (years)", cl_val); r += 1
+        _write_setting(ws, r, "Discount Convention", model.discount_convention); r += 1
         _write_setting(ws, r, "N Cycles", n_cycles); r += 1
         _write_setting(ws, r, "Half-cycle Correction", hcc_method or "No"); r += 2
+
+        # Survival parameters are Excel inputs when the distribution has a
+        # compact, standard spreadsheet formula. Other curve types remain
+        # explicit external survival inputs in the calculation table.
+        ws.cell(r, 1, "生存曲线参数").font = _SECTION_FONT; r += 1
+        curve_specs = {}
+        for endpoint in endpoints:
+            curve = model._resolve_curve(strategy, endpoint, params)
+            spec, r = _write_survival_curve_inputs(
+                ws, r, endpoint, curve,
+            )
+            curve_specs[endpoint] = spec
+        r += 1
 
         # State Costs
         ws.cell(r, 1, "状态费用 (年度费率)").font = _SECTION_FONT; r += 1
@@ -579,7 +644,10 @@ def _build_psm_excel(model, filepath, params, py_results):
         # ============================================
         # CALCULATION TABLE
         # ============================================
-        ws.cell(r, 1, "计算区 (生存曲线为Python值, 状态概率/费用/QALY为Excel公式)").font = _SECTION_FONT
+        ws.cell(
+            r, 1,
+            "计算区 (标准参数曲线为公式；其余生存率为明示外部输入)",
+        ).font = _SECTION_FONT
         r += 1
 
         HDR = r
@@ -595,7 +663,8 @@ def _build_psm_excel(model, filepath, params, py_results):
         sp_start = surv_end + 1
         sp_end = sp_start + n - 1
         COL_RS = sp_end + 1
-        COL_DFC = COL_RS + 1
+        COL_VALID = COL_RS + 1
+        COL_DFC = COL_VALID + 1
         COL_DFQ = COL_DFC + 1
         COL_HCC = COL_DFQ + 1
 
@@ -617,7 +686,8 @@ def _build_psm_excel(model, filepath, params, py_results):
         for j, st in enumerate(states):
             headers.append((sp_start + j, f"P({st})"))
         headers += [
-            (COL_RS, "RowSum"), (COL_DFC, "DF(cost)"),
+            (COL_RS, "RowSum"), (COL_VALID, "Validation"),
+            (COL_DFC, "DF(cost)"),
             (COL_DFQ, "DF(qaly)"), (COL_HCC, "HCC"),
         ]
         for cat in cost_cats:
@@ -649,20 +719,33 @@ def _build_psm_excel(model, filepath, params, py_results):
             ws.cell(rr, COL_CYC, t)
             ws.cell(rr, COL_TIM, f"={CL(COL_CYC)}{rr}*{cl_ref}")
 
-            # Survival curve VALUES
+            # Survival curve formulas where supported; otherwise values are
+            # deliberately exposed as editable external inputs.
             for j, ep in enumerate(endpoints):
-                ws.cell(rr, surv_start + j, float(surv_data[ep][t]))
-                ws.cell(rr, surv_start + j).number_format = _FMT_PROB
+                spec = curve_specs[ep]
+                if spec is None:
+                    cell = ws.cell(
+                        rr, surv_start + j, float(surv_data[ep][t]),
+                    )
+                    cell.fill = _INPUT_FILL
+                else:
+                    time_ref = f"{CL(COL_TIM)}{rr}"
+                    cell = ws.cell(
+                        rr, surv_start + j,
+                        _survival_formula(spec, time_ref),
+                    )
+                cell.number_format = _FMT_PROB
 
             # State probability FORMULAS
             # state[0] = S(endpoint_0)
             ws.cell(rr, sp_start,
                     f"={CL(surv_start)}{rr}")
 
-            # state[k] = MAX(S(endpoint_k) - S(endpoint_{k-1}), 0) for k=1..n_ep-1
+            # Invalid curve ordering is rejected by Python before export, so
+            # Excel shows the actual subtraction rather than silently clipping.
             for k in range(1, n_ep):
                 ws.cell(rr, sp_start + k,
-                        f"=MAX({CL(surv_start + k)}{rr}-{CL(surv_start + k - 1)}{rr},0)")
+                        f"={CL(surv_start + k)}{rr}-{CL(surv_start + k - 1)}{rr}")
 
             # state[-1] = 1 - S(last_endpoint)
             ws.cell(rr, sp_start + n - 1,
@@ -671,27 +754,52 @@ def _build_psm_excel(model, filepath, params, py_results):
             # Row Sum
             ws.cell(rr, COL_RS,
                     f"=SUM({CL(sp_start)}{rr}:{CL(sp_end)}{rr})")
+            monotonic = ""
+            if t > 0:
+                checks = ",".join(
+                    f"{CL(surv_start + j)}{rr}<="
+                    f"{CL(surv_start + j)}{rr - 1}+1E-10"
+                    for j in range(n_ep)
+                )
+                monotonic = f",{checks}"
+            ws.cell(
+                rr, COL_VALID,
+                f'=IF(AND(MIN({CL(surv_start)}{rr}:{CL(surv_end)}{rr})>=0,'
+                f'MAX({CL(surv_start)}{rr}:{CL(surv_end)}{rr})<=1,'
+                f'MIN({CL(sp_start)}{rr}:{CL(sp_end)}{rr})>=-1E-10,'
+                f'ABS({CL(COL_RS)}{rr}-1)<1E-8{monotonic}),"OK","ERROR")',
+            )
 
-            # Discount factors
-            time_c = f"{CL(COL_TIM)}{rr}"
-            ws.cell(rr, COL_DFC, f"=1/(1+{drc})^{time_c}")
-            ws.cell(rr, COL_DFQ, f"=1/(1+{drq})^{time_c}")
+            if t == n_cycles:
+                continue
 
-            # HCC
-            if hcc_method == "trapezoidal" and (t == 0 or t == n_cycles):
-                ws.cell(rr, COL_HCC, 0.5)
-            else:
-                ws.cell(rr, COL_HCC, 1.0)
+            time_c = f"({CL(COL_TIM)}{rr}+{cl_ref}/2)"
+            ws.cell(
+                rr, COL_DFC,
+                _discount_formula(time_c, drc, model.discount_convention),
+            )
+            ws.cell(
+                rr, COL_DFQ,
+                _discount_formula(time_c, drq, model.discount_convention),
+            )
+            ws.cell(
+                rr, COL_HCC,
+                "Average endpoints" if hcc_method == "trapezoidal" else "Start",
+            )
 
             df_c_cell = f"{CL(COL_DFC)}{rr}"
             df_q_cell = f"{CL(COL_DFQ)}{rr}"
-            hcc_cell = f"{CL(COL_HCC)}{rr}"
             sp_range = f"{CL(sp_start)}{rr}:{CL(sp_end)}{rr}"
+            next_sp_range = f"{CL(sp_start)}{rr + 1}:{CL(sp_end)}{rr + 1}"
+            if hcc_method == "trapezoidal":
+                occupancy = f"({sp_range}+{next_sp_range})/2"
+            else:
+                occupancy = sp_range
 
             # Costs
             for cat in cost_cats:
                 cdef = model._costs[cat]
-                base = f"SUMPRODUCT({sp_range},{cvr[cat]})"
+                base = f"SUMPRODUCT({occupancy},{cvr[cat]})"
 
                 if cdef.method == "wlos":
                     inner = f"{base}*{cl_ref}"
@@ -701,26 +809,28 @@ def _build_psm_excel(model, filepath, params, py_results):
                 if cdef.first_cycle_only:
                     raw_f = f"=IF({CL(COL_CYC)}{rr}=0,{inner},0)"
                 elif cdef.apply_cycles is not None:
-                    val = py_results[strategy]['costs_by_cycle'].get(
-                        cat, np.zeros(n_cycles + 1))[t]
-                    ws.cell(rr, craw[cat], val)
-                    ws.cell(rr, craw[cat]).number_format = _FMT_COST
-                    raw_ref = f"{CL(craw[cat])}{rr}"
-                    ws.cell(rr, cdisc[cat],
-                            f"={raw_ref}*{df_c_cell}*{hcc_cell}")
-                    ws.cell(rr, cdisc[cat]).number_format = _FMT_COST
-                    continue
+                    checks = ",".join(
+                        f"{CL(COL_CYC)}{rr}={cycle}"
+                        for cycle in cdef.apply_cycles
+                    )
+                    condition = f"OR({checks})" if checks else "FALSE"
+                    raw_f = f"=IF({condition},{inner},0)"
                 else:
                     raw_f = f"={inner}"
+
+                if cdef.method == "starting":
+                    starting = f"SUMPRODUCT({sp_range},{cvr[cat]})"
+                    raw_f = (
+                        f"=IF({CL(COL_CYC)}{rr}=0,{starting},0)"
+                    )
 
                 ws.cell(rr, craw[cat], raw_f)
                 ws.cell(rr, craw[cat]).number_format = _FMT_COST
                 raw_ref = f"{CL(craw[cat])}{rr}"
                 if cdef.method == "starting":
-                    ws.cell(rr, cdisc[cat], f"={raw_ref}*{df_c_cell}")
+                    ws.cell(rr, cdisc[cat], f"={raw_ref}")
                 else:
-                    ws.cell(rr, cdisc[cat],
-                            f"={raw_ref}*{df_c_cell}*{hcc_cell}")
+                    ws.cell(rr, cdisc[cat], f"={raw_ref}*{df_c_cell}")
                 ws.cell(rr, cdisc[cat]).number_format = _FMT_COST
 
             # Total discounted cost
@@ -733,20 +843,20 @@ def _build_psm_excel(model, filepath, params, py_results):
 
             # QALYs
             ws.cell(rr, COL_QR,
-                    f"=SUMPRODUCT({sp_range},{util_r})*{cl_ref}")
+                    f"=SUMPRODUCT({occupancy},{util_r})*{cl_ref}")
             ws.cell(rr, COL_QD,
-                    f"={CL(COL_QR)}{rr}*{df_q_cell}*{hcc_cell}")
+                    f"={CL(COL_QR)}{rr}*{df_q_cell}")
             ws.cell(rr, COL_QD).number_format = _FMT_PROB
 
             # LYs
             ws.cell(rr, COL_LR,
-                    f"=SUMPRODUCT({sp_range},{alive_r})*{cl_ref}")
+                    f"=SUMPRODUCT({occupancy},{alive_r})*{cl_ref}")
             ws.cell(rr, COL_LD,
-                    f"={CL(COL_LR)}{rr}*{df_q_cell}*{hcc_cell}")
+                    f"={CL(COL_LR)}{rr}*{df_q_cell}")
 
         # Totals
         TR = D0 + n_cycles + 1
-        DL = D0 + n_cycles
+        DL = D0 + n_cycles - 1
         ws.cell(TR, COL_CYC, "TOTAL").font = _HEADER_FONT
         for sc in ([cdisc[c] for c in cost_cats]
                    + [COL_TC, COL_QD, COL_LD]):
@@ -769,10 +879,11 @@ def _build_psm_excel(model, filepath, params, py_results):
     # Summary
     _build_summary_sheet(wb, model, summary_refs, py_results)
 
+    _enable_excel_recalculation(wb)
     wb.save(filepath)
     print(f"✅ Excel 验证模型已导出: {filepath}")
-    print("   ℹ 生存曲线为 Python 预计算值; "
-          "状态概率/费用/QALY/贴现/ICER 均为 Excel 公式。")
+    print("   ℹ 标准参数生存曲线使用 Excel 公式；其他曲线的"
+          "生存率标为外部输入。")
 
 
 # =====================================================================
@@ -806,7 +917,7 @@ def _build_summary_sheet(wb, model, summary_refs, py_results):
     r = rr + 2
     ws.cell(r, 1, "ICER (Excel 公式)").font = _SECTION_FONT; r += 1
     for h, c in [("Strategy", 1), ("vs", 2), ("Inc. Cost", 3),
-                 ("Inc. QALYs", 4), ("ICER ($/QALY)", 5)]:
+                 ("Inc. QALYs", 4), ("ICER / Classification", 5)]:
         ws.cell(r, c, h).font = _HEADER_FONT
 
     comp = model.strategy_names[0]
@@ -820,7 +931,14 @@ def _build_summary_sheet(wb, model, summary_refs, py_results):
         ws.cell(r, 3).number_format = _FMT_COST
         ws.cell(r, 4, f"=C{ir}-C{comp_row}")
         ws.cell(r, 4).number_format = _FMT_PROB
-        ws.cell(r, 5, f'=IF(ABS(D{r})<0.0001,"N/A",C{r}/D{r})')
+        ws.cell(
+            r, 5,
+            f'=IF(ABS(D{r})<0.0000000001,'
+            f'IF(C{r}>0.0000000001,"Dominated",'
+            f'IF(C{r}<-0.0000000001,"Dominant","No difference")),'
+            f'IF(AND(D{r}>0,C{r}<=0),"Dominant",'
+            f'IF(AND(D{r}<0,C{r}>=0),"Dominated",C{r}/D{r})))'
+        )
         ws.cell(r, 5).number_format = _FMT_ICER
 
     # --- Python results ---
@@ -870,18 +988,275 @@ def _build_summary_sheet(wb, model, summary_refs, py_results):
 # Helpers
 # =====================================================================
 
-def _check_time_homo_trans(model, params, n_cycles) -> bool:
-    """Check if transition matrices are time-homogeneous."""
+def _validate_markov_excel_support(model, params) -> None:
+    """Fail before simulation when model logic cannot be represented in Excel."""
+    if model._custom_costs:
+        raise NotImplementedError(
+            "Formula-based Excel export cannot translate custom cost "
+            "callbacks into auditable Excel formulas."
+        )
+    _require_constant_state_values(model, params)
     for strategy in model.strategy_names:
-        P1 = model._get_transition_matrix(strategy, params, 1)
-        P2 = model._get_transition_matrix(strategy, params, min(2, n_cycles))
-        if not np.allclose(P1, P2, atol=1e-10):
-            return False
-        if n_cycles > 5:
-            Pm = model._get_transition_matrix(strategy, params, n_cycles // 2)
-            if not np.allclose(P1, Pm, atol=1e-10):
-                return False
-    return True
+        for transition_cost in model._transition_costs:
+            schedule = model._get_tc_schedule(
+                transition_cost, strategy, params,
+            )
+            if schedule is None:
+                raise NotImplementedError(
+                    "Formula-based Excel export cannot translate callable "
+                    f"transition cost {transition_cost['category']!r} for "
+                    f"strategy {strategy!r}. No workbook was written."
+                )
+            if not np.all(np.isfinite(schedule)):
+                raise ValueError(
+                    f"Transition cost {transition_cost['category']!r} for "
+                    f"strategy {strategy!r} contains non-finite values."
+                )
+
+
+def _validate_psm_excel_support(model, params) -> None:
+    """Fail before simulation when PSM logic cannot be represented in Excel."""
+    if model._custom_costs:
+        raise NotImplementedError(
+            "Formula-based Excel export cannot translate custom cost "
+            "callbacks into auditable Excel formulas."
+        )
+    _require_constant_state_values(model, params)
+
+
+def _write_survival_curve_inputs(ws, row, endpoint, curve):
+    """Write supported curve parameters and return a formula specification."""
+    from ..survival import (
+        AcceleratedFailureTime,
+        Exponential,
+        GeneralizedGamma,
+        Gompertz,
+        KaplanMeier,
+        LogLogistic,
+        PiecewiseExponential,
+        ProportionalHazards,
+        SurvLogNormal,
+        Weibull,
+    )
+
+    def write_param(label, value):
+        nonlocal row
+        ws.cell(row, 1, label)
+        cell = ws.cell(row, 2, value)
+        cell.fill = _INPUT_FILL
+        ref = f"$B${row}"
+        row += 1
+        return ref
+
+    prefix = endpoint
+    if isinstance(curve, ProportionalHazards):
+        hr_ref = write_param(f"{prefix} / PH hazard ratio", curve.hr)
+        base, row = _write_survival_curve_inputs(
+            ws, row, f"{prefix} / baseline", curve.baseline,
+        )
+        if base is None:
+            return None, row
+        return {"type": "ph", "baseline": base, "hr": hr_ref}, row
+    if isinstance(curve, AcceleratedFailureTime):
+        af_ref = write_param(f"{prefix} / AFT acceleration factor", curve.af)
+        base, row = _write_survival_curve_inputs(
+            ws, row, f"{prefix} / baseline", curve.baseline,
+        )
+        if base is None:
+            return None, row
+        return {"type": "aft", "baseline": base, "af": af_ref}, row
+    if isinstance(curve, Exponential):
+        return {
+            "type": "exponential",
+            "rate": write_param(f"{prefix} / Exponential rate", curve.rate),
+        }, row
+    if isinstance(curve, Weibull):
+        return {
+            "type": "weibull",
+            "shape": write_param(f"{prefix} / Weibull shape", curve.shape),
+            "scale": write_param(f"{prefix} / Weibull scale", curve.scale),
+        }, row
+    if isinstance(curve, LogLogistic):
+        return {
+            "type": "loglogistic",
+            "shape": write_param(f"{prefix} / Log-logistic shape", curve.shape),
+            "scale": write_param(f"{prefix} / Log-logistic scale", curve.scale),
+        }, row
+    if isinstance(curve, SurvLogNormal):
+        return {
+            "type": "lognormal",
+            "meanlog": write_param(f"{prefix} / Log-normal meanlog", curve.meanlog),
+            "sdlog": write_param(f"{prefix} / Log-normal sdlog", curve.sdlog),
+        }, row
+    if isinstance(curve, Gompertz):
+        return {
+            "type": "gompertz",
+            "shape": write_param(f"{prefix} / Gompertz shape", curve.shape),
+            "rate": write_param(f"{prefix} / Gompertz rate", curve.rate),
+        }, row
+    if isinstance(curve, GeneralizedGamma):
+        return {
+            "type": "generalized_gamma",
+            "mu": write_param(f"{prefix} / Generalized gamma mu", curve.mu),
+            "sigma": write_param(
+                f"{prefix} / Generalized gamma sigma", curve.sigma,
+            ),
+            "q": write_param(f"{prefix} / Generalized gamma Q", curve.Q),
+        }, row
+    if isinstance(curve, PiecewiseExponential):
+        breakpoints = [
+            write_param(f"{prefix} / Breakpoint {i + 1}", float(value))
+            for i, value in enumerate(curve.breakpoints)
+        ]
+        rates = [
+            write_param(f"{prefix} / Rate {i + 1}", float(value))
+            for i, value in enumerate(curve.rates)
+        ]
+        return {
+            "type": "piecewise_exponential",
+            "breakpoints": breakpoints,
+            "rates": rates,
+        }, row
+    if isinstance(curve, KaplanMeier):
+        ws.cell(row, 1, f"{prefix} / Kaplan-Meier data")
+        ws.cell(row, 2, "Time").font = _HEADER_FONT
+        ws.cell(row, 3, "Survival").font = _HEADER_FONT
+        row += 1
+        first_data_row = row
+        for time, survival in zip(curve.times, curve.surv):
+            for column, value in ((2, time), (3, survival)):
+                cell = ws.cell(row, column, float(value))
+                cell.fill = _INPUT_FILL
+                cell.number_format = _FMT_PROB
+            row += 1
+        last_data_row = row - 1
+        tail_rate = None
+        if curve.extrapolation == "exponential":
+            tail_rate = write_param(
+                f"{prefix} / Exponential tail rate", curve._tail_rate,
+            )
+        return {
+            "type": "kaplan_meier",
+            "times": f"$B${first_data_row}:$B${last_data_row}",
+            "survival": f"$C${first_data_row}:$C${last_data_row}",
+            "last_time": f"$B${last_data_row}",
+            "last_survival": f"$C${last_data_row}",
+            "extrapolation": curve.extrapolation,
+            "tail_rate": tail_rate,
+        }, row
+
+    ws.cell(row, 1, f"{prefix} / {type(curve).__name__}")
+    ws.cell(row, 2, "External survival inputs below").font = _NOTE_FONT
+    return None, row + 1
+
+
+def _survival_formula(spec, time_ref):
+    """Translate a supported survival specification into one Excel formula."""
+    kind = spec["type"]
+    if kind == "ph":
+        base = _survival_formula(spec["baseline"], time_ref)[1:]
+        return f"=({base})^{spec['hr']}"
+    if kind == "aft":
+        return _survival_formula(
+            spec["baseline"], f"({time_ref}/{spec['af']})",
+        )
+    if kind == "exponential":
+        return f"=EXP(-{spec['rate']}*{time_ref})"
+    if kind == "weibull":
+        return f"=EXP(-({time_ref}/{spec['scale']})^{spec['shape']})"
+    if kind == "loglogistic":
+        return f"=1/(1+({time_ref}/{spec['scale']})^{spec['shape']})"
+    if kind == "lognormal":
+        return (
+            f"=IF({time_ref}=0,1,1-_xlfn.NORM.S.DIST("
+            f"(LN({time_ref})-{spec['meanlog']})/{spec['sdlog']},TRUE))"
+        )
+    if kind == "gompertz":
+        return (
+            f"=IF(ABS({spec['shape']})<1E-12,"
+            f"EXP(-{spec['rate']}*{time_ref}),"
+            f"EXP(-{spec['rate']}/{spec['shape']}*"
+            f"(EXP({spec['shape']}*{time_ref})-1)))"
+        )
+    if kind == "generalized_gamma":
+        q = spec["q"]
+        mu = spec["mu"]
+        sigma = spec["sigma"]
+        gamma_scale = f"EXP({mu}+{sigma}*LN({q}^2)/{q})"
+        u = f"({time_ref}/({gamma_scale}))^({q}/{sigma})"
+        gamma_cdf = f"_xlfn.GAMMA.DIST({u},1/({q}^2),1,TRUE)"
+        lognormal = (
+            f"1-_xlfn.NORM.S.DIST((LN({time_ref})-{mu})/{sigma},TRUE)"
+        )
+        return (
+            f"=IF({time_ref}=0,1,IF(ABS({q})<1E-10,{lognormal},"
+            f"IF({q}>0,1-{gamma_cdf},{gamma_cdf})))"
+        )
+    if kind == "piecewise_exponential":
+        terms = []
+        previous = "0"
+        for index, rate in enumerate(spec["rates"]):
+            if index < len(spec["breakpoints"]):
+                breakpoint = spec["breakpoints"][index]
+                duration = f"MAX(0,MIN({time_ref},{breakpoint})-{previous})"
+                previous = breakpoint
+            else:
+                duration = f"MAX(0,{time_ref}-{previous})"
+            terms.append(f"{rate}*{duration}")
+        return f"=EXP(-({'+'.join(terms)}))"
+    if kind == "kaplan_meier":
+        if spec["extrapolation"] == "exponential":
+            beyond = f"EXP(-{spec['tail_rate']}*{time_ref})"
+        else:
+            beyond = spec["last_survival"]
+        return (
+            f"=IF({time_ref}>{spec['last_time']},{beyond},"
+            f"LOOKUP({time_ref},{spec['times']},{spec['survival']}))"
+        )
+    raise ValueError(f"Unsupported survival formula specification: {kind!r}")
+
+
+def _require_constant_state_values(model, params) -> None:
+    """Reject callbacks that cannot be represented by one Excel input vector."""
+    for strategy in model.strategy_names:
+        for category, definition in model._costs.items():
+            first = model._resolve_state_values(
+                definition.values, strategy, params, 0
+            )
+            for interval in range(1, model.n_cycles):
+                current = model._resolve_state_values(
+                    definition.values, strategy, params, interval
+                )
+                if not np.allclose(first, current, atol=1e-12, rtol=0):
+                    raise NotImplementedError(
+                        f"Formula-based Excel export cannot yet translate "
+                        f"time-varying state cost {category!r} for strategy "
+                        f"{strategy!r}. No workbook was written."
+                    )
+
+        first_utility = model._get_utilities(strategy, params, 0)
+        for interval in range(1, model.n_cycles):
+            current_utility = model._get_utilities(strategy, params, interval)
+            if not np.allclose(first_utility, current_utility, atol=1e-12, rtol=0):
+                raise NotImplementedError(
+                    f"Formula-based Excel export cannot yet translate "
+                    f"time-varying utilities for strategy {strategy!r}. "
+                    "No workbook was written."
+                )
+
+
+def _discount_formula(time_expression: str, rate_ref: str, convention: str) -> str:
+    """Build one transparent Excel discount-factor formula."""
+    if convention == "continuous":
+        return f"=EXP(-{rate_ref}*{time_expression})"
+    return f"=1/(1+{rate_ref})^{time_expression}"
+
+
+def _enable_excel_recalculation(workbook) -> None:
+    """Ask Excel to recalculate every formula when the workbook opens."""
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    workbook.calculation.calcMode = "auto"
 
 
 def _write_setting(ws, row, label, value) -> int:

@@ -370,8 +370,8 @@ model = ph.MarkovModel(
 
 | 值                         | 说明                                            |
 | -------------------------- | ----------------------------------------------- |
-| `True` / `"trapezoidal"` | 梯形法：首尾周期权重 ×0.5（默认）                |
-| `"life-table"`            | 生命表法：相邻 trace 行取均值（与 R heemod 一致）|
+| `True` / `"trapezoidal"` | 梯形法：每个时间区间使用相邻 trace 时点的平均占比（默认） |
+| `"life-table"`            | `"trapezoidal"` 的兼容别名，结果相同                         |
 | `False` / `None`          | 不校正                                          |
 
 ```python
@@ -410,27 +410,32 @@ model.set_transitions("Strategy", lambda p, t: [
 
 ```python
 # 基础状态费用
-model.set_state_cost("Sick", "Treatment", lambda p, t: 3000)
+model.set_state_cost("medical", {"Treatment": {"Sick": 3000}})
 
 # 时间依赖费用
-model.set_state_cost("Sick", "Treatment", lambda p, t: 3000 if t < 5 else 2000)
+model.set_state_cost("medical", lambda p, t: {
+    "Treatment": {"Sick": 3000 if t < 5 else 2000}
+})
 
-# 首周期一次性费用
-model.set_state_cost("Sick", "Treatment", lambda p, t: 50000,
+# 仅在首个时间区间持续发生的费用率
+model.set_state_cost("induction", {"Treatment": {"Sick": 50000}},
                      first_cycle_only=True)
 
+# 模型开始时的一次性费用
+model.set_state_cost("init", {"Sick": 50000}, method="starting")
+
 # 限定应用周期
-model.set_state_cost("Sick", "Treatment", lambda p, t: p["c_drug"],
-                     apply_cycles=(0, 24))  # 仅前 24 个周期
+model.set_state_cost("drug", {"Treatment": {"Sick": "c_drug"}},
+                     apply_cycles=range(24))  # 仅前 24 个时间区间
 
 # WLOS (Weighted Length of Stay) 方法
-model.set_state_cost("Sick", "Treatment", lambda p, t: 5000,
+model.set_state_cost("medical", {"Treatment": {"Sick": 5000}},
                      method="wlos")
 ```
 
 #### 转移费用 (Transition Costs)
 
-状态转移时触发的费用（如疾病进展时的手术费、转入 ICU 时的住院费）。基于每周期的**转移流量**自动计算：`trace[t-1, from] × P[from→to] × 单位费用`。
+状态转移时触发的费用（如疾病进展时的手术费、转入 ICU 时的住院费）。基于每个时间区间的**转移流量**自动计算：`trace[i, from] × P_i[from→to] × 单位费用`。
 
 ```python
 # 从 Healthy 进入 Sick 时的手术费
@@ -463,7 +468,7 @@ model.set_transition_cost("rescue", "PFS", "Progressed", {
 })
 ```
 
-> **与 `first_cycle_only` 的区别**：`first_cycle_only` 只在 cycle 0 生效（仅一次）；transition cost 在**每个周期**只要有人转移就会产生费用。Transition cost 不受半周期校正影响（事件型费用）。
+> **与 `first_cycle_only` 的区别**：`first_cycle_only` 表示仅在区间 0 内持续发生的费用率；transition cost 在发生转移时作为一次性费用计入。Transition cost 不乘周期长度，也不受半周期校正影响。
 
 #### 自定义费用 (Custom Costs)
 
@@ -622,17 +627,19 @@ ph.export_excel_model(model, "verification.xlsx")
 
 | 区域 | 内容 |
 |------|------|
-| **输入区** (黄色底色) | 转移概率矩阵、状态费用向量、效用权重、贴现率 |
-| **计算区** (公式) | `SUMPRODUCT` 计算 Trace, 费用, QALY; `SUM` 计算贴现总值 |
+| **输入区** (黄色底色) | 转移矩阵、状态与转移费用、生存参数、效用权重、贴现设置 |
+| **计算区** (公式) | Trace/状态概率、区间占比、转移流量、费用、QALY、贴现和总值 |
 | **Summary sheet** | Excel 公式结果 vs Python 结果 vs 差异 (应为 ~0) |
 
 **支持的模型类型**：
 
 | 模型 | Trace | 费用/QALY/贴现 | ICER |
 |------|-------|----------------|------|
-| Markov (时齐) | Excel 公式 | Excel 公式 | Excel 公式 |
-| Markov (时变) | Python 值 | Excel 公式 | Excel 公式 |
-| PSM | Python 生存值 → 状态概率公式 | Excel 公式 | Excel 公式 |
+| Markov (时齐) | 由一张可编辑矩阵驱动的 Excel 公式 | Excel 公式 | Excel 公式 |
+| Markov (时变) | 由每个区间的可编辑矩阵驱动的 Excel 公式 | Excel 公式 | Excel 公式 |
+| PSM | 常用参数曲线用 Excel 公式；暂不支持的曲线明确标为外部输入 | Excel 公式 | Excel 公式 |
+
+时变矩阵会作为明示的 Excel 输入展开，而不是隐藏的 Python trace 值。自定义 Python 费用回调等无法忠实翻译的逻辑会直接报错。
 
 #### Excel Sheet 内容
 

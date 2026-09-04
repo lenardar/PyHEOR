@@ -121,10 +121,20 @@ def validate_transition_matrix(P: np.ndarray, tol: float = 1e-6) -> bool:
     """
     if P.ndim != 2 or P.shape[0] != P.shape[1]:
         raise ValueError(f"Transition matrix must be square, got shape {P.shape}")
+
+    if not np.all(np.isfinite(P)):
+        bad = np.argwhere(~np.isfinite(P))
+        raise ValueError(
+            f"Transition matrix contains non-finite values at: {bad.tolist()}"
+        )
     
     if np.any(P < -tol):
         neg = np.argwhere(P < -tol)
         raise ValueError(f"Negative probabilities at: {neg.tolist()}")
+
+    if np.any(P > 1.0 + tol):
+        high = np.argwhere(P > 1.0 + tol)
+        raise ValueError(f"Probabilities greater than 1 at: {high.tolist()}")
     
     row_sums = P.sum(axis=1)
     if not np.allclose(row_sums, 1.0, atol=tol):
@@ -141,29 +151,57 @@ def validate_transition_matrix(P: np.ndarray, tol: float = 1e-6) -> bool:
 # Discounting
 # =============================================================================
 
-def discount_factor(t: Union[int, np.ndarray], rate: float,
-                    cycle_length: float = 1.0) -> Union[float, np.ndarray]:
+def discount_factor(t: Union[int, float, np.ndarray], rate: float,
+                    cycle_length: float = 1.0,
+                    convention: str = "discrete") -> Union[float, np.ndarray]:
     """Calculate discount factor(s).
     
     Parameters
     ----------
-    t : int or array
-        Cycle number(s).
+    t : int, float, or array
+        Cycle index or indices. Fractional values such as ``0.5`` are allowed.
     rate : float
         Annual discount rate (e.g., 0.03 for 3%).
     cycle_length : float
         Length of each cycle in years.
+    convention : {"discrete", "continuous"}
+        ``"discrete"`` treats ``rate`` as an annual effective rate and uses
+        ``(1 + rate) ** -time``. ``"continuous"`` treats it as a continuous
+        discount rate and uses ``exp(-rate * time)``.
     
     Returns
     -------
     float or array
-        Discount factor(s): (1 + rate)^(-(t * cycle_length))
+        Discount factor(s) under the selected convention.
     """
-    if rate == 0:
-        if isinstance(t, np.ndarray):
-            return np.ones_like(t, dtype=float)
-        return 1.0
-    return (1.0 + rate) ** (-(np.asarray(t, dtype=float) * cycle_length))
+    if convention not in {"discrete", "continuous"}:
+        raise ValueError(
+            f"Unknown discount convention {convention!r}; "
+            "expected 'discrete' or 'continuous'."
+        )
+    if not np.isfinite(rate):
+        raise ValueError(f"Discount rate must be finite, got {rate!r}")
+    if not np.isfinite(cycle_length) or cycle_length <= 0:
+        raise ValueError(
+            f"cycle_length must be a positive finite number, got {cycle_length!r}"
+        )
+    if convention == "discrete" and rate <= -1:
+        raise ValueError(
+            f"Discrete discount rate must be greater than -1, got {rate!r}"
+        )
+
+    time = np.asarray(t, dtype=float) * cycle_length
+    if not np.all(np.isfinite(time)):
+        raise ValueError("Discount times must be finite")
+
+    if convention == "discrete":
+        factors = (1.0 + rate) ** (-time)
+    else:
+        factors = np.exp(-rate * time)
+
+    if np.ndim(factors) == 0:
+        return float(factors)
+    return factors
 
 
 # =============================================================================
@@ -179,12 +217,12 @@ def normalize_hcc(value):
         - True → "trapezoidal"
         - False or None → None (no correction)
         - "trapezoidal" → "trapezoidal"
-        - "life-table" → "life-table"
+        - "life-table" → "trapezoidal" (compatibility alias)
 
     Returns
     -------
     str or None
-        "trapezoidal", "life-table", or None.
+        "trapezoidal" or None.
 
     Raises
     ------
@@ -198,7 +236,7 @@ def normalize_hcc(value):
     elif isinstance(value, str):
         v = value.lower().strip()
         if v in ("trapezoidal", "life-table"):
-            return v
+            return "trapezoidal"
         raise ValueError(
             f"Invalid half_cycle_correction: {value!r}. "
             f"Expected True, False, None, 'trapezoidal', or 'life-table'."
@@ -210,24 +248,38 @@ def normalize_hcc(value):
         )
 
 
-def life_table_corrected_trace(trace):
-    """Compute heemod-style life-table corrected trace.
+def interval_occupancy(trace, half_cycle_correction=None):
+    """Return one state-occupancy row for each model interval.
 
-    For t = 0..n-1: corrected[t] = (trace[t] + trace[t+1]) / 2
-    corrected[n] = trace[n]  (last cycle unchanged)
+    A trace contains ``n_cycles + 1`` observation points. Rewards accrue over
+    the ``n_cycles`` intervals between them. Without half-cycle correction the
+    interval uses its starting occupancy; trapezoidal correction averages the
+    two endpoints.
 
     Parameters
     ----------
-    trace : np.ndarray, shape (n_cycles+1, n_states)
+    trace : array-like, shape (n_cycles + 1, n_states)
+    half_cycle_correction : bool, str, or None
+        Accepted values are the same as :func:`normalize_hcc`.
 
     Returns
     -------
-    np.ndarray, same shape as input
+    np.ndarray, shape (n_cycles, n_states)
     """
-    corrected = np.empty_like(trace)
-    corrected[:-1] = (trace[:-1] + trace[1:]) / 2.0
-    corrected[-1] = trace[-1]
-    return corrected
+    values = np.asarray(trace, dtype=float)
+    if values.ndim != 2 or values.shape[0] < 2:
+        raise ValueError(
+            "trace must be a 2D array with at least two observation points"
+        )
+    method = normalize_hcc(half_cycle_correction)
+    if method == "trapezoidal":
+        return (values[:-1] + values[1:]) / 2.0
+    return values[:-1].copy()
+
+
+def life_table_corrected_trace(trace):
+    """Compatibility wrapper for interval-level trapezoidal occupancy."""
+    return interval_occupancy(trace, "trapezoidal")
 
 
 # =============================================================================

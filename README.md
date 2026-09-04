@@ -370,8 +370,8 @@ model = ph.MarkovModel(
 
 | Value                      | Description                                               |
 | -------------------------- | --------------------------------------------------------- |
-| `True` / `"trapezoidal"` | Trapezoidal method: first and last cycle weights x0.5 (default) |
-| `"life-table"`            | Life-table method: average of adjacent trace rows (consistent with R heemod) |
+| `True` / `"trapezoidal"` | Trapezoidal method: use the average occupancy of adjacent trace time points for each interval (default) |
+| `"life-table"`            | Compatibility alias for `"trapezoidal"`; produces identical results |
 | `False` / `None`          | No correction                                             |
 
 ```python
@@ -410,27 +410,32 @@ model.set_transitions("Strategy", lambda p, t: [
 
 ```python
 # Basic state cost
-model.set_state_cost("Sick", "Treatment", lambda p, t: 3000)
+model.set_state_cost("medical", {"Treatment": {"Sick": 3000}})
 
 # Time-dependent cost
-model.set_state_cost("Sick", "Treatment", lambda p, t: 3000 if t < 5 else 2000)
+model.set_state_cost("medical", lambda p, t: {
+    "Treatment": {"Sick": 3000 if t < 5 else 2000}
+})
 
-# First-cycle one-time cost
-model.set_state_cost("Sick", "Treatment", lambda p, t: 50000,
+# Cost rate incurred only during the first time interval
+model.set_state_cost("induction", {"Treatment": {"Sick": 50000}},
                      first_cycle_only=True)
 
+# One-time cost at model start
+model.set_state_cost("init", {"Sick": 50000}, method="starting")
+
 # Restricted to specific cycles
-model.set_state_cost("Sick", "Treatment", lambda p, t: p["c_drug"],
-                     apply_cycles=(0, 24))  # First 24 cycles only
+model.set_state_cost("drug", {"Treatment": {"Sick": "c_drug"}},
+                     apply_cycles=range(24))  # First 24 time intervals only
 
 # WLOS (Weighted Length of Stay) method
-model.set_state_cost("Sick", "Treatment", lambda p, t: 5000,
+model.set_state_cost("medical", {"Treatment": {"Sick": 5000}},
                      method="wlos")
 ```
 
 #### Transition Costs
 
-Costs triggered upon state transitions (e.g., surgery costs upon disease progression, hospitalization costs upon ICU transfer). Automatically calculated based on per-cycle **transition flows**: `trace[t-1, from] x P[from->to] x unit cost`.
+Costs triggered upon state transitions (e.g., surgery costs upon disease progression, hospitalization costs upon ICU transfer). Automatically calculated from each interval's **transition flow**: `trace[i, from] x P_i[from->to] x unit cost`.
 
 ```python
 # Surgery cost upon transitioning from Healthy to Sick
@@ -463,7 +468,7 @@ model.set_transition_cost("rescue", "PFS", "Progressed", {
 })
 ```
 
-> **Difference from `first_cycle_only`**: `first_cycle_only` only applies at cycle 0 (once only); transition costs are incurred in **every cycle** whenever patients transition. Transition costs are not affected by half-cycle correction (event-type costs).
+> **Difference from `first_cycle_only`**: `first_cycle_only` is a rate incurred only during interval 0; a transition cost is a lump sum incurred when the transition occurs. Transition costs are not scaled by cycle length and are not affected by half-cycle correction.
 
 #### Custom Costs
 
@@ -622,17 +627,19 @@ ph.export_excel_model(model, "verification.xlsx")
 
 | Section | Content |
 |---------|---------|
-| **Input Area** (yellow background) | Transition probability matrix, state cost vector, utility weights, discount rates |
-| **Calculation Area** (formulas) | `SUMPRODUCT` computes Trace, Costs, QALYs; `SUM` computes discounted totals |
+| **Input Area** (yellow background) | Transition matrix, state and transition costs, survival parameters, utility weights, discount settings |
+| **Calculation Area** (formulas) | Trace/state probabilities, interval occupancy, event flows, costs, QALYs, discounting, and totals |
 | **Summary sheet** | Excel formula results vs Python results vs difference (should be ~0) |
 
 **Supported Model Types**:
 
 | Model | Trace | Costs/QALYs/Discounting | ICER |
 |-------|-------|-------------------------|------|
-| Markov (time-homogeneous) | Excel formulas | Excel formulas | Excel formulas |
-| Markov (time-dependent) | Python values | Excel formulas | Excel formulas |
-| PSM | Python survival values -> state probability formulas | Excel formulas | Excel formulas |
+| Markov (time-homogeneous) | Excel formulas from one editable matrix | Excel formulas | Excel formulas |
+| Markov (time-dependent) | Excel formulas from an editable matrix for each interval | Excel formulas | Excel formulas |
+| PSM | Excel formulas for common parametric curves; clearly marked external inputs for unsupported curves | Excel formulas | Excel formulas |
+
+Time-varying matrices are exposed as explicit Excel inputs rather than hidden Python trace values. Custom Python cost callbacks and other logic that cannot be translated faithfully are rejected with an error.
 
 #### Excel Sheet Contents
 

@@ -1,0 +1,42 @@
+# Changelog
+
+## Unreleased
+
+This release tightens the calculation semantics for Markov and PSM models.
+Existing analyses should be rerun and reviewed because totals may change where
+the previous behavior counted an extra reward period or used ambiguous timing.
+
+### Calculation semantics
+
+- `n_cycles=N` now means N time intervals. Traces and survival tables contain
+  N+1 observation points, while cost, QALY, and LY arrays contain N intervals.
+- Time-dependent callbacks receive 0-based interval indices: `0` through
+  `N-1`.
+- `"life-table"` is a compatibility alias for trapezoidal half-cycle
+  correction; both average adjacent trace observations for each interval.
+- State rewards accrue at interval midpoints, transition/custom event costs at
+  interval ends, and `method="starting"` costs at time zero.
+- Discounting can use annual-effective (`"discrete"`) or continuously
+  compounded (`"continuous"`) rates.
+
+### Error handling
+
+- Invalid transition matrices, non-finite values, impossible PSM curves, and
+  curve crossings now raise contextual errors instead of being clipped or
+  repaired.
+- Dominant and dominated ICER quadrants are classified before division, so a
+  negative numeric ICER is not presented as an ordinary ratio.
+- Report generation no longer silently drops a failed table or chart.
+
+### Excel review model
+
+- `export_to_excel()` is a result-data export. It no longer claims that static
+  values are an independently recalculable model.
+- `export_excel_model()` builds editable Excel calculation chains for Markov
+  traces, time-varying transition matrices, state and transition costs, cost
+  schedules, PSM survival curves, QALYs, LYs, discounting, and ICERs.
+- Workbook validation formulas display `ERROR` when edited probabilities,
+  matrix sums, survival ordering, or state probabilities become invalid.
+- Python callbacks that cannot be translated faithfully fail explicitly.
+
+DES and MicroSim calculation behavior is unchanged in this release.

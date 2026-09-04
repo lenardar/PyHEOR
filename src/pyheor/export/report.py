@@ -56,6 +56,7 @@ def generate_report(
         Absolute path of the generated report file.
     """
     from ..models.des import DESModel
+    from ..models.microsim import IndividualStateTransitionModel
 
     out = Path(filepath).resolve()
     img_dir = out.parent / f"{out.stem}_files"
@@ -79,7 +80,10 @@ def generate_report(
     psa_result = None
     if do_psa:
         print(f"[report] Running PSA ({n_sim} simulations)...")
-        psa_result = model.run_psa(n_sim=n_sim, seed=psa_seed)
+        if isinstance(model, IndividualStateTransitionModel):
+            psa_result = model.run_psa(n_outer=n_sim, seed=psa_seed)
+        else:
+            psa_result = model.run_psa(n_sim=n_sim, seed=psa_seed)
 
     # ── Build sections ──────────────────────────────────────────────
     sections = []
@@ -169,13 +173,10 @@ def _build_base_case(result) -> str:
     lines.append(result.summary().to_markdown(index=False))
     lines.append("")
 
-    try:
-        icer_df = result.icer()
-        lines.append("### 增量成本效果比 (ICER)\n")
-        lines.append(icer_df.to_markdown(index=False))
-        lines.append("")
-    except Exception:
-        pass
+    icer_df = result.icer()
+    lines.append("### 增量成本效果比 (ICER)\n")
+    lines.append(icer_df.to_markdown(index=False))
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -185,29 +186,25 @@ def _build_owsa(owsa_result, img_dir, rel_img, max_params, dpi) -> str:
     lines = ["## 4. 单因素敏感性分析 (OWSA)\n"]
 
     # Tornado plot
+    fig = owsa_result.plot_tornado(
+        outcome="nmb", max_params=max_params,
+    )
     try:
-        fig = owsa_result.plot_tornado(
-            outcome="nmb", max_params=max_params,
-        )
         tornado_path = img_dir / "tornado.png"
         fig.savefig(str(tornado_path), dpi=dpi, bbox_inches="tight")
+    finally:
         plt.close(fig)
-        lines.append(f"### 龙卷风图 (Top {max_params})\n")
-        lines.append(f"![tornado]({rel_img}/tornado.png)\n")
-    except Exception:
-        pass
+    lines.append(f"### 龙卷风图 (Top {max_params})\n")
+    lines.append(f"![tornado]({rel_img}/tornado.png)\n")
 
     # Summary table
-    try:
-        summary = owsa_result.summary(outcome="nmb")
-        # Show top N
-        if len(summary) > max_params:
-            summary = summary.head(max_params)
-        lines.append("### 参数敏感性排序\n")
-        lines.append(summary.to_markdown(index=False))
-        lines.append("")
-    except Exception:
-        pass
+    summary = owsa_result.summary(outcome="nmb")
+    # Show top N
+    if len(summary) > max_params:
+        summary = summary.head(max_params)
+    lines.append("### 参数敏感性排序\n")
+    lines.append(summary.to_markdown(index=False))
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -218,42 +215,34 @@ def _build_psa(psa_result, img_dir, rel_img, wtp, dpi) -> str:
     lines = [f"## 5. 概率敏感性分析 (PSA, n={n})\n"]
 
     # Summary
-    try:
-        lines.append("### 汇总统计\n")
-        lines.append(psa_result.summary().to_markdown(index=False))
-        lines.append("")
-    except Exception:
-        pass
+    lines.append("### 汇总统计\n")
+    lines.append(psa_result.summary().to_markdown(index=False))
+    lines.append("")
 
     # Incremental analysis
-    try:
-        icer_df = psa_result.icer()
-        lines.append("### 增量分析\n")
-        lines.append(icer_df.to_markdown(index=False))
-        lines.append("")
-    except Exception:
-        pass
+    icer_df = psa_result.icer()
+    lines.append("### 增量分析\n")
+    lines.append(icer_df.to_markdown(index=False))
+    lines.append("")
 
     # CE plane
+    fig = psa_result.plot_scatter(wtp=wtp)
     try:
-        fig = psa_result.plot_scatter(wtp=wtp)
         scatter_path = img_dir / "ce_plane.png"
         fig.savefig(str(scatter_path), dpi=dpi, bbox_inches="tight")
+    finally:
         plt.close(fig)
-        lines.append("### 成本效果平面\n")
-        lines.append(f"![ce_plane]({rel_img}/ce_plane.png)\n")
-    except Exception:
-        pass
+    lines.append("### 成本效果平面\n")
+    lines.append(f"![ce_plane]({rel_img}/ce_plane.png)\n")
 
     # CEAC
+    fig = psa_result.plot_ceac()
     try:
-        fig = psa_result.plot_ceac()
         ceac_path = img_dir / "ceac.png"
         fig.savefig(str(ceac_path), dpi=dpi, bbox_inches="tight")
+    finally:
         plt.close(fig)
-        lines.append("### 成本效果可接受曲线 (CEAC)\n")
-        lines.append(f"![ceac]({rel_img}/ceac.png)\n")
-    except Exception:
-        pass
+    lines.append("### 成本效果可接受曲线 (CEAC)\n")
+    lines.append(f"![ceac]({rel_img}/ceac.png)\n")
 
     return "\n".join(lines)

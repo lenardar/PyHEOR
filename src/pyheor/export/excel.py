@@ -12,11 +12,13 @@ import numpy as np
 import pandas as pd
 from typing import Any, Dict, List, Optional, Union
 
+from ..utils import discount_factor
+
 
 def export_to_excel(
     result,
     filepath: str,
-    include_formulas: bool = True,
+    include_formulas: bool = False,
     include_psa: bool = False,
 ):
     """Export model results to Excel for verification.
@@ -39,10 +41,17 @@ def export_to_excel(
     filepath : str
         Output file path (should end with .xlsx).
     include_formulas : bool
-        Not implemented yet (reserved for future Excel formula generation).
+        Result exports do not contain model formulas. Passing ``True`` raises
+        an error; use :func:`export_excel_model` for an auditable workbook.
     include_psa : bool
         For PSAResult, whether to include all simulation data.
     """
+    if include_formulas:
+        raise ValueError(
+            "export_to_excel() creates a result-only workbook and cannot "
+            "include model formulas. Use export_excel_model() instead."
+        )
+
     # Detect result type
     from ..analysis.results import BaseResult, OWSAResult, PSAResult, PSMBaseResult
 
@@ -88,6 +97,7 @@ def _export_markov_base(result, filepath: str):
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
             {'Setting': 'Discount Rate (costs)', 'Value': model.dr_cost},
             {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qaly},
+            {'Setting': 'Discount Convention', 'Value': model.discount_convention},
             {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
             {'Setting': 'Initial State', 'Value': model.states[model.initial_state_idx]},
         ])
@@ -98,12 +108,9 @@ def _export_markov_base(result, filepath: str):
         summary.to_excel(writer, sheet_name='Summary', index=False)
 
         # ICER
-        try:
-            icer_df = result.icer()
-            icer_df.to_excel(writer, sheet_name='Summary',
-                             startrow=len(summary) + 3, index=False)
-        except Exception:
-            pass
+        icer_df = result.icer()
+        icer_df.to_excel(writer, sheet_name='Summary',
+                         startrow=len(summary) + 3, index=False)
 
         # === Per-strategy sheets ===
         for strategy in model.strategy_names:
@@ -127,21 +134,21 @@ def _export_markov_base(result, filepath: str):
 
             # --- Costs sheet ---
             costs_sheet = f'Costs_{label}'[:31]
-            cycles = np.arange(model.n_cycles + 1)
-            df_c = 1 / (1 + model.dr_cost) ** (cycles * model.cycle_length)
+            cycles = np.arange(model.n_cycles)
+            interval_times = (cycles + 0.5) * model.cycle_length
+            df_c = discount_factor(
+                cycles + 0.5, model.dr_cost, model.cycle_length,
+                model.discount_convention,
+            )
 
             costs_data = {'Cycle': cycles}
-            costs_data['Time (yrs)'] = cycles * model.cycle_length
+            costs_data['Time (yrs)'] = interval_times
             costs_data['Discount Factor'] = df_c
+            costs_data['Occupancy Method'] = (
+                model.half_cycle_correction or 'start-of-interval'
+            )
 
-            # HCC weights
-            hcc = np.ones(model.n_cycles + 1)
-            if model.half_cycle_correction == "trapezoidal":
-                hcc[0] = 0.5
-                hcc[-1] = 0.5
-            costs_data['HCC Weight'] = hcc
-
-            total_discounted = np.zeros(model.n_cycles + 1)
+            total_discounted = np.zeros(model.n_cycles)
             for cat in sr['costs_by_cycle']:
                 raw = sr['costs_by_cycle'][cat]
                 hcc_applied = sr['costs_hcc'][cat]
@@ -156,7 +163,7 @@ def _export_markov_base(result, filepath: str):
             costs_df = pd.DataFrame(costs_data)
 
             # Add totals row
-            totals = {col: costs_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'HCC Weight']
+            totals = {col: costs_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'Occupancy Method']
                        else '' for col in costs_df.columns}
             totals['Cycle'] = 'TOTAL'
             totals_df = pd.DataFrame([totals])
@@ -166,13 +173,16 @@ def _export_markov_base(result, filepath: str):
 
             # --- QALYs sheet ---
             qaly_sheet = f'QALYs_{label}'[:31]
-            df_q = 1 / (1 + model.dr_qaly) ** (cycles * model.cycle_length)
+            df_q = discount_factor(
+                cycles + 0.5, model.dr_qaly, model.cycle_length,
+                model.discount_convention,
+            )
 
             qaly_data = {
                 'Cycle': cycles,
                 'Time (yrs)': cycles * model.cycle_length,
                 'Discount Factor': df_q,
-                'HCC Weight': hcc,
+                'Occupancy Method': model.half_cycle_correction or 'start-of-interval',
                 'QALYs (raw)': sr['qalys_by_cycle'],
                 'QALYs (HCC)': sr['qalys_hcc'],
                 'QALYs (discounted)': sr['discounted_qalys'],
@@ -182,7 +192,7 @@ def _export_markov_base(result, filepath: str):
             }
             qaly_df = pd.DataFrame(qaly_data)
 
-            totals_q = {col: qaly_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'HCC Weight']
+            totals_q = {col: qaly_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'Occupancy Method']
                          else '' for col in qaly_df.columns}
             totals_q['Cycle'] = 'TOTAL'
             totals_q_df = pd.DataFrame([totals_q])
@@ -204,17 +214,13 @@ def _write_transition_matrices(writer, model, params):
     for strategy in model.strategy_names:
         label = model.strategy_labels[strategy]
 
-        # Get matrix at cycle 0 (base case)
-        try:
-            P = model._get_transition_matrix(strategy, params, 0)
-            for i in range(model.n_states):
-                row = {'Strategy': label, 'From': model.states[i]}
-                for j in range(model.n_states):
-                    row[f'To: {model.states[j]}'] = P[i, j]
-                row['Row Sum'] = P[i].sum()
-                rows_all.append(row)
-        except Exception as e:
-            rows_all.append({'Strategy': label, 'From': f'Error: {e}'})
+        P = model._get_transition_matrix(strategy, params, 0)
+        for i in range(model.n_states):
+            row = {'Strategy': label, 'From': model.states[i]}
+            for j in range(model.n_states):
+                row[f'To: {model.states[j]}'] = P[i, j]
+            row['Row Sum'] = P[i].sum()
+            rows_all.append(row)
 
     if rows_all:
         pd.DataFrame(rows_all).to_excel(
@@ -251,6 +257,7 @@ def _export_psm_base(result, filepath: str):
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
             {'Setting': 'Discount Rate (costs)', 'Value': model.dr_cost},
             {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qaly},
+            {'Setting': 'Discount Convention', 'Value': model.discount_convention},
             {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
         ])
         settings.to_excel(writer, sheet_name='Settings', index=False)
@@ -258,23 +265,20 @@ def _export_psm_base(result, filepath: str):
         # === Summary ===
         summary = result.summary()
         summary.to_excel(writer, sheet_name='Summary', index=False)
-        try:
-            icer_df = result.icer()
-            icer_df.to_excel(writer, sheet_name='Summary',
-                             startrow=len(summary) + 3, index=False)
-        except Exception:
-            pass
+        icer_df = result.icer()
+        icer_df.to_excel(writer, sheet_name='Summary',
+                         startrow=len(summary) + 3, index=False)
 
         # === Per-strategy sheets ===
         for strategy in model.strategy_names:
             sr = r[strategy]
             label = model.strategy_labels[strategy]
             times = sr['times']
-            cycles = np.arange(model.n_cycles + 1)
+            trace_cycles = np.arange(model.n_cycles + 1)
 
             # --- Survival Curves ---
             surv_sheet = f'Surv_{label}'[:31]
-            surv_data = {'Cycle': cycles, 'Time (yrs)': times}
+            surv_data = {'Cycle': trace_cycles, 'Time (yrs)': times}
             for endpoint in model.survival_endpoints:
                 surv_data[f'S({endpoint})'] = sr['survival_curves'][endpoint]
             surv_df = pd.DataFrame(surv_data)
@@ -283,7 +287,7 @@ def _export_psm_base(result, filepath: str):
             # --- State Probabilities ---
             trace_sheet = f'States_{label}'[:31]
             trace_df = pd.DataFrame(sr['trace'], columns=model.states)
-            trace_df.insert(0, 'Cycle', cycles)
+            trace_df.insert(0, 'Cycle', trace_cycles)
             trace_df.insert(1, 'Time (yrs)', times)
 
             # Verification columns
@@ -296,20 +300,21 @@ def _export_psm_base(result, filepath: str):
 
             # --- Costs ---
             costs_sheet = f'Costs_{label}'[:31]
-            df_c = 1 / (1 + model.dr_cost) ** (cycles * model.cycle_length)
-            hcc = np.ones(model.n_cycles + 1)
-            if model.half_cycle_correction == "trapezoidal":
-                hcc[0] = 0.5
-                hcc[-1] = 0.5
+            cycles = np.arange(model.n_cycles)
+            interval_times = (cycles + 0.5) * model.cycle_length
+            df_c = discount_factor(
+                cycles + 0.5, model.dr_cost, model.cycle_length,
+                model.discount_convention,
+            )
 
             costs_data = {
                 'Cycle': cycles,
-                'Time (yrs)': times,
+                'Time (yrs)': interval_times,
                 'Discount Factor': df_c,
-                'HCC Weight': hcc,
+                'Occupancy Method': model.half_cycle_correction or 'start-of-interval',
             }
 
-            total_discounted = np.zeros(model.n_cycles + 1)
+            total_discounted = np.zeros(model.n_cycles)
             for cat in sr['costs_by_cycle']:
                 raw = sr['costs_by_cycle'][cat]
                 hcc_applied = sr['costs_hcc'][cat]
@@ -322,7 +327,7 @@ def _export_psm_base(result, filepath: str):
             costs_data['Total Discounted Cost'] = total_discounted
             costs_df = pd.DataFrame(costs_data)
 
-            totals = {col: costs_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'HCC Weight']
+            totals = {col: costs_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'Occupancy Method']
                        else '' for col in costs_df.columns}
             totals['Cycle'] = 'TOTAL'
             costs_df = pd.concat([costs_df, pd.DataFrame([totals])], ignore_index=True)
@@ -330,13 +335,16 @@ def _export_psm_base(result, filepath: str):
 
             # --- QALYs ---
             qaly_sheet = f'QALYs_{label}'[:31]
-            df_q = 1 / (1 + model.dr_qaly) ** (cycles * model.cycle_length)
+            df_q = discount_factor(
+                cycles + 0.5, model.dr_qaly, model.cycle_length,
+                model.discount_convention,
+            )
 
             qaly_data = {
                 'Cycle': cycles,
-                'Time (yrs)': times,
+                'Time (yrs)': interval_times,
                 'Discount Factor': df_q,
-                'HCC Weight': hcc,
+                'Occupancy Method': model.half_cycle_correction or 'start-of-interval',
                 'QALYs (raw)': sr['qalys_by_cycle'],
                 'QALYs (HCC)': sr['qalys_hcc'],
                 'QALYs (discounted)': sr['discounted_qalys'],
@@ -346,7 +354,7 @@ def _export_psm_base(result, filepath: str):
             }
             qaly_df = pd.DataFrame(qaly_data)
 
-            totals_q = {col: qaly_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'HCC Weight']
+            totals_q = {col: qaly_df[col].sum() if col not in ['Cycle', 'Time (yrs)', 'Discount Factor', 'Occupancy Method']
                          else '' for col in qaly_df.columns}
             totals_q['Cycle'] = 'TOTAL'
             qaly_df = pd.concat([qaly_df, pd.DataFrame([totals_q])], ignore_index=True)
@@ -367,12 +375,9 @@ def _export_owsa(result, filepath: str):
                                   params=result.base_params)
         summary = base_res_obj.summary()
         summary.to_excel(writer, sheet_name='Base Case', index=False)
-        try:
-            icer_df = base_res_obj.icer()
-            icer_df.to_excel(writer, sheet_name='Base Case',
-                             startrow=len(summary) + 3, index=False)
-        except Exception:
-            pass
+        icer_df = base_res_obj.icer()
+        icer_df.to_excel(writer, sheet_name='Base Case',
+                         startrow=len(summary) + 3, index=False)
 
         # === OWSA Summary ===
         owsa_summary = result.summary()
@@ -410,12 +415,9 @@ def _export_psa(result, filepath: str, include_all: bool = False):
         summary.to_excel(writer, sheet_name='PSA Summary', index=False)
 
         # === ICER ===
-        try:
-            icer_df = result.icer()
-            icer_df.to_excel(writer, sheet_name='PSA Summary',
-                             startrow=len(summary) + 3, index=False)
-        except Exception:
-            pass
+        icer_df = result.icer()
+        icer_df.to_excel(writer, sheet_name='PSA Summary',
+                         startrow=len(summary) + 3, index=False)
 
         # === CE Table (all sims) ===
         if include_all:
@@ -423,11 +425,8 @@ def _export_psa(result, filepath: str, include_all: bool = False):
             ce.to_excel(writer, sheet_name='CE Table', index=False)
 
         # === CEAC Data ===
-        try:
-            ceac = result.ceac_data()
-            ceac.to_excel(writer, sheet_name='CEAC Data', index=False)
-        except Exception:
-            pass
+        ceac = result.ceac_data()
+        ceac.to_excel(writer, sheet_name='CEAC Data', index=False)
 
         # === Sampled Parameters ===
         if include_all and result.sampled_params:

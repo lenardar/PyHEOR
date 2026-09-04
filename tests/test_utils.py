@@ -120,6 +120,16 @@ class TestDiscountFactor:
         expected = (1.03) ** (-t.astype(float))
         np.testing.assert_allclose(result, expected)
 
+    def test_continuous_convention(self):
+        np.testing.assert_allclose(
+            discount_factor(2, 0.03, convention="continuous"),
+            np.exp(-0.03 * 2),
+        )
+
+    def test_unknown_convention_raises(self):
+        with pytest.raises(ValueError, match="discount convention"):
+            discount_factor(1, 0.03, convention="mystery")
+
 
 # =========================================================================
 # resolve_value

@@ -20,16 +20,15 @@ Supports:
 
 import numpy as np
 import pandas as pd
-import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from ..distributions import Distribution
+from ..distributions import Distribution, sample_distribution
 from .markov import Param, _CostDef
 from ..survival import SurvivalDistribution, ProportionalHazards
 from ..utils import (
-    resolve_value, discount_factor, normalize_hcc, life_table_corrected_trace,
+    resolve_value, discount_factor, normalize_hcc, interval_occupancy,
 )
 
 
@@ -52,7 +51,8 @@ class PartitionedSurvivalModel:
     strategies : list of str or dict
         Treatment strategies.
     n_cycles : int
-        Number of model cycles.
+        Number of model intervals. State probabilities contain
+        ``n_cycles + 1`` observation points, including time zero.
     cycle_length : float
         Length of each cycle in years (default: 1.0).
     dr_cost : float or Param
@@ -64,13 +64,16 @@ class PartitionedSurvivalModel:
     half_cycle_correction : bool or str or None
         Half-cycle correction method. Options:
 
-        - True or ``"trapezoidal"``: endpoint weighting [0.5, 1, ..., 1, 0.5]
-        - ``"life-table"``: average adjacent trace rows (heemod-style)
+        - True, ``"trapezoidal"``, or ``"life-table"``: average the two
+          adjacent state observations within each interval.
         - False or None: no correction
 
         Default: True (trapezoidal).
     state_type : dict, optional
         Map state names to "alive" or "dead".
+    discount_convention : str
+        ``"discrete"`` uses ``(1 + rate) ** -time``; ``"continuous"`` uses
+        ``exp(-rate * time)``. Default: ``"discrete"``.
 
     Examples
     --------
@@ -94,13 +97,25 @@ class PartitionedSurvivalModel:
         dr_qaly: Union[float, "Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
         state_type: Optional[Dict[str, str]] = None,
+        discount_convention: str = "discrete",
     ):
         # States
         self.states = list(states)
+        if not self.states:
+            raise ValueError("states must contain at least one state")
+        if len(set(self.states)) != len(self.states):
+            raise ValueError(f"State names must be unique, got {self.states!r}")
         self.n_states = len(self.states)
 
         # Survival endpoints
         self.survival_endpoints = list(survival_endpoints)
+        if not self.survival_endpoints:
+            raise ValueError("survival_endpoints must contain at least one endpoint")
+        if len(set(self.survival_endpoints)) != len(self.survival_endpoints):
+            raise ValueError(
+                f"Survival endpoint names must be unique, "
+                f"got {self.survival_endpoints!r}"
+            )
         self.n_endpoints = len(self.survival_endpoints)
 
         if self.n_states != self.n_endpoints + 1:
@@ -116,11 +131,31 @@ class PartitionedSurvivalModel:
         else:
             self.strategy_names = list(strategies)
             self.strategy_labels = {s: s for s in self.strategy_names}
+        if not self.strategy_names:
+            raise ValueError("strategies must contain at least one strategy")
+        if len(set(self.strategy_names)) != len(self.strategy_names):
+            raise ValueError(
+                f"Strategy names must be unique, got {self.strategy_names!r}"
+            )
         self.n_strategies = len(self.strategy_names)
 
         # Model settings
-        self.n_cycles = n_cycles
-        self.cycle_length = cycle_length
+        if isinstance(n_cycles, bool) or not isinstance(n_cycles, (int, np.integer)):
+            raise TypeError(f"n_cycles must be an integer, got {type(n_cycles).__name__}")
+        if n_cycles <= 0:
+            raise ValueError(f"n_cycles must be positive, got {n_cycles!r}")
+        if not np.isfinite(cycle_length) or cycle_length <= 0:
+            raise ValueError(
+                f"cycle_length must be a positive finite number, got {cycle_length!r}"
+            )
+        if discount_convention not in {"discrete", "continuous"}:
+            raise ValueError(
+                f"Unknown discount_convention {discount_convention!r}; "
+                "expected 'discrete' or 'continuous'."
+            )
+        self.n_cycles = int(n_cycles)
+        self.cycle_length = float(cycle_length)
+        self.discount_convention = discount_convention
         self._hcc_method = normalize_hcc(half_cycle_correction)
 
         # Parameters (init early so discount rates can register into it)
@@ -141,9 +176,25 @@ class PartitionedSurvivalModel:
             self.params["dr_qaly"] = dr_qaly
         else:
             self.dr_qaly = float(dr_qaly)
+        discount_factor(0, self.dr_cost, convention=self.discount_convention)
+        discount_factor(0, self.dr_qaly, convention=self.discount_convention)
 
         # State types
         if state_type is not None:
+            unknown_states = set(state_type) - set(self.states)
+            if unknown_states:
+                raise ValueError(
+                    f"state_type contains unknown states: {sorted(unknown_states)!r}"
+                )
+            invalid_types = {
+                name: value for name, value in state_type.items()
+                if value not in {"alive", "dead"}
+            }
+            if invalid_types:
+                raise ValueError(
+                    "state_type values must be 'alive' or 'dead'; "
+                    f"got {invalid_types!r}"
+                )
             self._alive_states = [
                 i for i, s in enumerate(self.states)
                 if state_type.get(s, "alive") == "alive"
@@ -302,6 +353,39 @@ class PartitionedSurvivalModel:
         method : str
             "wlos" or "starting".
         """
+        if method not in {"wlos", "starting"}:
+            raise ValueError(
+                f"Unknown cost method {method!r}; expected 'wlos' or 'starting'."
+            )
+        if method == "starting" and first_cycle_only:
+            raise ValueError(
+                "first_cycle_only cannot be combined with method='starting'; "
+                "a starting cost already occurs once at t=0."
+            )
+        if method == "starting" and apply_cycles is not None:
+            raise ValueError(
+                "apply_cycles cannot be combined with method='starting'; "
+                "a starting cost occurs once at t=0."
+            )
+        if apply_cycles is not None:
+            try:
+                apply_cycles = tuple(apply_cycles)
+            except TypeError as exc:
+                raise TypeError("apply_cycles must be an iterable of interval indices") from exc
+            invalid_cycles = [
+                cycle for cycle in apply_cycles
+                if isinstance(cycle, bool)
+                or not isinstance(cycle, (int, np.integer))
+                or not 0 <= int(cycle) < self.n_cycles
+            ]
+            if invalid_cycles:
+                raise ValueError(
+                    f"apply_cycles contains invalid interval indices {invalid_cycles!r}; "
+                    f"expected integers from 0 to {self.n_cycles - 1}."
+                )
+            apply_cycles = tuple(int(cycle) for cycle in apply_cycles)
+        if not callable(values):
+            self._validate_state_mapping(values, "state cost")
         self._costs[category] = _CostDef(
             name=category,
             values=values,
@@ -313,6 +397,8 @@ class PartitionedSurvivalModel:
 
     def set_utility(self, values: Any) -> "PartitionedSurvivalModel":
         """Define utility weights for health states."""
+        if not callable(values):
+            self._validate_state_mapping(values, "utility")
         self._utility = values
         return self
 
@@ -323,7 +409,8 @@ class PartitionedSurvivalModel:
     ) -> "PartitionedSurvivalModel":
         """Define a custom cost computed from simulation state each cycle.
 
-        The user-supplied function is called once per cycle (t = 1 … n_cycles)
+        The user-supplied function is called once per interval
+        (``t = 0, ..., n_cycles - 1``)
         for each strategy.  Its return value is the **undiscounted cost** for
         that cycle and category.
 
@@ -336,9 +423,9 @@ class PartitionedSurvivalModel:
 
             - **strategy** (str): Current strategy name.
             - **params** (dict): Parameter values ``{name: float}``.
-            - **t** (int): Current cycle number (1-based).
-            - **state_prev** (np.ndarray): State proportion vector at *t − 1*.
-            - **state_curr** (np.ndarray): State proportion vector at *t*.
+            - **t** (int): Current interval index (0-based).
+            - **state_prev** (np.ndarray): State proportions at interval start.
+            - **state_curr** (np.ndarray): State proportions at interval end.
             - **P**: Always ``None`` for PartitionedSurvivalModel (no transition matrix).
             - **states** (list[str]): State names (same order as array indices).
 
@@ -375,38 +462,88 @@ class PartitionedSurvivalModel:
     def _resolve_curve(self, strategy: str, endpoint: str,
                        params: Dict[str, float]) -> SurvivalDistribution:
         """Resolve a survival curve, evaluating callable if needed."""
+        if strategy not in self._survival_curves:
+            raise ValueError(
+                f"No survival curve configured for strategy {strategy!r}, "
+                f"endpoint {endpoint!r}."
+            )
+        if endpoint not in self._survival_curves[strategy]:
+            raise ValueError(
+                f"No survival curve configured for strategy {strategy!r}, "
+                f"endpoint {endpoint!r}."
+            )
         curve = self._survival_curves[strategy][endpoint]
         if callable(curve) and not isinstance(curve, SurvivalDistribution):
-            return curve(params)
+            curve = curve(params)
+        if not isinstance(curve, SurvivalDistribution):
+            raise TypeError(
+                f"Survival curve for strategy {strategy!r}, endpoint "
+                f"{endpoint!r} must resolve to SurvivalDistribution, "
+                f"got {type(curve).__name__}."
+            )
         return curve
+
+    def _validate_state_mapping(self, values: Any, label: str) -> None:
+        """Validate state/strategy keys while allowing omitted known states."""
+        if not isinstance(values, dict):
+            raise TypeError(
+                f"{label} values must be a mapping or callable, "
+                f"got {type(values).__name__}."
+            )
+        if not values:
+            return
+
+        keys = set(values)
+        state_names = set(self.states)
+        strategy_names = set(self.strategy_names)
+        if keys <= strategy_names and all(
+            isinstance(value, dict) for value in values.values()
+        ):
+            for strategy, state_values in values.items():
+                unknown = set(state_values) - state_names
+                if unknown:
+                    raise ValueError(
+                        f"{label} for strategy {strategy!r} contains unknown "
+                        f"states: {sorted(unknown)!r}."
+                    )
+            return
+        if keys <= state_names:
+            return
+
+        unknown = keys - state_names - strategy_names
+        if unknown:
+            raise ValueError(
+                f"{label} contains unknown state or strategy names: "
+                f"{sorted(unknown)!r}."
+            )
+        raise ValueError(
+            f"{label} mixes state-level and strategy-level keys; "
+            "use either {state: value} or {strategy: {state: value}}."
+        )
 
     def _resolve_state_values(self, values: Any, strategy: str,
                               params: Dict[str, float], t: int) -> np.ndarray:
         """Resolve state-level values (same logic as MarkovModel)."""
         if callable(values):
             values = values(params, t)
+        self._validate_state_mapping(values, "Resolved state value")
 
         result = np.zeros(self.n_states)
         if not values:
             return result
 
-        first_key = next(iter(values))
-        if isinstance(first_key, str) and first_key in self.strategy_names:
+        if set(values) <= set(self.strategy_names) and all(
+            isinstance(value, dict) for value in values.values()
+        ):
             if strategy in values:
                 state_vals = values[strategy]
-                if isinstance(state_vals, dict):
-                    for state_name, val in state_vals.items():
-                        if state_name in self.states:
-                            idx = self.states.index(state_name)
-                            result[idx] = resolve_value(val, params, t)
-                else:
-                    v = resolve_value(state_vals, params, t)
-                    result[:] = v
-        else:
-            for state_name, val in values.items():
-                if state_name in self.states:
+                for state_name, val in state_vals.items():
                     idx = self.states.index(state_name)
                     result[idx] = resolve_value(val, params, t)
+        else:
+            for state_name, val in values.items():
+                idx = self.states.index(state_name)
+                result[idx] = resolve_value(val, params, t)
 
         return result
 
@@ -459,34 +596,48 @@ class PartitionedSurvivalModel:
         surv_values = np.zeros((self.n_cycles + 1, self.n_endpoints))
         for j, endpoint in enumerate(self.survival_endpoints):
             curve = self._resolve_curve(strategy, endpoint, params)
-            surv_values[:, j] = curve.survival(times)
+            values = np.asarray(curve.survival(times), dtype=float)
+            if values.shape != times.shape:
+                raise ValueError(
+                    f"Survival curve for strategy {strategy!r}, endpoint "
+                    f"{endpoint!r} returned shape {values.shape}; "
+                    f"expected {times.shape}."
+                )
+            if not np.all(np.isfinite(values)):
+                raise ValueError(
+                    f"Survival curve for strategy {strategy!r}, endpoint "
+                    f"{endpoint!r} returned non-finite values."
+                )
+            if np.any(values < -1e-10) or np.any(values > 1 + 1e-10):
+                bad = np.where((values < -1e-10) | (values > 1 + 1e-10))[0]
+                raise ValueError(
+                    f"Survival curve for strategy {strategy!r}, endpoint "
+                    f"{endpoint!r} is outside [0, 1] at time indices "
+                    f"{bad.tolist()}."
+                )
+            increasing = np.where(np.diff(values) > 1e-10)[0]
+            if increasing.size:
+                raise ValueError(
+                    f"Survival curve for strategy {strategy!r}, endpoint "
+                    f"{endpoint!r} increases between time indices "
+                    f"{increasing.tolist()} and "
+                    f"{(increasing + 1).tolist()}."
+                )
+            surv_values[:, j] = values
 
         raw_values = surv_values.copy()
 
-        # Ensure monotonicity: S_1(t) <= S_2(t) <= ... <= S_N(t)
-        # (e.g., PFS <= OS). Curves that cross are a model misspecification --
-        # clamping keeps the trace valid but silently zeroes the intervening
-        # state, so warn rather than let a wrong HR pass unnoticed.
+        # Ordered endpoints must not cross: S_1(t) <= ... <= S_N(t).
         for j in range(1, self.n_endpoints):
             crossed = surv_values[:, j] < surv_values[:, j - 1] - 1e-12
             if np.any(crossed):
-                n_cross = int(crossed.sum())
-                first_t = float(times[np.argmax(crossed)])
-                max_gap = float(
-                    (surv_values[:, j - 1] - surv_values[:, j])[crossed].max()
+                indices = np.flatnonzero(crossed)
+                raise ValueError(
+                    f"PSM curve crossing for strategy {strategy!r}: endpoint "
+                    f"{self.survival_endpoints[j]!r} falls below "
+                    f"{self.survival_endpoints[j - 1]!r} at time indices "
+                    f"{indices.tolist()}. Check the curve parameters."
                 )
-                warnings.warn(
-                    f"PSM curve crossing in strategy '{strategy}': endpoint "
-                    f"'{self.survival_endpoints[j]}' falls below "
-                    f"'{self.survival_endpoints[j - 1]}' at {n_cross} of "
-                    f"{len(times)} time points (first at t={first_t:g}, max gap "
-                    f"{max_gap:.4g}). '{self.survival_endpoints[j]}' was clamped "
-                    f"upward, which forces the intervening state to 0 there. "
-                    f"Check the hazard ratios / curve parameters.",
-                    UserWarning,
-                    stacklevel=3,
-                )
-            surv_values[:, j] = np.maximum(surv_values[:, j], surv_values[:, j - 1])
 
         # Derive state probabilities
         state_probs = np.zeros((self.n_cycles + 1, self.n_states))
@@ -507,8 +658,14 @@ class PartitionedSurvivalModel:
         # Last state: 1 - S_last(t)
         state_probs[:, -1] = 1.0 - surv_values[:, -1]
 
-        # Clip numerical errors
-        state_probs = np.clip(state_probs, 0, 1)
+        if np.any(state_probs < -1e-10) or np.any(state_probs > 1 + 1e-10):
+            bad = np.argwhere(
+                (state_probs < -1e-10) | (state_probs > 1 + 1e-10)
+            )
+            raise ValueError(
+                f"PSM state probabilities for strategy {strategy!r} are "
+                f"outside [0, 1] at: {bad.tolist()}."
+            )
 
         if _return_raw:
             return state_probs, surv_values, raw_values
@@ -518,130 +675,127 @@ class PartitionedSurvivalModel:
         """Run one deterministic simulation with given parameter values."""
         results = {}
 
+        n_intervals = self.n_cycles
+        interval_index = np.arange(n_intervals, dtype=float)
+        flow_df_cost = discount_factor(
+            interval_index + 0.5, self.dr_cost, self.cycle_length,
+            self.discount_convention,
+        )
+        flow_df_qaly = discount_factor(
+            interval_index + 0.5, self.dr_qaly, self.cycle_length,
+            self.discount_convention,
+        )
+        event_df_cost = discount_factor(
+            interval_index + 1.0, self.dr_cost, self.cycle_length,
+            self.discount_convention,
+        )
+
+        alive_mask = np.zeros(self.n_states)
+        alive_mask[self._alive_states] = 1.0
+
         for strategy in self.strategy_names:
-            # --- State probabilities from survival curves ---
-            # Also capture the clamped and raw curve values so that what gets
-            # plotted matches the trace that was actually simulated.
-            trace, surv_clamped, surv_raw = self._compute_state_probs(
+            trace, surv_values, surv_raw = self._compute_state_probs(
                 strategy, params, _return_raw=True
             )
 
-            # --- Per-cycle rewards ---
-            costs_by_cat = {cat: np.zeros(self.n_cycles + 1) for cat in self._costs}
-            qalys = np.zeros(self.n_cycles + 1)
-            lys = np.zeros(self.n_cycles + 1)
+            start_occupancy = interval_occupancy(trace, None)
+            reward_occupancy = interval_occupancy(trace, self._hcc_method)
 
-            alive_mask = np.zeros(self.n_states)
-            for i in self._alive_states:
-                alive_mask[i] = 1.0
+            qalys = np.zeros(n_intervals)
+            qalys_hcc = np.zeros(n_intervals)
+            lys = start_occupancy @ alive_mask * self.cycle_length
+            lys_hcc = reward_occupancy @ alive_mask * self.cycle_length
+            state_costs_raw = {
+                category: np.zeros(n_intervals) for category in self._costs
+            }
+            state_costs_hcc = {
+                category: np.zeros(n_intervals) for category in self._costs
+            }
+            starting_costs = {
+                category: np.zeros(n_intervals) for category in self._costs
+            }
+            event_costs: Dict[str, np.ndarray] = {}
 
-            for t in range(self.n_cycles + 1):
-                state_probs = trace[t]
+            for interval in range(n_intervals):
+                utility = self._get_utilities(strategy, params, interval)
+                qalys[interval] = (
+                    np.dot(start_occupancy[interval], utility)
+                    * self.cycle_length
+                )
+                qalys_hcc[interval] = (
+                    np.dot(reward_occupancy[interval], utility)
+                    * self.cycle_length
+                )
 
-                # Utilities → QALYs
-                u = self._get_utilities(strategy, params, t)
-                qalys[t] = np.dot(state_probs, u) * self.cycle_length
-
-                # Life years
-                lys[t] = np.dot(state_probs, alive_mask) * self.cycle_length
-
-                # Costs per category
-                for cat in self._costs:
-                    cost_def = self._costs[cat]
-                    c = self._get_state_costs(cat, strategy, params, t)
-                    if cost_def.method == "wlos":
-                        costs_by_cat[cat][t] = np.dot(state_probs, c) * self.cycle_length
-                    elif cost_def.method == "starting":
-                        costs_by_cat[cat][t] = np.dot(state_probs, c)
-                    else:
-                        costs_by_cat[cat][t] = np.dot(state_probs, c) * self.cycle_length
-
-            # --- Custom costs (user-defined functions) ---
-            if self._custom_costs:
-                for cc in self._custom_costs:
-                    cat = cc['category']
-                    cc_costs = np.zeros(self.n_cycles + 1)
-                    for t in range(1, self.n_cycles + 1):
-                        cost_val = cc['func'](
-                            strategy, params, t,
-                            trace[t - 1], trace[t], None, self.states
-                        )
-                        cc_costs[t] = float(cost_val)
-                    costs_by_cat[cat] = (
-                        costs_by_cat.get(cat, np.zeros(self.n_cycles + 1))
-                        + cc_costs
+                for category, cost_def in self._costs.items():
+                    costs = self._get_state_costs(
+                        category, strategy, params, interval
                     )
-
-            # --- Half-cycle correction ---
-            # Collect custom-cost-only categories (no HCC for these)
-            cc_only_cats = set()
-            if self._custom_costs:
-                for cc in self._custom_costs:
-                    if cc['category'] not in self._costs:
-                        cc_only_cats.add(cc['category'])
-
-            if self._hcc_method == "trapezoidal":
-                hcc_weights = np.ones(self.n_cycles + 1)
-                hcc_weights[0] = 0.5
-                hcc_weights[-1] = 0.5
-
-                qalys_hcc = qalys * hcc_weights
-                lys_hcc = lys * hcc_weights
-
-                costs_hcc = {}
-                for cat in costs_by_cat:
-                    if cat in cc_only_cats:
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
-                    elif cat in self._costs and self._costs[cat].method in ("starting",):
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
-                    else:
-                        costs_hcc[cat] = costs_by_cat[cat] * hcc_weights
-
-            elif self._hcc_method == "life-table":
-                corrected = life_table_corrected_trace(trace)
-
-                qalys_hcc = np.zeros(self.n_cycles + 1)
-                lys_hcc = np.zeros(self.n_cycles + 1)
-                for t in range(self.n_cycles + 1):
-                    u = self._get_utilities(strategy, params, t)
-                    qalys_hcc[t] = np.dot(corrected[t], u) * self.cycle_length
-                    lys_hcc[t] = np.dot(corrected[t], alive_mask) * self.cycle_length
-
-                costs_hcc = {}
-                for cat in costs_by_cat:
-                    if cat in cc_only_cats:
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
-                    elif cat in self._costs and self._costs[cat].method in ("starting",):
-                        costs_hcc[cat] = costs_by_cat[cat].copy()
-                    else:
-                        costs_hcc[cat] = np.zeros(self.n_cycles + 1)
-                        for t in range(self.n_cycles + 1):
-                            c = self._get_state_costs(cat, strategy, params, t)
-                            costs_hcc[cat][t] = (
-                                np.dot(corrected[t], c) * self.cycle_length
+                    if cost_def.method == "starting":
+                        if interval == 0:
+                            starting_costs[category][0] = float(
+                                np.dot(trace[0], costs)
                             )
+                    else:
+                        state_costs_raw[category][interval] = (
+                            np.dot(start_occupancy[interval], costs)
+                            * self.cycle_length
+                        )
+                        state_costs_hcc[category][interval] = (
+                            np.dot(reward_occupancy[interval], costs)
+                            * self.cycle_length
+                        )
 
-            else:
-                # No correction
-                qalys_hcc = qalys.copy()
-                lys_hcc = lys.copy()
-                costs_hcc = {cat: arr.copy() for cat, arr in costs_by_cat.items()}
+            for custom_cost in self._custom_costs:
+                category = custom_cost['category']
+                category_events = event_costs.setdefault(
+                    category, np.zeros(n_intervals)
+                )
+                for interval in range(n_intervals):
+                    amount = float(custom_cost['func'](
+                        strategy, params, interval,
+                        trace[interval], trace[interval + 1],
+                        None, self.states,
+                    ))
+                    if not np.isfinite(amount):
+                        raise ValueError(
+                            f"Custom cost {category!r} returned a non-finite "
+                            f"value for strategy {strategy!r}, interval {interval}."
+                        )
+                    category_events[interval] += amount
 
-            # --- Discounting ---
-            cycles = np.arange(self.n_cycles + 1, dtype=float)
-            df_c = discount_factor(cycles, self.dr_cost, self.cycle_length)
-            df_q = discount_factor(cycles, self.dr_qaly, self.cycle_length)
+            categories = list(dict.fromkeys([*self._costs, *event_costs]))
+            costs_by_cycle = {}
+            costs_hcc = {}
+            discounted_costs = {}
+            for category in categories:
+                state_raw = state_costs_raw.get(
+                    category, np.zeros(n_intervals)
+                )
+                state_hcc = state_costs_hcc.get(
+                    category, np.zeros(n_intervals)
+                )
+                at_start = starting_costs.get(
+                    category, np.zeros(n_intervals)
+                )
+                at_event = event_costs.get(
+                    category, np.zeros(n_intervals)
+                )
+                costs_by_cycle[category] = state_raw + at_start + at_event
+                costs_hcc[category] = state_hcc + at_start + at_event
+                discounted_costs[category] = (
+                    state_hcc * flow_df_cost
+                    + at_start
+                    + at_event * event_df_cost
+                )
 
-            discounted_costs = {cat: costs_hcc[cat] * df_c for cat in costs_hcc}
-            discounted_qalys = qalys_hcc * df_q
-            discounted_lys = lys_hcc * df_q
+            discounted_qalys = qalys_hcc * flow_df_qaly
+            discounted_lys = lys_hcc * flow_df_qaly
 
             # --- Survival values for plotting ---
-            # Use the monotonicity-clamped values so plots agree with the trace;
-            # the pre-clamp values stay available as survival_curves_raw.
             times = np.arange(self.n_cycles + 1) * self.cycle_length
             surv_curves = {
-                endpoint: surv_clamped[:, j]
+                endpoint: surv_values[:, j]
                 for j, endpoint in enumerate(self.survival_endpoints)
             }
             surv_curves_raw = {
@@ -655,7 +809,8 @@ class PartitionedSurvivalModel:
                 'survival_curves': surv_curves,
                 'survival_curves_raw': surv_curves_raw,
                 'times': times,
-                'costs_by_cycle': costs_by_cat,
+                'interval_times': (interval_index + 0.5) * self.cycle_length,
+                'costs_by_cycle': costs_by_cycle,
                 'qalys_by_cycle': qalys,
                 'lys_by_cycle': lys,
                 'costs_hcc': costs_hcc,
@@ -770,15 +925,18 @@ class PartitionedSurvivalModel:
         """Run probabilistic sensitivity analysis."""
         from ..analysis.results import PSAResult
 
-        if seed is not None:
-            np.random.seed(seed)
+        if isinstance(n_sim, bool) or not isinstance(n_sim, (int, np.integer)):
+            raise TypeError("n_sim must be a positive integer")
+        if n_sim <= 0:
+            raise ValueError("n_sim must be a positive integer")
+        rng = np.random.default_rng(seed)
 
         sampled_params = []
         for i in range(n_sim):
             p = self._get_base_params()
             for name, param in self.params.items():
                 if param.dist is not None:
-                    p[name] = float(param.dist.sample(1)[0])
+                    p[name] = float(sample_distribution(param.dist, 1, rng)[0])
             sampled_params.append(p)
 
         psa_results = []
@@ -811,6 +969,7 @@ class PartitionedSurvivalModel:
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
             f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
+            f"  Discount convention: {self.discount_convention}",
             f"  Half-cycle correction: {self._hcc_method or 'None'}",
             f"  Parameters ({len(self.params)}):",
         ]
