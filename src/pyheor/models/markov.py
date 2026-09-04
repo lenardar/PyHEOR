@@ -1,7 +1,7 @@
 """
-MarkovModel - Core model class for cohort discrete-time state transition models.
+CohortStateTransitionModel - Core model class for cohort discrete-time state transition models.
 
-This module implements the main MarkovModel class which provides:
+This module implements the main CohortStateTransitionModel class which provides:
 - Flexible parameter definition with PSA distributions
 - Transition probability matrices (constant or time-varying)
 - Flexible cost/utility definitions (per-cycle, first-cycle-only, time-dependent)
@@ -78,10 +78,10 @@ class _CostDef:
 
 
 # =============================================================================
-# MarkovModel
+# CohortStateTransitionModel
 # =============================================================================
 
-class MarkovModel:
+class CohortStateTransitionModel:
     """Cohort Discrete-Time State Transition Model (cDTSTM).
     
     A Markov cohort model for health economic evaluation. Supports:
@@ -122,7 +122,7 @@ class MarkovModel:
     
     Examples
     --------
-    >>> model = MarkovModel(
+    >>> model = CohortStateTransitionModel(
     ...     states=["Healthy", "Sick", "Dead"],
     ...     strategies=["SOC", "New"],
     ...     n_cycles=20,
@@ -227,7 +227,7 @@ class MarkovModel:
     # =========================================================================
     
     def add_param(self, name: str, base: float, dist=None, label=None,
-                  low=None, high=None) -> "MarkovModel":
+                  low=None, high=None) -> "CohortStateTransitionModel":
         """Add a single parameter to the model.
         
         Parameters
@@ -245,7 +245,7 @@ class MarkovModel:
             
         Returns
         -------
-        MarkovModel
+        CohortStateTransitionModel
             Self, for method chaining.
         """
         self.params[name] = Param(
@@ -255,7 +255,7 @@ class MarkovModel:
         )
         return self
     
-    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "MarkovModel":
+    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "CohortStateTransitionModel":
         """Add multiple parameters at once.
         
         Parameters
@@ -265,7 +265,7 @@ class MarkovModel:
             
         Returns
         -------
-        MarkovModel
+        CohortStateTransitionModel
             Self, for method chaining.
         """
         for name, param in params_dict.items():
@@ -285,7 +285,7 @@ class MarkovModel:
     # Transition Probabilities
     # =========================================================================
     
-    def set_transitions(self, strategy: str, transitions) -> "MarkovModel":
+    def set_transitions(self, strategy: str, transitions) -> "CohortStateTransitionModel":
         """Set transition probabilities for a strategy.
         
         Parameters
@@ -304,7 +304,7 @@ class MarkovModel:
         
         Returns
         -------
-        MarkovModel
+        CohortStateTransitionModel
             Self, for method chaining.
             
         Examples
@@ -344,7 +344,7 @@ class MarkovModel:
         first_cycle_only: bool = False,
         apply_cycles: Optional[List[int]] = None,
         method: str = "wlos",
-    ) -> "MarkovModel":
+    ) -> "CohortStateTransitionModel":
         """Define a cost category.
         
         Parameters
@@ -371,7 +371,7 @@ class MarkovModel:
         
         Returns
         -------
-        MarkovModel
+        CohortStateTransitionModel
             Self, for method chaining.
             
         Examples
@@ -421,7 +421,7 @@ class MarkovModel:
         from_state: str,
         to_state: str,
         value: Any,
-    ) -> "MarkovModel":
+    ) -> "CohortStateTransitionModel":
         """Define costs triggered when patients transition between states.
         
         In a cohort model, the cost is applied to the **flow** of patients
@@ -456,7 +456,7 @@ class MarkovModel:
         
         Returns
         -------
-        MarkovModel
+        CohortStateTransitionModel
             Self, for method chaining.
             
         Examples
@@ -504,7 +504,7 @@ class MarkovModel:
         self,
         category: str,
         func: Callable,
-    ) -> "MarkovModel":
+    ) -> "CohortStateTransitionModel":
         """Define a custom cost computed from simulation state each cycle.
 
         Unlike ``set_transition_cost`` which targets individual state pairs,
@@ -532,7 +532,7 @@ class MarkovModel:
 
         Returns
         -------
-        MarkovModel
+        CohortStateTransitionModel
             Self, for method chaining.
 
         Examples
@@ -590,7 +590,7 @@ class MarkovModel:
     # Utility
     # =========================================================================
     
-    def set_utility(self, values: Any) -> "MarkovModel":
+    def set_utility(self, values: Any) -> "CohortStateTransitionModel":
         """Define utility (quality-of-life) weights for health states.
         
         Parameters
@@ -606,7 +606,7 @@ class MarkovModel:
         
         Returns
         -------
-        MarkovModel
+        CohortStateTransitionModel
             Self, for method chaining.
             
         Examples
@@ -1120,7 +1120,7 @@ class MarkovModel:
     def info(self) -> str:
         """Return a summary string describing the model."""
         lines = [
-            f"MarkovModel",
+            f"CohortStateTransitionModel",
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
@@ -1173,7 +1173,11 @@ class MarkovModel:
     
     def __repr__(self):
         return (
-            f"MarkovModel(states={self.states}, "
+            f"CohortStateTransitionModel(states={self.states}, "
             f"strategies={self.strategy_names}, "
             f"n_cycles={self.n_cycles})"
         )
+
+
+# Concise public alias retained for compatibility and everyday use.
+MarkovModel = CohortStateTransitionModel

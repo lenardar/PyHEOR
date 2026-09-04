@@ -33,7 +33,7 @@ from ..utils import (
 )
 
 
-class PSMModel:
+class PartitionedSurvivalModel:
     """Partitioned Survival Model (PSM).
 
     Derives state probabilities from survival curves rather than
@@ -74,7 +74,7 @@ class PSMModel:
 
     Examples
     --------
-    >>> model = PSMModel(
+    >>> model = PartitionedSurvivalModel(
     ...     states=["PFS", "Progressed", "Dead"],
     ...     survival_endpoints=["PFS", "OS"],
     ...     strategies={"SOC": "Standard of Care", "TRT": "New Treatment"},
@@ -176,7 +176,7 @@ class PSMModel:
     # =========================================================================
 
     def add_param(self, name: str, base: float, dist=None, label=None,
-                  low=None, high=None) -> "PSMModel":
+                  low=None, high=None) -> "PartitionedSurvivalModel":
         """Add a single parameter to the model."""
         self.params[name] = Param(
             base=base, dist=dist,
@@ -185,7 +185,7 @@ class PSMModel:
         )
         return self
 
-    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "PSMModel":
+    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "PartitionedSurvivalModel":
         """Add multiple parameters at once."""
         for name, param in params_dict.items():
             if isinstance(param, Param):
@@ -209,7 +209,7 @@ class PSMModel:
         strategy: str,
         endpoint: str,
         curve: Union[SurvivalDistribution, Callable],
-    ) -> "PSMModel":
+    ) -> "PartitionedSurvivalModel":
         """Set a survival curve for a strategy and endpoint.
 
         Parameters
@@ -225,7 +225,7 @@ class PSMModel:
 
         Returns
         -------
-        PSMModel
+        PartitionedSurvivalModel
             Self, for method chaining.
 
         Examples
@@ -254,7 +254,7 @@ class PSMModel:
         self,
         strategy: str,
         curves: Dict[str, Union[SurvivalDistribution, Callable]],
-    ) -> "PSMModel":
+    ) -> "PartitionedSurvivalModel":
         """Set all survival curves for a strategy at once.
 
         Parameters
@@ -286,7 +286,7 @@ class PSMModel:
         first_cycle_only: bool = False,
         apply_cycles: Optional[List[int]] = None,
         method: str = "wlos",
-    ) -> "PSMModel":
+    ) -> "PartitionedSurvivalModel":
         """Define a cost category (same interface as MarkovModel).
 
         Parameters
@@ -311,7 +311,7 @@ class PSMModel:
         )
         return self
 
-    def set_utility(self, values: Any) -> "PSMModel":
+    def set_utility(self, values: Any) -> "PartitionedSurvivalModel":
         """Define utility weights for health states."""
         self._utility = values
         return self
@@ -320,7 +320,7 @@ class PSMModel:
         self,
         category: str,
         func: Callable,
-    ) -> "PSMModel":
+    ) -> "PartitionedSurvivalModel":
         """Define a custom cost computed from simulation state each cycle.
 
         The user-supplied function is called once per cycle (t = 1 … n_cycles)
@@ -339,12 +339,12 @@ class PSMModel:
             - **t** (int): Current cycle number (1-based).
             - **state_prev** (np.ndarray): State proportion vector at *t − 1*.
             - **state_curr** (np.ndarray): State proportion vector at *t*.
-            - **P**: Always ``None`` for PSMModel (no transition matrix).
+            - **P**: Always ``None`` for PartitionedSurvivalModel (no transition matrix).
             - **states** (list[str]): State names (same order as array indices).
 
         Returns
         -------
-        PSMModel
+        PartitionedSurvivalModel
             Self, for method chaining.
 
         Examples
@@ -805,7 +805,7 @@ class PSMModel:
     def info(self) -> str:
         """Return a summary string describing the model."""
         lines = [
-            f"PSMModel",
+            f"PartitionedSurvivalModel",
             f"  States ({self.n_states}): {self.states}",
             f"  Endpoints ({self.n_endpoints}): {self.survival_endpoints}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
@@ -839,8 +839,12 @@ class PSMModel:
 
     def __repr__(self):
         return (
-            f"PSMModel(states={self.states}, "
+            f"PartitionedSurvivalModel(states={self.states}, "
             f"endpoints={self.survival_endpoints}, "
             f"strategies={self.strategy_names}, "
             f"n_cycles={self.n_cycles})"
         )
+
+
+# Concise public alias retained for compatibility and everyday use.
+PSMModel = PartitionedSurvivalModel

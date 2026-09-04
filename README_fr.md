@@ -112,6 +112,17 @@ ph.generate_report(model, "report.md")
 
 ### Types de modèles
 
+Chaque modèle possède un nom de classe complet et cohérent, ainsi qu'un alias concis pour l'usage quotidien :
+
+| Nom de classe complet | Alias concis |
+|---|---|
+| `CohortStateTransitionModel` | `MarkovModel` |
+| `PartitionedSurvivalModel` | `PSMModel` |
+| `IndividualStateTransitionModel` | `MicroSimModel` |
+| `DiscreteEventSimulationModel` | `DESModel` |
+
+Chaque paire désigne la même classe et peut être utilisée de manière interchangeable. Les exemples ci-dessous utilisent les alias concis.
+
 #### Modèle de Markov par cohorte
 
 Modèle de cohorte en temps discret (cDTSTM), adapté aux modèles simples avec des probabilités de transition d'états connues. Voir l'exemple complet dans [Démarrage rapide](#démarrage-rapide).

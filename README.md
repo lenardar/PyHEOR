@@ -112,6 +112,17 @@ ph.generate_report(model, "report.md")
 
 ### Model Types
 
+Every model has a consistent full class name and a concise alias for everyday use:
+
+| Full class name | Concise alias |
+|---|---|
+| `CohortStateTransitionModel` | `MarkovModel` |
+| `PartitionedSurvivalModel` | `PSMModel` |
+| `IndividualStateTransitionModel` | `MicroSimModel` |
+| `DiscreteEventSimulationModel` | `DESModel` |
+
+Each pair references the same class and can be used interchangeably. The examples below use the concise aliases.
+
 #### Markov Cohort Model
 
 Discrete-time cohort model (cDTSTM), suitable for simple models with known state-transition probabilities. See the full example in [Quick Start](#quick-start).

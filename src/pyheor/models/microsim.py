@@ -1,5 +1,5 @@
 """
-MicroSimModel — Individual-level state transition microsimulation.
+IndividualStateTransitionModel — Individual-level state transition microsimulation.
 
 Unlike the cohort MarkovModel which tracks a hypothetical cohort proportion,
 the microsimulation tracks individual patients through health states. Each
@@ -19,7 +19,7 @@ Key features
 
 Typical workflow
 ----------------
->>> model = MicroSimModel(
+>>> model = IndividualStateTransitionModel(
 ...     states=["Healthy", "Sick", "Sicker", "Dead"],
 ...     strategies=["SOC", "New"],
 ...     n_cycles=40,
@@ -101,7 +101,7 @@ class PatientProfile:
 # Microsimulation Model
 # =============================================================================
 
-class MicroSimModel:
+class IndividualStateTransitionModel:
     """Individual-level state transition microsimulation model.
 
     Each patient is independently simulated through health states.
@@ -251,7 +251,7 @@ class MicroSimModel:
     # =========================================================================
 
     def add_param(self, name: str, base: float, dist=None, label=None,
-                  low=None, high=None) -> "MicroSimModel":
+                  low=None, high=None) -> "IndividualStateTransitionModel":
         """Add a single parameter."""
         self.params[name] = Param(
             base=base, dist=dist,
@@ -260,7 +260,7 @@ class MicroSimModel:
         )
         return self
 
-    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "MicroSimModel":
+    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "IndividualStateTransitionModel":
         """Add multiple parameters."""
         for name, param in params_dict.items():
             if isinstance(param, Param):
@@ -277,7 +277,7 @@ class MicroSimModel:
     # Patient Population
     # =========================================================================
 
-    def set_population(self, profile: PatientProfile) -> "MicroSimModel":
+    def set_population(self, profile: PatientProfile) -> "IndividualStateTransitionModel":
         """Set a heterogeneous patient population.
 
         Parameters
@@ -314,7 +314,7 @@ class MicroSimModel:
     # Transitions
     # =========================================================================
 
-    def set_transitions(self, strategy: str, transitions) -> "MicroSimModel":
+    def set_transitions(self, strategy: str, transitions) -> "IndividualStateTransitionModel":
         """Set transition probabilities for a strategy.
 
         Parameters
@@ -362,7 +362,7 @@ class MicroSimModel:
         first_cycle_only: bool = False,
         apply_cycles: Optional[List[int]] = None,
         method: str = "wlos",
-    ) -> "MicroSimModel":
+    ) -> "IndividualStateTransitionModel":
         """Define a cost category (same interface as MarkovModel).
 
         The ``values`` can also accept patient attributes:
@@ -377,7 +377,7 @@ class MicroSimModel:
         )
         return self
 
-    def set_utility(self, values: Any) -> "MicroSimModel":
+    def set_utility(self, values: Any) -> "IndividualStateTransitionModel":
         """Define utility weights (same interface as MarkovModel).
 
         The ``values`` can also accept patient attributes:
@@ -390,7 +390,7 @@ class MicroSimModel:
     # Event Handlers
     # =========================================================================
 
-    def on_state_enter(self, state: str, handler: Callable) -> "MicroSimModel":
+    def on_state_enter(self, state: str, handler: Callable) -> "IndividualStateTransitionModel":
         """Register a handler called when a patient enters a state.
 
         Parameters
@@ -410,7 +410,7 @@ class MicroSimModel:
         self._on_enter[state].append(handler)
         return self
 
-    def on_state_exit(self, state: str, handler: Callable) -> "MicroSimModel":
+    def on_state_exit(self, state: str, handler: Callable) -> "IndividualStateTransitionModel":
         """Register a handler called when a patient leaves a state."""
         if state not in self._on_exit:
             self._on_exit[state] = []
@@ -1047,7 +1047,7 @@ class MicroSimModel:
     def info(self) -> str:
         """Summary string."""
         lines = [
-            f"MicroSimModel (Individual-Level Simulation)",
+            f"IndividualStateTransitionModel (Individual-Level Simulation)",
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
@@ -1077,7 +1077,11 @@ class MicroSimModel:
 
     def __repr__(self):
         return (
-            f"MicroSimModel(states={self.states}, "
+            f"IndividualStateTransitionModel(states={self.states}, "
             f"strategies={self.strategy_names}, "
             f"n_cycles={self.n_cycles}, n_patients={self.n_patients})"
         )
+
+
+# Concise public alias retained for compatibility and everyday use.
+MicroSimModel = IndividualStateTransitionModel

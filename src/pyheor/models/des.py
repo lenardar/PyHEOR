@@ -1,5 +1,5 @@
 """
-DESModel — Discrete Event Simulation for health economic evaluation.
+DiscreteEventSimulationModel — Discrete Event Simulation for health economic evaluation.
 ====================================================================
 
 Unlike the cohort MarkovModel (fixed cycle, proportion-based) or the
@@ -29,7 +29,7 @@ Architecture
 
 Typical workflow
 ----------------
->>> model = DESModel(
+>>> model = DiscreteEventSimulationModel(
 ...     states=["PFS", "Progressed", "Dead"],
 ...     strategies=["SOC", "Treatment"],
 ...     time_horizon=40,
@@ -103,10 +103,10 @@ class _EntryCostDef:
 
 
 # =============================================================================
-# DESModel
+# DiscreteEventSimulationModel
 # =============================================================================
 
-class DESModel:
+class DiscreteEventSimulationModel:
     """Discrete Event Simulation model for health economic evaluation.
 
     Parameters
@@ -128,7 +128,7 @@ class DESModel:
 
     Examples
     --------
-    >>> model = DESModel(
+    >>> model = DiscreteEventSimulationModel(
     ...     states=["PFS", "Progressed", "Dead"],
     ...     strategies=["SOC", "Treatment"],
     ...     time_horizon=40,
@@ -210,7 +210,7 @@ class DESModel:
     def add_param(
         self, name: str, base: float, dist=None, label=None,
         low=None, high=None,
-    ) -> "DESModel":
+    ) -> "DiscreteEventSimulationModel":
         """Add a model parameter (same API as MarkovModel)."""
         self.params[name] = Param(
             base=base, dist=dist,
@@ -267,7 +267,7 @@ class DESModel:
         from_state: str,
         to_state: str,
         distribution: Any,
-    ) -> "DESModel":
+    ) -> "DiscreteEventSimulationModel":
         """Define a transition event with a time-to-event distribution.
 
         Multiple events from the same source state are treated as
@@ -291,7 +291,7 @@ class DESModel:
 
         Returns
         -------
-        DESModel
+        DiscreteEventSimulationModel
             Self, for method chaining.
 
         Examples
@@ -334,7 +334,7 @@ class DESModel:
         strategy: str,
         from_state: str,
         events: Dict[str, Any],
-    ) -> "DESModel":
+    ) -> "DiscreteEventSimulationModel":
         """Set multiple events from the same source state.
 
         Parameters
@@ -361,7 +361,7 @@ class DESModel:
     # Costs
     # =====================================================================
 
-    def set_state_cost(self, category: str, values: Any) -> "DESModel":
+    def set_state_cost(self, category: str, values: Any) -> "DiscreteEventSimulationModel":
         """Define per-unit-time costs incurred while in a state.
 
         These are continuous-time *rate* costs: cost per year in state.
@@ -388,7 +388,7 @@ class DESModel:
 
     def set_entry_cost(
         self, category: str, state: str, value: Any,
-    ) -> "DESModel":
+    ) -> "DiscreteEventSimulationModel":
         """Define a one-time cost triggered on entering a state.
 
         Parameters
@@ -423,7 +423,7 @@ class DESModel:
     # Utility
     # =====================================================================
 
-    def set_utility(self, values: Any) -> "DESModel":
+    def set_utility(self, values: Any) -> "DiscreteEventSimulationModel":
         """Define utility weights per state.
 
         Parameters
@@ -445,7 +445,7 @@ class DESModel:
 
     def on_state_enter(
         self, state: str, handler: Callable,
-    ) -> "DESModel":
+    ) -> "DiscreteEventSimulationModel":
         """Register a handler called when a patient enters a state.
 
         Parameters
@@ -948,7 +948,7 @@ class DESModel:
     def info(self) -> str:
         """Return a summary string."""
         lines = [
-            "DESModel",
+            "DiscreteEventSimulationModel",
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Time horizon: {self.time_horizon} years",
@@ -979,7 +979,11 @@ class DESModel:
 
     def __repr__(self) -> str:
         return (
-            f"DESModel(states={self.states}, "
+            f"DiscreteEventSimulationModel(states={self.states}, "
             f"strategies={self.strategy_names}, "
             f"time_horizon={self.time_horizon})"
         )
+
+
+# Concise public alias retained for compatibility and everyday use.
+DESModel = DiscreteEventSimulationModel

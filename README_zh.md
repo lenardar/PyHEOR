@@ -112,6 +112,17 @@ ph.generate_report(model, "report.md")
 
 ### 模型类型
 
+所有模型都提供统一的完整类名，并保留简洁别名用于日常建模：
+
+| 完整类名 | 简洁别名 |
+|---|---|
+| `CohortStateTransitionModel` | `MarkovModel` |
+| `PartitionedSurvivalModel` | `PSMModel` |
+| `IndividualStateTransitionModel` | `MicroSimModel` |
+| `DiscreteEventSimulationModel` | `DESModel` |
+
+两种名称指向同一个类，可以互换使用。以下示例采用简洁别名。
+
 #### Markov 队列模型
 
 离散时间队列模型 (cDTSTM)，适用于状态转移概率已知的简单模型。完整示例见 [快速开始](#快速开始)。

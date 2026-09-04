@@ -66,10 +66,14 @@ from .survival import (
 )
 
 # Models
-from .models.markov import MarkovModel, Param
-from .models.psm import PSMModel
-from .models.microsim import MicroSimModel, PatientProfile
-from .models.des import DESModel
+from .models.markov import CohortStateTransitionModel, MarkovModel, Param
+from .models.psm import PartitionedSurvivalModel, PSMModel
+from .models.microsim import (
+    IndividualStateTransitionModel,
+    MicroSimModel,
+    PatientProfile,
+)
+from .models.des import DiscreteEventSimulationModel, DESModel
 
 # Results
 from .analysis.results import (
@@ -114,6 +118,10 @@ __all__ = [
     "KaplanMeier",
     "PiecewiseExponential",
     # Models
+    "CohortStateTransitionModel",
+    "PartitionedSurvivalModel",
+    "IndividualStateTransitionModel",
+    "DiscreteEventSimulationModel",
     "MarkovModel",
     "PSMModel",
     "MicroSimModel",

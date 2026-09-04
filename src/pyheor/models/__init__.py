@@ -1,11 +1,15 @@
 """Building blocks for health economic models."""
 
-from .markov import MarkovModel, Param
-from .psm import PSMModel
-from .microsim import MicroSimModel, PatientProfile
-from .des import DESModel
+from .markov import CohortStateTransitionModel, MarkovModel, Param
+from .psm import PartitionedSurvivalModel, PSMModel
+from .microsim import IndividualStateTransitionModel, MicroSimModel, PatientProfile
+from .des import DiscreteEventSimulationModel, DESModel
 
 __all__ = [
+    "CohortStateTransitionModel",
+    "PartitionedSurvivalModel",
+    "IndividualStateTransitionModel",
+    "DiscreteEventSimulationModel",
     "MarkovModel",
     "Param",
     "PSMModel",
