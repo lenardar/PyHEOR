@@ -16,12 +16,7 @@ PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
 | **灵活的费用定义**                | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表、自定义费用函数               |
 | **基础分析 / OWSA / PSA**         | 确定性分析、龙卷风图 (INMB/ICER)、Monte Carlo + CE 散点图 + CEAC                            |
 | **多策略比较 & NMB**              | 效率前沿、支配/扩展支配检测、NMB 曲线、CEAF、EVPI                                           |
-| **IPD 生存曲线拟合**              | 6 种参数分布 MLE 拟合，AIC/BIC 比较，自动选优                                               |
-| **KM 曲线数字化重建**             | Guyot method 从发表文献 KM 图反推 IPD，含数字化噪声预处理                                    |
-| **NMA 整合**                      | 导入 R 后验样本，保留相关性，自动生成 PH/AFT 曲线                                           |
-| **预算影响分析 (BIA)**            | 人群规模模型、市场份额演变、摄取曲线、情景/单因素敏感性分析                                  |
-| **模型校准**                      | 用观测数据反推未知参数：Nelder-Mead 多起点优化、LHS 随机搜索、SSE/WSSE/似然 GoF              |
-| **可视化**                        | 28 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC、KM+拟合曲线、BIA 影响图等    |
+| **可视化**                        | 19 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC 等                            |
 | **导出**                          | Excel 多 Sheet 导出、Excel 公式验证模型、Markdown 一键报告                                   |
 
 ---
@@ -515,91 +510,6 @@ psm.set_custom_cost("progression", progression_cost)
 
 每个分布都提供 `survival(t)`, `hazard(t)`, `pdf(t)`, `quantile(p)`, `cumulative_hazard(t)`, `restricted_mean(t_max)` 方法。
 
-#### IPD 生存曲线拟合
-
-```python
-import pyheor as ph
-import pandas as pd
-
-df = pd.read_csv("patient_data.csv")
-fitter = ph.SurvivalFitter(
-    time=df["time"],
-    event=df["event"],
-    label="Overall Survival",
-)
-fitter.fit()
-
-# AIC/BIC 比较表
-print(fitter.summary())
-
-# 自动选择最优模型
-best = fitter.best_model()           # 默认 AIC
-dist = best.distribution             # 可直接用于 PSM
-print(fitter.selection_report())     # 模型选择详细解读
-
-# 诊断图
-fitter.plot_fits()                   # KM + 所有拟合曲线
-fitter.plot_hazard()                 # 风险函数
-fitter.plot_cumhazard_diagnostic()   # log(H) vs log(t)
-fitter.plot_qq()                     # Q-Q 图
-
-# 导出
-fitter.to_excel("fitting_results.xlsx")
-```
-
-**模型选择标准**：
-
-| 指标       | 公式                  | 说明                            |
-| ---------- | --------------------- | ------------------------------- |
-| AIC        | 2k - 2ln(L)           | 偏好拟合好+简洁的模型；适合预测 |
-| BIC        | k·ln(n) - 2ln(L)     | 比 AIC 更惩罚复杂度；适合大样本 |
-| ΔAIC      | AIC - AIC_min         | <2 差异不显著，>10 决定性差异   |
-| AIC Weight | exp(-0.5·ΔAIC) / Σ | 模型的相对可能性权重            |
-
-**IPD → PSM 一体化流程**：
-
-```python
-fitter_os = ph.SurvivalFitter(time=df_os["time"], event=df_os["event"], label="OS")
-fitter_pfs = ph.SurvivalFitter(time=df_pfs["time"], event=df_pfs["event"], label="PFS")
-fitter_os.fit()
-fitter_pfs.fit()
-
-psm = ph.PSMModel(...)
-psm.set_survival("SOC", "OS", fitter_os.best_model().distribution)
-psm.set_survival("SOC", "PFS", fitter_pfs.best_model().distribution)
-```
-
-#### KM 曲线数字化重建
-
-从发表文献的 KM 曲线图反推 IPD，实现「文献 KM 图 → IPD → 参数拟合 → 建模」的完整流程。基于 Guyot et al. (2012) 算法。
-
-```python
-# 1. 从数字化工具（如 WebPlotDigitizer）获取 KM 坐标
-t_digitized = [0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 24]
-s_digitized = [1.0, 0.92, 0.83, 0.74, 0.66, 0.58, 0.50, 0.40, 0.32, 0.25, 0.20]
-
-# 2. 从文献中读取 number-at-risk 表
-t_risk = [0, 6, 12, 18, 24]
-n_risk = [120, 88, 60, 38, 22]
-
-# 3. 重建 IPD
-ipd_time, ipd_event = ph.guyot_reconstruct(
-    t_digitized, s_digitized, t_risk, n_risk, tot_events=96,
-)
-
-# 4. 直接喂入 SurvivalFitter
-fitter = ph.SurvivalFitter(ipd_time, ipd_event, label="OS")
-fitter.fit()
-```
-
-**数字化坐标预处理**：`clean_digitized_km` 提供自动清洗（排序、去越界、异常值检测、强制单调等），`guyot_reconstruct` 内部也会自动调用。
-
-参考文献：
-
-- Guyot P, Ades AE, Ouwens MJ, Welton NJ (2012). Enhanced secondary analysis of survival data. *BMC Med Res Methodol*, 12:9.
-- Liu N, Zhou Y, Lee JJ (2021). IPDfromKM. *BMC Med Res Methodol*.
-
----
 
 ### 敏感性分析与报告
 
@@ -671,133 +581,6 @@ print(f"EVPI at WTP=$100K: ${cea_psa.evpi_single(100000):,.0f}")
 cea_psa.plot_evpi(wtp_range=(0, 200000), population=100000)
 ```
 
-#### NMA 整合
-
-PyHEOR 的 NMA 模块负责**导入和使用** R 包（gemtc / multinma / bnma）产生的后验样本。
-
-```python
-# 加载后验样本 (支持宽/长格式 CSV)
-nma = ph.load_nma_samples("nma_hr_samples.csv", log_scale=True)
-print(nma.summary())
-
-# 批量注入模型参数
-nma.add_params_to_model(model, param_prefix="hr",
-                        treatments=["Drug_A", "Drug_B"])
-
-# 快速构建生存曲线
-baseline = ph.Weibull(shape=1.2, scale=8.0)
-curves = ph.make_ph_curves(baseline, nma)      # PH
-curves_aft = ph.make_aft_curves(baseline, nma)  # AFT
-```
-
-| 类 / 函数 | 说明 |
-|---|---|
-| `load_nma_samples()` | 从 CSV/Excel/Feather 加载后验（宽/长格式，支持 log 转换） |
-| `NMAPosterior` | 后验容器，提供 `dist()` / `correlated()` / `summary()` / `add_params_to_model()` |
-| `PosteriorDist` | `Distribution` 子类，从后验列中有放回抽样 |
-| `CorrelatedPosterior` | 联合后验，同行抽样保留相关性 |
-| `make_ph_curves()` / `make_aft_curves()` | 从 NMA 后验 + 基线曲线 → PH/AFT 曲线字典 |
-
-#### 预算影响分析 (BIA)
-
-预算影响分析估计在短期时间范围内（通常 1–5 年）引入新技术对预算的财务影响。遵循 ISPOR BIA 良好实践指南。
-
-```python
-bia = ph.BudgetImpactAnalysis(
-    strategies=["Drug A", "Drug B", "Drug C"],
-    per_patient_costs={"Drug A": 5000, "Drug B": 12000, "Drug C": 8000},
-    population=10000,
-    market_share_current={"Drug A": 0.6, "Drug B": 0.1, "Drug C": 0.3},
-    market_share_new={"Drug A": 0.4, "Drug B": 0.3, "Drug C": 0.3},
-    time_horizon=5,
-)
-
-bia.summary()
-bia.cost_by_strategy()
-```
-
-**人群模型**：
-
-```python
-population=10000                                    # 固定人群
-population=[10000, 10500, 11000, 11500, 12000]      # 逐年指定
-population={"base": 10000, "growth_rate": 0.05}      # 复合增长
-population={"base": 10000, "annual_increase": 500}   # 线性增长
-```
-
-**市场份额摄取曲线**：
-
-```python
-ph.BudgetImpactAnalysis.linear_uptake(0.0, 0.4, 5)           # 线性
-ph.BudgetImpactAnalysis.sigmoid_uptake(0.0, 0.4, 5, steepness=1.5)  # S 型
-```
-
-**从模型结果创建 / 情景分析 / 敏感性分析**：
-
-```python
-# 从模型结果
-bia = ph.BudgetImpactAnalysis.from_result(result, population=10000, ...)
-
-# 情景分析
-bia.scenario_analysis({
-    "Base Case": {},
-    "High Population": {"population": 15000},
-    "Fast Uptake": {"market_share_new": {"SoC": 0.3, "New": 0.7}},
-})
-
-# 单因素敏感性
-bia.one_way_sensitivity("population", values=[8000, 9000, 10000, 11000, 12000])
-
-# 龙卷风图
-bia.tornado({"population": (8000, 12000), "Drug B": (10000, 15000)})
-```
-
-#### 模型校准
-
-模型校准用观测数据反推模型中无法直接观测的参数。基于 Vanni et al. (2011) 和 Alarid-Escudero et al. (2018)。
-
-```python
-# 定义校准目标
-targets = [
-    ph.CalibrationTarget(
-        name="10yr_healthy",
-        observed=0.42, se=0.05,
-        extract_fn=lambda sim: sim["SOC"]["trace"][10, 0],
-    ),
-]
-
-# 定义待校准参数
-calib_params = [
-    ph.CalibrationParam("p_HS", lower=0.01, upper=0.30),
-    ph.CalibrationParam("p_SD", lower=0.01, upper=0.20),
-]
-
-# 运行校准
-result = ph.calibrate(
-    model, targets, calib_params,
-    gof="wsse",
-    method="nelder_mead",
-    n_restarts=10,
-    seed=42,
-)
-
-print(result.summary())
-print(result.target_comparison())
-result.apply_to_model(model)
-```
-
-| 搜索方法 | 参数 | 特点 |
-|------|------|------|
-| `nelder_mead` | `n_restarts=10` | 多起点无导数优化，精确但较慢 |
-| `random_search` | `n_samples=1000` | LHS 采样逐一评估，简单直观 |
-
-| GoF 度量 | 公式 | 适用场景 |
-|------|------|----------|
-| `sse` | Σ(obs - pred)² | 默认，简单快速 |
-| `wsse` | Σ(obs - pred)²/SE² | 多目标量纲不同时 |
-| `loglik_normal` | -Σ log N(obs \| pred, SE²) | 统计原则化 |
-
----
 
 ### 导出
 
@@ -812,8 +595,6 @@ ph.export_to_excel(psa, "psa.xlsx")
 # 多策略比较
 ph.export_comparison_excel({"Strategy A": result_a, "Strategy B": result_b}, "comparison.xlsx")
 
-# IPD 拟合结果
-fitter.to_excel("fitting_results.xlsx")
 ```
 
 #### Excel 公式验证模型
@@ -850,14 +631,13 @@ ph.export_excel_model(model, "verification.xlsx")
 | OWSA        | Tornado Data, Per-Parameter Results                                   |
 | PSA         | Summary Stats, All Simulations, CEAC Data                             |
 | PSM Base    | Summary, State Probabilities, Survival Data                           |
-| IPD Fitting | Model Comparison, KM Data, Per-Distribution Details, Selection Report |
 | 验证模型     | Summary (含差异), 每策略计算 Sheet (公式+输入)                          |
 
 ---
 
 ## 可视化一览
 
-PyHEOR 共提供 **28 种**专业图表，覆盖全部模型类型和分析流程：
+PyHEOR 共提供 **19 种**专业图表，覆盖全部模型类型和分析流程：
 
 ### Markov 模型 (8 种)
 
@@ -889,14 +669,6 @@ PyHEOR 共提供 **28 种**专业图表，覆盖全部模型类型和分析流�
 | `plot_microsim_survival()` | 经验生存曲线（基于模拟数据）              |
 | `plot_microsim_outcomes()` | 患者结局分布（QALYs / 费用 / LYs 直方图） |
 
-### IPD 拟合 (4 种)
-
-| 方法                                   | 说明                    |
-| -------------------------------------- | ----------------------- |
-| `fitter.plot_fits()`                 | KM + 所有参数拟合曲线   |
-| `fitter.plot_hazard()`               | 各分布风险函数          |
-| `fitter.plot_cumhazard_diagnostic()` | log(H) vs log(t) 诊断图 |
-| `fitter.plot_qq()`                   | Q-Q 分位数图            |
 
 ### CEA / 多策略比较 (4 种)
 
@@ -907,15 +679,6 @@ PyHEOR 共提供 **28 种**专业图表，覆盖全部模型类型和分析流�
 | `plot_ceaf()`          | 成本效果可接受前沿曲线 (CEAF)     |
 | `plot_evpi()`          | 完美信息期望价值 (EVPI) 曲线      |
 
-### 预算影响分析 (5 种)
-
-| 函数                         | 说明                             |
-| ---------------------------- | -------------------------------- |
-| `plot_budget_impact()`       | 年度预算影响柱状图 + 累计曲线    |
-| `plot_budget_comparison()`   | 当前 vs 新情景总费用对比         |
-| `plot_market_share()`        | 双面板市场份额堆叠面积图         |
-| `plot_detail()`              | 按策略堆叠费用明细图             |
-| `plot_tornado()`             | BIA 敏感性龙卷风图               |
 
 ---
 
@@ -930,7 +693,7 @@ pyheor/
 │   ├── utils.py             # 工具函数 (C 补数, 贴现, 验证)
 │   ├── distributions.py     # PSA 概率分布 (Beta, Gamma, ...)
 │   ├── survival.py          # 10 种参数化生存分布
-│   ├── plotting.py          # 可视化 (28 种图表)
+│   ├── plotting.py          # 可视化 (19 种图表)
 │   │
 │   ├── models/              # ── 建模引擎 ──
 │   │   ├── markov.py        #  Markov 队列模型 (MarkovModel)
@@ -940,25 +703,17 @@ pyheor/
 │   │
 │   ├── analysis/            # ── 分析与决策 ──
 │   │   ├── results.py       #  结果类 (BaseResult, OWSAResult, PSAResult, ...)
-│   │   ├── comparison.py    #  多策略比较 / CEA (CEAnalysis)
-│   │   ├── bia.py           #  预算影响分析 (BudgetImpactAnalysis)
-│   │   └── calibration.py   #  模型校准 (Nelder-Mead, 随机搜索)
-│   │
-│   ├── evidence/            # ── 数据与证据合成 ──
-│   │   ├── fitting.py       #  IPD 生存曲线拟合 (SurvivalFitter)
-│   │   ├── digitize.py      #  KM 曲线数字化重建 (Guyot method)
-│   │   └── nma.py           #  NMA 后验样本整合 (NMAPosterior)
+│   │   └── comparison.py    #  多策略比较 / CEA (CEAnalysis)
 │   │
 │   └── export/              # ── 导出 ──
 │       ├── excel.py         #  Excel 结果数据导出
 │       ├── excel_model.py   #  Excel 公式验证模型导出
 │       └── report.py        #  Markdown 一键报告
 │
-├── tests/                   # pytest 测试套件 (243 个测试)
+├── tests/                   # pytest 测试套件
 └── examples/
     ├── demo_hiv_model.py    #  Markov 模型示例 (HIV)
     ├── demo_psm_model.py    #  PSM 模型示例 (肿瘤)
-    ├── demo_ipd_fitting.py  #  IPD 拟合示例
     ├── demo_microsim.py     #  微观模拟示例
     └── demo_comparison.py   #  多策略比较示例
 ```
@@ -986,21 +741,15 @@ pyheor/
 - [X] 分区生存模型 (PSM)
 - [X] 10 种参数化生存分布
 - [X] Excel 多 Sheet 导出 + Excel 公式验证模型
-- [X] IPD 生存曲线拟合 + AIC/BIC 模型比较
-- [X] KM + 拟合曲线可视化 + 诊断图
 - [X] 微观模拟 (Individual-level simulation)
 - [X] 多队列比较 + NMB 分析 + CEAF + EVPI
-- [X] 网络 Meta 分析 (NMA) 整合
 - [X] 离散事件模拟 (DES) — 连续时间、竞争风险、HR/AFT 集成
-- [X] 预算影响分析 (BIA) — 人群模型、市场份额演变、摄取曲线、情景/敏感性分析
-- [X] 数字化 KM 曲线重建 (Guyot method)
-- [X] 模型校准 (Nelder-Mead 多起点优化, LHS 随机搜索, SSE/WSSE/似然 GoF)
 - [X] Markdown 一键报告 (`generate_report`)
-- [X] 正式测试套件 (pytest, 243 个测试覆盖全部模块)
+- [X] 正式测试套件 (pytest)
 - [ ] 结构化输出 (`to_dict` / `to_json`)，面向 LLM 的机器可读结果
 - [ ] 自动解读 (`interpret(wtp)`)——标准化结论文本生成
 - [ ] 自然语言建模接口——JSON Schema 模型定义，自动构建与执行
-- [ ] HEOR Agent (`pyheor-agent`) — 基于 Claude API，自然语言驱动完整 HEOR 研究流程：选模型、提参、建模、运行、生成报告；证据层可选（用户提供文献 / PubMed 检索 / 直接给参数）；同时提供 Python API (`HEORAgent`) 和 CLI 两种入口
+- [ ] HEOR Agent (`pyheor-agent`) — 自然语言驱动模型定义、运行和报告生成，同时提供 Python API (`HEORAgent`) 和 CLI 两种入口
 - [ ] Rust 底层加速（低优先级）— 用 PyO3 + maturin 加速微观模拟个体循环、DES 事件队列和 PSA 并行计算
 
 ---

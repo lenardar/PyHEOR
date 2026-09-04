@@ -23,6 +23,10 @@ dependencies = [
     "matplotlib>=3.5",
     "scipy>=1.7",
     "tabulate>=0.9",
+    # Imported unconditionally at package import time via
+    # pyheor/__init__.py -> export/__init__.py -> export/excel_model.py,
+    # so it is a hard requirement rather than an optional extra.
+    "openpyxl>=3.0",
 ]
 
 [project.optional-dependencies]

@@ -86,16 +86,3 @@ def simple_psm_model():
     model.set_utility({"PFS": 0.85, "Progressed": 0.5, "Dead": 0.0})
 
     return model
-
-
-@pytest.fixture
-def weibull_ipd_data():
-    """Synthetic IPD from known Weibull(shape=1.5, scale=10) with ~20% censoring."""
-    rng = np.random.default_rng(123)
-    n = 200
-    true_shape, true_scale = 1.5, 10.0
-    t_event = true_scale * rng.weibull(true_shape, size=n)
-    t_censor = rng.uniform(0, 25, size=n)
-    time = np.minimum(t_event, t_censor)
-    event = (t_event <= t_censor).astype(int)
-    return time, event, true_shape, true_scale

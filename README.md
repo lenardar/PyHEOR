@@ -16,12 +16,7 @@ PyHEOR is a Python framework for health economics research, supporting:
 | **Flexible Cost Definitions**     | First-cycle costs, time-dependent functions, one-time costs, WLOS method, transition cost schedules, custom cost functions |
 | **Base Case / OWSA / PSA**        | Deterministic analysis, tornado diagrams (INMB/ICER), Monte Carlo + CE scatter plot + CEAC    |
 | **Multi-Strategy Comparison & NMB** | Efficiency frontier, dominance/extended dominance detection, NMB curves, CEAF, EVPI          |
-| **IPD Survival Curve Fitting**    | MLE fitting with 6 parametric distributions, AIC/BIC comparison, automatic best model selection |
-| **KM Curve Digitization & Reconstruction** | Guyot method to reconstruct IPD from published KM plots, with digitization noise preprocessing |
-| **NMA Integration**               | Import R posterior samples, preserve correlations, auto-generate PH/AFT curves               |
-| **Budget Impact Analysis (BIA)**  | Population size models, market share evolution, uptake curves, scenario/one-way sensitivity analysis |
-| **Model Calibration**             | Estimate unknown parameters from observed data: Nelder-Mead multi-start optimization, LHS random search, SSE/WSSE/likelihood GoF |
-| **Visualization**                 | 28 professional charts: state transition diagrams, frontier plots, NMB curves, CEAF, EVPI, CEAC, KM + fitted curves, BIA impact plots, etc. |
+| **Visualization**                 | 19 professional charts: state transition diagrams, frontier plots, NMB curves, CEAF, EVPI, CEAC, etc. |
 | **Export**                         | Multi-sheet Excel export, Excel formula-based verification model, one-click Markdown reports  |
 
 ---
@@ -515,91 +510,6 @@ Auxiliary distributions:
 
 Each distribution provides `survival(t)`, `hazard(t)`, `pdf(t)`, `quantile(p)`, `cumulative_hazard(t)`, `restricted_mean(t_max)` methods.
 
-#### IPD Survival Curve Fitting
-
-```python
-import pyheor as ph
-import pandas as pd
-
-df = pd.read_csv("patient_data.csv")
-fitter = ph.SurvivalFitter(
-    time=df["time"],
-    event=df["event"],
-    label="Overall Survival",
-)
-fitter.fit()
-
-# AIC/BIC comparison table
-print(fitter.summary())
-
-# Automatically select the best model
-best = fitter.best_model()           # Default: AIC
-dist = best.distribution             # Can be used directly in PSM
-print(fitter.selection_report())     # Detailed model selection report
-
-# Diagnostic plots
-fitter.plot_fits()                   # KM + all fitted curves
-fitter.plot_hazard()                 # Hazard functions
-fitter.plot_cumhazard_diagnostic()   # log(H) vs log(t)
-fitter.plot_qq()                     # Q-Q plot
-
-# Export
-fitter.to_excel("fitting_results.xlsx")
-```
-
-**Model Selection Criteria**:
-
-| Metric     | Formula               | Description                                          |
-| ---------- | --------------------- | ---------------------------------------------------- |
-| AIC        | 2k - 2ln(L)           | Favors good fit + parsimony; suitable for prediction |
-| BIC        | k*ln(n) - 2ln(L)      | Penalizes complexity more than AIC; suitable for large samples |
-| Delta AIC  | AIC - AIC_min          | <2 not significant, >10 decisive difference          |
-| AIC Weight | exp(-0.5*Delta AIC) / Sum | Relative likelihood weight of the model           |
-
-**IPD to PSM Integrated Workflow**:
-
-```python
-fitter_os = ph.SurvivalFitter(time=df_os["time"], event=df_os["event"], label="OS")
-fitter_pfs = ph.SurvivalFitter(time=df_pfs["time"], event=df_pfs["event"], label="PFS")
-fitter_os.fit()
-fitter_pfs.fit()
-
-psm = ph.PSMModel(...)
-psm.set_survival("SOC", "OS", fitter_os.best_model().distribution)
-psm.set_survival("SOC", "PFS", fitter_pfs.best_model().distribution)
-```
-
-#### KM Curve Digitization & Reconstruction
-
-Reconstruct IPD from published KM curve plots, enabling the complete workflow: "Published KM plot -> IPD -> Parametric fitting -> Modeling." Based on the Guyot et al. (2012) algorithm.
-
-```python
-# 1. Obtain KM coordinates from a digitization tool (e.g., WebPlotDigitizer)
-t_digitized = [0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 24]
-s_digitized = [1.0, 0.92, 0.83, 0.74, 0.66, 0.58, 0.50, 0.40, 0.32, 0.25, 0.20]
-
-# 2. Read the number-at-risk table from the publication
-t_risk = [0, 6, 12, 18, 24]
-n_risk = [120, 88, 60, 38, 22]
-
-# 3. Reconstruct IPD
-ipd_time, ipd_event = ph.guyot_reconstruct(
-    t_digitized, s_digitized, t_risk, n_risk, tot_events=96,
-)
-
-# 4. Feed directly into SurvivalFitter
-fitter = ph.SurvivalFitter(ipd_time, ipd_event, label="OS")
-fitter.fit()
-```
-
-**Digitized Coordinate Preprocessing**: `clean_digitized_km` provides automatic cleaning (sorting, out-of-bounds removal, outlier detection, enforced monotonicity, etc.). `guyot_reconstruct` also calls it internally.
-
-References:
-
-- Guyot P, Ades AE, Ouwens MJ, Welton NJ (2012). Enhanced secondary analysis of survival data. *BMC Med Res Methodol*, 12:9.
-- Liu N, Zhou Y, Lee JJ (2021). IPDfromKM. *BMC Med Res Methodol*.
-
----
 
 ### Sensitivity Analysis and Reporting
 
@@ -671,133 +581,6 @@ print(f"EVPI at WTP=$100K: ${cea_psa.evpi_single(100000):,.0f}")
 cea_psa.plot_evpi(wtp_range=(0, 200000), population=100000)
 ```
 
-#### NMA Integration
-
-PyHEOR's NMA module is responsible for **importing and using** posterior samples produced by R packages (gemtc / multinma / bnma).
-
-```python
-# Load posterior samples (supports wide/long format CSV)
-nma = ph.load_nma_samples("nma_hr_samples.csv", log_scale=True)
-print(nma.summary())
-
-# Batch inject into model parameters
-nma.add_params_to_model(model, param_prefix="hr",
-                        treatments=["Drug_A", "Drug_B"])
-
-# Quickly build survival curves
-baseline = ph.Weibull(shape=1.2, scale=8.0)
-curves = ph.make_ph_curves(baseline, nma)      # PH
-curves_aft = ph.make_aft_curves(baseline, nma)  # AFT
-```
-
-| Class / Function | Description |
-|---|---|
-| `load_nma_samples()` | Load posteriors from CSV/Excel/Feather (wide/long format, supports log transformation) |
-| `NMAPosterior` | Posterior container providing `dist()` / `correlated()` / `summary()` / `add_params_to_model()` |
-| `PosteriorDist` | `Distribution` subclass, samples with replacement from the posterior column |
-| `CorrelatedPosterior` | Joint posterior, same-row sampling to preserve correlations |
-| `make_ph_curves()` / `make_aft_curves()` | NMA posterior + baseline curve -> PH/AFT curve dictionary |
-
-#### Budget Impact Analysis (BIA)
-
-Budget impact analysis estimates the financial impact of introducing a new technology on the budget over a short time horizon (typically 1-5 years). Follows the ISPOR BIA good practice guidelines.
-
-```python
-bia = ph.BudgetImpactAnalysis(
-    strategies=["Drug A", "Drug B", "Drug C"],
-    per_patient_costs={"Drug A": 5000, "Drug B": 12000, "Drug C": 8000},
-    population=10000,
-    market_share_current={"Drug A": 0.6, "Drug B": 0.1, "Drug C": 0.3},
-    market_share_new={"Drug A": 0.4, "Drug B": 0.3, "Drug C": 0.3},
-    time_horizon=5,
-)
-
-bia.summary()
-bia.cost_by_strategy()
-```
-
-**Population Models**:
-
-```python
-population=10000                                    # Fixed population
-population=[10000, 10500, 11000, 11500, 12000]      # Specified per year
-population={"base": 10000, "growth_rate": 0.05}      # Compound growth
-population={"base": 10000, "annual_increase": 500}   # Linear growth
-```
-
-**Market Share Uptake Curves**:
-
-```python
-ph.BudgetImpactAnalysis.linear_uptake(0.0, 0.4, 5)           # Linear
-ph.BudgetImpactAnalysis.sigmoid_uptake(0.0, 0.4, 5, steepness=1.5)  # Sigmoid
-```
-
-**Creating from Model Results / Scenario Analysis / Sensitivity Analysis**:
-
-```python
-# From model results
-bia = ph.BudgetImpactAnalysis.from_result(result, population=10000, ...)
-
-# Scenario analysis
-bia.scenario_analysis({
-    "Base Case": {},
-    "High Population": {"population": 15000},
-    "Fast Uptake": {"market_share_new": {"SoC": 0.3, "New": 0.7}},
-})
-
-# One-way sensitivity
-bia.one_way_sensitivity("population", values=[8000, 9000, 10000, 11000, 12000])
-
-# Tornado diagram
-bia.tornado({"population": (8000, 12000), "Drug B": (10000, 15000)})
-```
-
-#### Model Calibration
-
-Model calibration uses observed data to estimate model parameters that cannot be directly observed. Based on Vanni et al. (2011) and Alarid-Escudero et al. (2018).
-
-```python
-# Define calibration targets
-targets = [
-    ph.CalibrationTarget(
-        name="10yr_healthy",
-        observed=0.42, se=0.05,
-        extract_fn=lambda sim: sim["SOC"]["trace"][10, 0],
-    ),
-]
-
-# Define parameters to calibrate
-calib_params = [
-    ph.CalibrationParam("p_HS", lower=0.01, upper=0.30),
-    ph.CalibrationParam("p_SD", lower=0.01, upper=0.20),
-]
-
-# Run calibration
-result = ph.calibrate(
-    model, targets, calib_params,
-    gof="wsse",
-    method="nelder_mead",
-    n_restarts=10,
-    seed=42,
-)
-
-print(result.summary())
-print(result.target_comparison())
-result.apply_to_model(model)
-```
-
-| Search Method | Parameters | Characteristics |
-|---------------|------------|-----------------|
-| `nelder_mead` | `n_restarts=10` | Multi-start derivative-free optimization, precise but slower |
-| `random_search` | `n_samples=1000` | LHS sampling with individual evaluation, simple and intuitive |
-
-| GoF Metric | Formula | Use Case |
-|------------|---------|----------|
-| `sse` | Sum(obs - pred)^2 | Default, simple and fast |
-| `wsse` | Sum(obs - pred)^2/SE^2 | When multiple targets have different scales |
-| `loglik_normal` | -Sum log N(obs \| pred, SE^2) | Statistically principled |
-
----
 
 ### Export
 
@@ -812,8 +595,6 @@ ph.export_to_excel(psa, "psa.xlsx")
 # Multi-strategy comparison
 ph.export_comparison_excel({"Strategy A": result_a, "Strategy B": result_b}, "comparison.xlsx")
 
-# IPD fitting results
-fitter.to_excel("fitting_results.xlsx")
 ```
 
 #### Excel Formula-Based Verification Model
@@ -850,14 +631,13 @@ ph.export_excel_model(model, "verification.xlsx")
 | OWSA            | Tornado Data, Per-Parameter Results                                   |
 | PSA             | Summary Stats, All Simulations, CEAC Data                             |
 | PSM Base        | Summary, State Probabilities, Survival Data                           |
-| IPD Fitting     | Model Comparison, KM Data, Per-Distribution Details, Selection Report |
 | Verification Model | Summary (with differences), Per-Strategy Calculation Sheet (formulas + inputs) |
 
 ---
 
 ## Visualization Gallery
 
-PyHEOR provides **28** professional charts, covering all model types and analysis workflows:
+PyHEOR provides **19** professional charts, covering all model types and analysis workflows:
 
 ### Markov Model (8 types)
 
@@ -889,14 +669,6 @@ PyHEOR provides **28** professional charts, covering all model types and analysi
 | `plot_microsim_survival()`   | Empirical survival curve (from simulated data)      |
 | `plot_microsim_outcomes()`   | Patient outcome distributions (QALYs / Costs / LYs histograms) |
 
-### IPD Fitting (4 types)
-
-| Method                                 | Description                  |
-| -------------------------------------- | ---------------------------- |
-| `fitter.plot_fits()`                 | KM + all parametric fit curves |
-| `fitter.plot_hazard()`               | Hazard functions by distribution |
-| `fitter.plot_cumhazard_diagnostic()` | log(H) vs log(t) diagnostic plot |
-| `fitter.plot_qq()`                   | Q-Q quantile plot            |
 
 ### CEA / Multi-Strategy Comparison (4 types)
 
@@ -907,15 +679,6 @@ PyHEOR provides **28** professional charts, covering all model types and analysi
 | `plot_ceaf()`          | Cost-effectiveness acceptability frontier (CEAF) |
 | `plot_evpi()`          | Expected value of perfect information (EVPI) curve |
 
-### Budget Impact Analysis (5 types)
-
-| Function                       | Description                                    |
-| ------------------------------ | ---------------------------------------------- |
-| `plot_budget_impact()`       | Annual budget impact bar chart + cumulative curve |
-| `plot_budget_comparison()`   | Current vs new scenario total cost comparison  |
-| `plot_market_share()`        | Dual-panel market share stacked area chart     |
-| `plot_detail()`              | Stacked cost breakdown by strategy             |
-| `plot_tornado()`             | BIA sensitivity tornado diagram                |
 
 ---
 
@@ -930,7 +693,7 @@ pyheor/
 │   ├── utils.py             # Utility functions (C complement, discounting, validation)
 │   ├── distributions.py     # PSA probability distributions (Beta, Gamma, ...)
 │   ├── survival.py          # 10 parametric survival distributions
-│   ├── plotting.py          # Visualization (28 chart types)
+│   ├── plotting.py          # Visualization (19 chart types)
 │   │
 │   ├── models/              # ── Modeling Engine ──
 │   │   ├── markov.py        #  Markov cohort model (MarkovModel)
@@ -940,25 +703,17 @@ pyheor/
 │   │
 │   ├── analysis/            # ── Analysis & Decision ──
 │   │   ├── results.py       #  Result classes (BaseResult, OWSAResult, PSAResult, ...)
-│   │   ├── comparison.py    #  Multi-strategy comparison / CEA (CEAnalysis)
-│   │   ├── bia.py           #  Budget impact analysis (BudgetImpactAnalysis)
-│   │   └── calibration.py   #  Model calibration (Nelder-Mead, random search)
-│   │
-│   ├── evidence/            # ── Data & Evidence Synthesis ──
-│   │   ├── fitting.py       #  IPD survival curve fitting (SurvivalFitter)
-│   │   ├── digitize.py      #  KM curve digitization & reconstruction (Guyot method)
-│   │   └── nma.py           #  NMA posterior sample integration (NMAPosterior)
+│   │   └── comparison.py    #  Multi-strategy comparison / CEA (CEAnalysis)
 │   │
 │   └── export/              # ── Export ──
 │       ├── excel.py         #  Excel result data export
 │       ├── excel_model.py   #  Excel formula-based verification model export
 │       └── report.py        #  One-click Markdown report
 │
-├── tests/                   # pytest test suite (243 tests)
+├── tests/                   # pytest test suite
 └── examples/
     ├── demo_hiv_model.py    #  Markov model example (HIV)
     ├── demo_psm_model.py    #  PSM model example (oncology)
-    ├── demo_ipd_fitting.py  #  IPD fitting example
     ├── demo_microsim.py     #  Microsimulation example
     └── demo_comparison.py   #  Multi-strategy comparison example
 ```
@@ -986,21 +741,15 @@ pyheor/
 - [X] Partitioned survival model (PSM)
 - [X] 10 parametric survival distributions
 - [X] Multi-sheet Excel export + Excel formula-based verification model
-- [X] IPD survival curve fitting + AIC/BIC model comparison
-- [X] KM + fitted curve visualization + diagnostic plots
 - [X] Microsimulation (individual-level simulation)
 - [X] Multi-cohort comparison + NMB analysis + CEAF + EVPI
-- [X] Network meta-analysis (NMA) integration
 - [X] Discrete event simulation (DES) -- continuous time, competing risks, HR/AFT integration
-- [X] Budget impact analysis (BIA) -- population models, market share evolution, uptake curves, scenario/sensitivity analysis
-- [X] Digitized KM curve reconstruction (Guyot method)
-- [X] Model calibration (Nelder-Mead multi-start optimization, LHS random search, SSE/WSSE/likelihood GoF)
 - [X] One-click Markdown report (`generate_report`)
-- [X] Formal test suite (pytest, 243 tests covering all modules)
+- [X] Formal test suite (pytest)
 - [ ] Structured output (`to_dict` / `to_json`) for LLM-ready results
 - [ ] Auto-interpretation (`interpret(wtp)`) — standardized conclusion text generation
 - [ ] Natural language modeling interface — JSON Schema model definition, auto-build & execute
-- [ ] HEOR Agent (`pyheor-agent`) — Claude API-powered agent that completes a full HEOR research workflow from natural language: model selection, parameter extraction, model building, analysis, and report generation; optional evidence layer (user-provided documents / PubMed search / direct parameter input); available as both Python API (`HEORAgent`) and CLI
+- [ ] HEOR Agent (`pyheor-agent`) — natural-language model definition, execution, and report generation, available as both Python API (`HEORAgent`) and CLI
 - [ ] Rust core acceleration (low priority) — PyO3 + maturin bindings to accelerate microsimulation patient loops, DES event queues, and PSA parallelism
 
 ---

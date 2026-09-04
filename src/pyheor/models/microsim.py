@@ -41,6 +41,7 @@ References
 
 import numpy as np
 import pandas as pd
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -546,6 +547,12 @@ class MicroSimModel:
         # Histories
         state_hist = np.full((N, T + 1), -1, dtype=int)
         cost_hist = np.zeros((N, T + 1))
+        # Costs declared method="starting" are event-like: they are charged on
+        # entry to a cycle and must NOT be endpoint-weighted by the half-cycle
+        # correction (Markov/PSM carve them out the same way). Keeping them in a
+        # separate matrix is what makes that carve-out possible here, since the
+        # per-patient reward loop otherwise collapses every category into one.
+        cost_hist_nohcc = np.zeros((N, T + 1))
         qaly_hist = np.zeros((N, T + 1))
         ly_hist = np.zeros((N, T + 1))
         event_cost_total = np.zeros(N)
@@ -688,13 +695,12 @@ class MicroSimModel:
             if not needs_per_patient:
                 # Vectorized: same costs/utilities for all patients
                 total_cost_vec = np.zeros(self.n_states)
+                nohcc_cost_vec = np.zeros(self.n_states)
                 for cat in self._costs:
                     c = self._get_state_costs(cat, strategy, params, t)
                     cost_def = self._costs[cat]
-                    if cost_def.method == "wlos":
-                        total_cost_vec += c * self.cycle_length
-                    elif cost_def.method == "starting":
-                        total_cost_vec += c
+                    if cost_def.method == "starting":
+                        nohcc_cost_vec += c
                     else:
                         total_cost_vec += c * self.cycle_length
 
@@ -704,6 +710,7 @@ class MicroSimModel:
                 # Assign per patient based on their state
                 states_t = state_hist[:, t]
                 cost_hist[:, t] = total_cost_vec[states_t]
+                cost_hist_nohcc[:, t] = nohcc_cost_vec[states_t]
                 qaly_hist[:, t] = u_vec[states_t]
                 ly_hist[:, t] = alive_mask_arr[states_t] * self.cycle_length
 
@@ -714,23 +721,23 @@ class MicroSimModel:
                     attrs = self._get_patient_attrs(profile, i)
 
                     total_cost = 0.0
+                    nohcc_cost = 0.0
                     for cat in self._costs:
                         c = self._get_state_costs(cat, strategy, params, t, attrs)
                         cost_def = self._costs[cat]
-                        if cost_def.method == "wlos":
-                            total_cost += c[s] * self.cycle_length
-                        elif cost_def.method == "starting":
-                            total_cost += c[s]
+                        if cost_def.method == "starting":
+                            nohcc_cost += c[s]
                         else:
                             total_cost += c[s] * self.cycle_length
 
                     cost_hist[i, t] = total_cost
+                    cost_hist_nohcc[i, t] = nohcc_cost
 
                     u = self._get_utilities(strategy, params, t, attrs)
                     qaly_hist[i, t] = u[s] * self.cycle_length
                     ly_hist[i, t] = alive_mask_arr[s] * self.cycle_length
 
-        # --- Half-cycle correction ---
+        # --- Half-cycle correction (cost_hist_nohcc is exempt by design) ---
         if self._hcc_method == "trapezoidal":
             hcc = np.ones(T + 1)
             hcc[0] = 0.5
@@ -745,6 +752,8 @@ class MicroSimModel:
                 orig = arr.copy()
                 arr[:, :-1] = (orig[:, :-1] + orig[:, 1:]) / 2.0
                 # last cycle unchanged
+
+        cost_hist = cost_hist + cost_hist_nohcc
 
         # --- Discounting ---
         cycles = np.arange(T + 1, dtype=float)
@@ -889,8 +898,9 @@ class MicroSimModel:
 
             # Simulate all strategies
             iter_results = {}
-            for strat in self.strategy_names:
-                iter_results[strat] = self._simulate_patients(strat, p, prof, rng)
+            with self._attr_param_override(p):
+                for strat in self.strategy_names:
+                    iter_results[strat] = self._simulate_patients(strat, p, prof, rng)
 
             psa_results.append(iter_results)
 
@@ -906,8 +916,26 @@ class MicroSimModel:
             sampled_params=sampled_params,
         )
 
-    # Parameters that live as model attributes (varied via setattr in OWSA)
+    # Parameters that live as model attributes rather than in the params dict.
+    # Must be written to the attribute in both OWSA and PSA -- a value sitting
+    # only in the params dict has no effect on the simulation.
     _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
+
+    @contextmanager
+    def _attr_param_override(self, values: Dict[str, float]):
+        """Temporarily apply any _ATTR_PARAMS present in `values`."""
+        saved = {
+            name: getattr(self, name)
+            for name in self._ATTR_PARAMS
+            if name in values
+        }
+        try:
+            for name in saved:
+                setattr(self, name, values[name])
+            yield
+        finally:
+            for name, original in saved.items():
+                setattr(self, name, original)
 
     def run_owsa(
         self,
@@ -973,15 +1001,13 @@ class MicroSimModel:
 
             for bound, val in [('low', low), ('high', high)]:
                 test_params = base_params.copy()
+                test_params[param_name] = val
 
-                saved = None
-                if is_attr:
-                    saved = getattr(self, param_name)
-                    setattr(self, param_name, val)
-                else:
-                    test_params[param_name] = val
-
-                try:
+                override = (
+                    self._attr_param_override({param_name: val}) if is_attr
+                    else nullcontext()
+                )
+                with override:
                     rng = np.random.default_rng(s)
                     result = {}
                     for strat in self.strategy_names:
@@ -993,9 +1019,6 @@ class MicroSimModel:
                             'total_qalys': sim['mean_qalys'],
                             'total_lys': sim['mean_lys'],
                         }
-                finally:
-                    if saved is not None:
-                        setattr(self, param_name, saved)
 
                 owsa_data.append({
                     'param': param_name,

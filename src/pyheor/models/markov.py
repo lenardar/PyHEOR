@@ -10,6 +10,7 @@ This module implements the main MarkovModel class which provides:
 
 import numpy as np
 import pandas as pd
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -962,9 +963,26 @@ class MarkovModel:
         return BaseResult(model=self, results=sim, params=params)
     
     # Parameters that live as model attributes rather than in the params dict
-    # passed to _simulate_single. When varied in OWSA, the corresponding
-    # model attribute is temporarily overwritten.
+    # passed to _simulate_single. When varied in OWSA or sampled in PSA, the
+    # corresponding model attribute must be temporarily overwritten -- reading
+    # them out of the params dict alone has no effect on the simulation.
     _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
+
+    @contextmanager
+    def _attr_param_override(self, values: Dict[str, float]):
+        """Temporarily apply any _ATTR_PARAMS present in `values`."""
+        saved = {
+            name: getattr(self, name)
+            for name in self._ATTR_PARAMS
+            if name in values
+        }
+        try:
+            for name in saved:
+                setattr(self, name, values[name])
+            yield
+        finally:
+            for name, original in saved.items():
+                setattr(self, name, original)
 
     def run_owsa(
         self,
@@ -1016,19 +1034,13 @@ class MarkovModel:
 
             for bound, val in [('low', low), ('high', high)]:
                 test_params = base_params.copy()
+                test_params[param_name] = val
 
-                saved = None
                 if is_attr:
-                    saved = getattr(self, param_name)
-                    setattr(self, param_name, val)
+                    with self._attr_param_override({param_name: val}):
+                        result = self._simulate_single(test_params)
                 else:
-                    test_params[param_name] = val
-
-                try:
                     result = self._simulate_single(test_params)
-                finally:
-                    if saved is not None:
-                        setattr(self, param_name, saved)
 
                 owsa_data.append({
                     'param': param_name,
@@ -1088,7 +1100,8 @@ class MarkovModel:
         for i, p in enumerate(sampled_params):
             if progress and (i + 1) % max(1, n_sim // 10) == 0:
                 print(f"  PSA: {i+1}/{n_sim} ({100*(i+1)/n_sim:.0f}%)")
-            result = self._simulate_single(p)
+            with self._attr_param_override(p):
+                result = self._simulate_single(p)
             psa_results.append(result)
         
         if progress:

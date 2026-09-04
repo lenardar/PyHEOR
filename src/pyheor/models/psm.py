@@ -20,6 +20,8 @@ Supports:
 
 import numpy as np
 import pandas as pd
+import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -436,8 +438,15 @@ class PSMModel:
 
     def _compute_state_probs(
         self, strategy: str, params: Dict[str, float],
+        _return_raw: bool = False,
     ) -> np.ndarray:
         """Compute state probabilities from survival curves.
+
+        Parameters
+        ----------
+        _return_raw : bool
+            If True, also return the unclamped survival values (for reporting
+            what the curves looked like before the monotonicity fix).
 
         Returns
         -------
@@ -452,9 +461,31 @@ class PSMModel:
             curve = self._resolve_curve(strategy, endpoint, params)
             surv_values[:, j] = curve.survival(times)
 
+        raw_values = surv_values.copy()
+
         # Ensure monotonicity: S_1(t) <= S_2(t) <= ... <= S_N(t)
-        # (e.g., PFS <= OS)
+        # (e.g., PFS <= OS). Curves that cross are a model misspecification --
+        # clamping keeps the trace valid but silently zeroes the intervening
+        # state, so warn rather than let a wrong HR pass unnoticed.
         for j in range(1, self.n_endpoints):
+            crossed = surv_values[:, j] < surv_values[:, j - 1] - 1e-12
+            if np.any(crossed):
+                n_cross = int(crossed.sum())
+                first_t = float(times[np.argmax(crossed)])
+                max_gap = float(
+                    (surv_values[:, j - 1] - surv_values[:, j])[crossed].max()
+                )
+                warnings.warn(
+                    f"PSM curve crossing in strategy '{strategy}': endpoint "
+                    f"'{self.survival_endpoints[j]}' falls below "
+                    f"'{self.survival_endpoints[j - 1]}' at {n_cross} of "
+                    f"{len(times)} time points (first at t={first_t:g}, max gap "
+                    f"{max_gap:.4g}). '{self.survival_endpoints[j]}' was clamped "
+                    f"upward, which forces the intervening state to 0 there. "
+                    f"Check the hazard ratios / curve parameters.",
+                    UserWarning,
+                    stacklevel=3,
+                )
             surv_values[:, j] = np.maximum(surv_values[:, j], surv_values[:, j - 1])
 
         # Derive state probabilities
@@ -479,6 +510,8 @@ class PSMModel:
         # Clip numerical errors
         state_probs = np.clip(state_probs, 0, 1)
 
+        if _return_raw:
+            return state_probs, surv_values, raw_values
         return state_probs
 
     def _simulate_single(self, params: Dict[str, float]) -> Dict[str, Any]:
@@ -487,7 +520,11 @@ class PSMModel:
 
         for strategy in self.strategy_names:
             # --- State probabilities from survival curves ---
-            trace = self._compute_state_probs(strategy, params)
+            # Also capture the clamped and raw curve values so that what gets
+            # plotted matches the trace that was actually simulated.
+            trace, surv_clamped, surv_raw = self._compute_state_probs(
+                strategy, params, _return_raw=True
+            )
 
             # --- Per-cycle rewards ---
             costs_by_cat = {cat: np.zeros(self.n_cycles + 1) for cat in self._costs}
@@ -600,16 +637,23 @@ class PSMModel:
             discounted_lys = lys_hcc * df_q
 
             # --- Survival values for plotting ---
+            # Use the monotonicity-clamped values so plots agree with the trace;
+            # the pre-clamp values stay available as survival_curves_raw.
             times = np.arange(self.n_cycles + 1) * self.cycle_length
-            surv_curves = {}
-            for endpoint in self.survival_endpoints:
-                curve = self._resolve_curve(strategy, endpoint, params)
-                surv_curves[endpoint] = curve.survival(times)
+            surv_curves = {
+                endpoint: surv_clamped[:, j]
+                for j, endpoint in enumerate(self.survival_endpoints)
+            }
+            surv_curves_raw = {
+                endpoint: surv_raw[:, j]
+                for j, endpoint in enumerate(self.survival_endpoints)
+            }
 
             # --- Totals ---
             results[strategy] = {
                 'trace': trace,
                 'survival_curves': surv_curves,
+                'survival_curves_raw': surv_curves_raw,
                 'times': times,
                 'costs_by_cycle': costs_by_cat,
                 'qalys_by_cycle': qalys,
@@ -641,8 +685,26 @@ class PSMModel:
         sim = self._simulate_single(params)
         return PSMBaseResult(model=self, results=sim, params=params)
 
-    # Parameters that live as model attributes (varied via setattr in OWSA)
+    # Parameters that live as model attributes rather than in the params dict.
+    # Must be written to the attribute in both OWSA and PSA -- a value sitting
+    # only in the params dict has no effect on the simulation.
     _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
+
+    @contextmanager
+    def _attr_param_override(self, values: Dict[str, float]):
+        """Temporarily apply any _ATTR_PARAMS present in `values`."""
+        saved = {
+            name: getattr(self, name)
+            for name in self._ATTR_PARAMS
+            if name in values
+        }
+        try:
+            for name in saved:
+                setattr(self, name, values[name])
+            yield
+        finally:
+            for name, original in saved.items():
+                setattr(self, name, original)
 
     def run_owsa(
         self,
@@ -674,19 +736,13 @@ class PSMModel:
 
             for bound, val in [('low', low), ('high', high)]:
                 test_params = base_params.copy()
+                test_params[param_name] = val
 
-                saved = None
                 if is_attr:
-                    saved = getattr(self, param_name)
-                    setattr(self, param_name, val)
+                    with self._attr_param_override({param_name: val}):
+                        result = self._simulate_single(test_params)
                 else:
-                    test_params[param_name] = val
-
-                try:
                     result = self._simulate_single(test_params)
-                finally:
-                    if saved is not None:
-                        setattr(self, param_name, saved)
 
                 owsa_data.append({
                     'param': param_name,
@@ -729,7 +785,8 @@ class PSMModel:
         for i, p in enumerate(sampled_params):
             if progress and (i + 1) % max(1, n_sim // 10) == 0:
                 print(f"  PSA: {i+1}/{n_sim} ({100*(i+1)/n_sim:.0f}%)")
-            result = self._simulate_single(p)
+            with self._attr_param_override(p):
+                result = self._simulate_single(p)
             psa_results.append(result)
 
         if progress:

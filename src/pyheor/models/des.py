@@ -13,7 +13,7 @@ Key advantages over cycle-based models
 - No cycle-length artefact (arbitrary precision in time)
 - Natural fit for time-to-event data (directly use parametric distributions)
 - Easy to model competing risks, recurrent events, and patient heterogeneity
-- Straightforward integration with NMA posterior HR samples
+- Straightforward integration with externally supplied HR samples
 
 Architecture
 ------------
@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -235,6 +236,27 @@ class DESModel:
         """Get base-case parameter values."""
         return {name: p.base for name, p in self.params.items()}
 
+    # Parameters that live as model attributes rather than in the params dict.
+    # Discount rates are read off self during simulation, so a value sampled
+    # into the params dict has no effect unless written to the attribute too.
+    _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
+
+    @contextmanager
+    def _attr_param_override(self, values: Dict[str, float]):
+        """Temporarily apply any _ATTR_PARAMS present in `values`."""
+        saved = {
+            name: getattr(self, name)
+            for name in self._ATTR_PARAMS
+            if name in values
+        }
+        try:
+            for name in saved:
+                setattr(self, name, values[name])
+            yield
+        finally:
+            for name, original in saved.items():
+                setattr(self, name, original)
+
     # =====================================================================
     # Events (state transitions)
     # =====================================================================
@@ -279,7 +301,7 @@ class DESModel:
         >>> model.set_event("SOC", "PFS", "Progressed",
         ...                 ph.Weibull(shape=1.2, scale=5))
 
-        Parameter-dependent (e.g. NMA HR):
+        Parameter-dependent (e.g. sampled HR):
 
         >>> model.set_event("Treatment", "PFS", "Progressed",
         ...     lambda p: ph.ProportionalHazards(
@@ -618,11 +640,6 @@ class DESModel:
             if not eligible:
                 # No events defined: patient stays until time horizon
                 remaining = self.time_horizon - current_time
-                self._accrue_sojourn(
-                    strategy, params, current_state,
-                    current_time, current_time + remaining,
-                    costs_by_cat, total_lys, total_qalys,
-                )
                 lys, qalys, _ = self._sojourn_outcomes(
                     strategy, params, current_state,
                     current_time, current_time + remaining,
@@ -890,24 +907,25 @@ class DESModel:
 
             # Simulate all strategies
             sim_result = {}
-            for strategy in self.strategy_names:
-                costs_list = []
-                qalys_list = []
-                lys_list = []
-                for i in range(n_patients):
-                    pat_attrs = None
-                    if attrs is not None:
-                        pat_attrs = {k: float(v[i % len(v)]) for k, v in attrs.items()}
-                    pr = self._simulate_patient(strategy, params, pat_attrs)
-                    costs_list.append(pr['total_cost'])
-                    qalys_list.append(pr['total_qalys'])
-                    lys_list.append(pr['total_lys'])
+            with self._attr_param_override(params):
+                for strategy in self.strategy_names:
+                    costs_list = []
+                    qalys_list = []
+                    lys_list = []
+                    for i in range(n_patients):
+                        pat_attrs = None
+                        if attrs is not None:
+                            pat_attrs = {k: float(v[i % len(v)]) for k, v in attrs.items()}
+                        pr = self._simulate_patient(strategy, params, pat_attrs)
+                        costs_list.append(pr['total_cost'])
+                        qalys_list.append(pr['total_qalys'])
+                        lys_list.append(pr['total_lys'])
 
-                sim_result[strategy] = {
-                    'mean_cost': float(np.mean(costs_list)),
-                    'mean_qalys': float(np.mean(qalys_list)),
-                    'mean_lys': float(np.mean(lys_list)),
-                }
+                    sim_result[strategy] = {
+                        'mean_cost': float(np.mean(costs_list)),
+                        'mean_qalys': float(np.mean(qalys_list)),
+                        'mean_lys': float(np.mean(lys_list)),
+                    }
 
             psa_iterations.append(sim_result)
 

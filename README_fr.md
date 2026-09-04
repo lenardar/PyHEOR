@@ -16,12 +16,7 @@ PyHEOR est un framework Python dédié à la recherche en économie de la santé
 | **Définitions flexibles des coûts** | Coûts du premier cycle, fonctions dépendantes du temps, coûts ponctuels, méthode WLOS, calendriers de coûts de transition, fonctions de coûts personnalisées |
 | **Cas de base / ASUD / ASP**     | Analyse déterministe, diagrammes en tornade (BNMI/RCEI), Monte Carlo + nuage de points CE + CACE |
 | **Comparaison multi-stratégies & BNM** | Frontière d'efficience, détection de dominance/dominance étendue, courbes BNM, FACE, VEIP |
-| **Ajustement de courbes de survie IPD** | Ajustement par MLE avec 6 distributions paramétriques, comparaison AIC/BIC, sélection automatique du meilleur modèle |
-| **Numérisation et reconstruction de courbes KM** | Méthode de Guyot pour reconstruire les IPD à partir de courbes KM publiées, avec prétraitement du bruit de numérisation |
-| **Intégration NMA**               | Importation d'échantillons postérieurs R, préservation des corrélations, génération automatique de courbes PH/AFT |
-| **Analyse d'impact budgétaire (AIB)** | Modèles de taille de population, évolution des parts de marché, courbes d'adoption, analyse de scénarios/sensibilité univariée |
-| **Calibration de modèle**         | Estimation de paramètres inconnus à partir de données observées : optimisation multi-départ Nelder-Mead, recherche aléatoire LHS, SSE/WSSE/vraisemblance GoF |
-| **Visualisation**                 | 28 graphiques professionnels : diagrammes de transition d'états, graphiques de frontière, courbes BNM, FACE, VEIP, CACE, courbes KM + ajustées, graphiques d'impact AIB, etc. |
+| **Visualisation**                 | 19 graphiques professionnels : diagrammes de transition d'états, graphiques de frontière, courbes BNM, FACE, VEIP, CACE, etc. |
 | **Exportation**                   | Exportation Excel multi-feuilles, modèle de vérification par formules Excel, rapports Markdown en un clic |
 
 ---
@@ -515,91 +510,6 @@ Distributions auxiliaires :
 
 Chaque distribution fournit les méthodes `survival(t)`, `hazard(t)`, `pdf(t)`, `quantile(p)`, `cumulative_hazard(t)`, `restricted_mean(t_max)`.
 
-#### Ajustement de courbes de survie IPD
-
-```python
-import pyheor as ph
-import pandas as pd
-
-df = pd.read_csv("patient_data.csv")
-fitter = ph.SurvivalFitter(
-    time=df["time"],
-    event=df["event"],
-    label="Overall Survival",
-)
-fitter.fit()
-
-# Tableau de comparaison AIC/BIC
-print(fitter.summary())
-
-# Sélection automatique du meilleur modèle
-best = fitter.best_model()           # Par défaut : AIC
-dist = best.distribution             # Utilisable directement dans PSM
-print(fitter.selection_report())     # Rapport détaillé de sélection de modèle
-
-# Graphiques de diagnostic
-fitter.plot_fits()                   # KM + toutes les courbes ajustées
-fitter.plot_hazard()                 # Fonctions de risque
-fitter.plot_cumhazard_diagnostic()   # log(H) vs log(t)
-fitter.plot_qq()                     # Graphique Q-Q
-
-# Exportation
-fitter.to_excel("fitting_results.xlsx")
-```
-
-**Critères de sélection de modèle** :
-
-| Métrique       | Formule               | Description                                          |
-| -------------- | --------------------- | ---------------------------------------------------- |
-| AIC            | 2k - 2ln(L)           | Favorise bon ajustement + parcimonie ; adapté à la prédiction |
-| BIC            | k·ln(n) - 2ln(L)     | Pénalise davantage la complexité que l'AIC ; adapté aux grands échantillons |
-| ΔAIC          | AIC - AIC_min          | <2 non significatif, >10 différence décisive         |
-| Poids AIC      | exp(-0.5·ΔAIC) / Σ  | Poids de vraisemblance relative du modèle            |
-
-**Flux intégré IPD vers PSM** :
-
-```python
-fitter_os = ph.SurvivalFitter(time=df_os["time"], event=df_os["event"], label="OS")
-fitter_pfs = ph.SurvivalFitter(time=df_pfs["time"], event=df_pfs["event"], label="PFS")
-fitter_os.fit()
-fitter_pfs.fit()
-
-psm = ph.PSMModel(...)
-psm.set_survival("SOC", "OS", fitter_os.best_model().distribution)
-psm.set_survival("SOC", "PFS", fitter_pfs.best_model().distribution)
-```
-
-#### Numérisation et reconstruction de courbes KM
-
-Reconstruire les IPD à partir de courbes KM publiées, permettant le flux complet : « Courbe KM publiée → IPD → Ajustement paramétrique → Modélisation ». Basé sur l'algorithme de Guyot et al. (2012).
-
-```python
-# 1. Obtenir les coordonnées KM à partir d'un outil de numérisation (ex. WebPlotDigitizer)
-t_digitized = [0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 24]
-s_digitized = [1.0, 0.92, 0.83, 0.74, 0.66, 0.58, 0.50, 0.40, 0.32, 0.25, 0.20]
-
-# 2. Lire le tableau des effectifs à risque depuis la publication
-t_risk = [0, 6, 12, 18, 24]
-n_risk = [120, 88, 60, 38, 22]
-
-# 3. Reconstruire les IPD
-ipd_time, ipd_event = ph.guyot_reconstruct(
-    t_digitized, s_digitized, t_risk, n_risk, tot_events=96,
-)
-
-# 4. Alimenter directement le SurvivalFitter
-fitter = ph.SurvivalFitter(ipd_time, ipd_event, label="OS")
-fitter.fit()
-```
-
-**Prétraitement des coordonnées numérisées** : `clean_digitized_km` fournit un nettoyage automatique (tri, suppression hors limites, détection des valeurs aberrantes, monotonie forcée, etc.). `guyot_reconstruct` l'appelle aussi en interne.
-
-Références :
-
-- Guyot P, Ades AE, Ouwens MJ, Welton NJ (2012). Enhanced secondary analysis of survival data. *BMC Med Res Methodol*, 12:9.
-- Liu N, Zhou Y, Lee JJ (2021). IPDfromKM. *BMC Med Res Methodol*.
-
----
 
 ### Analyse de sensibilité et rapports
 
@@ -671,133 +581,6 @@ print(f"VEIP à DAP=100K$ : ${cea_psa.evpi_single(100000):,.0f}")
 cea_psa.plot_evpi(wtp_range=(0, 200000), population=100000)
 ```
 
-#### Intégration NMA
-
-Le module NMA de PyHEOR est responsable de **l'importation et l'utilisation** des échantillons postérieurs produits par les packages R (gemtc / multinma / bnma).
-
-```python
-# Charger les échantillons postérieurs (supporte les formats CSV large/long)
-nma = ph.load_nma_samples("nma_hr_samples.csv", log_scale=True)
-print(nma.summary())
-
-# Injection en lot dans les paramètres du modèle
-nma.add_params_to_model(model, param_prefix="hr",
-                        treatments=["Drug_A", "Drug_B"])
-
-# Construire rapidement des courbes de survie
-baseline = ph.Weibull(shape=1.2, scale=8.0)
-curves = ph.make_ph_curves(baseline, nma)      # PH
-curves_aft = ph.make_aft_curves(baseline, nma)  # AFT
-```
-
-| Classe / Fonction | Description |
-|---|---|
-| `load_nma_samples()` | Charger les postérieurs depuis CSV/Excel/Feather (format large/long, supporte la transformation log) |
-| `NMAPosterior` | Conteneur postérieur fournissant `dist()` / `correlated()` / `summary()` / `add_params_to_model()` |
-| `PosteriorDist` | Sous-classe de `Distribution`, échantillonne avec remplacement depuis la colonne postérieure |
-| `CorrelatedPosterior` | Postérieur joint, échantillonnage sur la même ligne pour préserver les corrélations |
-| `make_ph_curves()` / `make_aft_curves()` | Postérieur NMA + courbe de référence → dictionnaire de courbes PH/AFT |
-
-#### Analyse d'impact budgétaire (AIB)
-
-L'analyse d'impact budgétaire estime l'impact financier de l'introduction d'une nouvelle technologie sur le budget sur un horizon temporel court (généralement 1 à 5 ans). Conforme aux recommandations de bonnes pratiques AIB de l'ISPOR.
-
-```python
-bia = ph.BudgetImpactAnalysis(
-    strategies=["Drug A", "Drug B", "Drug C"],
-    per_patient_costs={"Drug A": 5000, "Drug B": 12000, "Drug C": 8000},
-    population=10000,
-    market_share_current={"Drug A": 0.6, "Drug B": 0.1, "Drug C": 0.3},
-    market_share_new={"Drug A": 0.4, "Drug B": 0.3, "Drug C": 0.3},
-    time_horizon=5,
-)
-
-bia.summary()
-bia.cost_by_strategy()
-```
-
-**Modèles de population** :
-
-```python
-population=10000                                    # Population fixe
-population=[10000, 10500, 11000, 11500, 12000]      # Spécifiée par année
-population={"base": 10000, "growth_rate": 0.05}      # Croissance composée
-population={"base": 10000, "annual_increase": 500}   # Croissance linéaire
-```
-
-**Courbes d'adoption des parts de marché** :
-
-```python
-ph.BudgetImpactAnalysis.linear_uptake(0.0, 0.4, 5)           # Linéaire
-ph.BudgetImpactAnalysis.sigmoid_uptake(0.0, 0.4, 5, steepness=1.5)  # Sigmoïde
-```
-
-**Création à partir de résultats de modèle / Analyse de scénarios / Analyse de sensibilité** :
-
-```python
-# À partir de résultats de modèle
-bia = ph.BudgetImpactAnalysis.from_result(result, population=10000, ...)
-
-# Analyse de scénarios
-bia.scenario_analysis({
-    "Base Case": {},
-    "High Population": {"population": 15000},
-    "Fast Uptake": {"market_share_new": {"SoC": 0.3, "New": 0.7}},
-})
-
-# Sensibilité univariée
-bia.one_way_sensitivity("population", values=[8000, 9000, 10000, 11000, 12000])
-
-# Diagramme en tornade
-bia.tornado({"population": (8000, 12000), "Drug B": (10000, 15000)})
-```
-
-#### Calibration de modèle
-
-La calibration de modèle utilise des données observées pour estimer les paramètres du modèle qui ne peuvent pas être directement observés. Basée sur Vanni et al. (2011) et Alarid-Escudero et al. (2018).
-
-```python
-# Définir les cibles de calibration
-targets = [
-    ph.CalibrationTarget(
-        name="10yr_healthy",
-        observed=0.42, se=0.05,
-        extract_fn=lambda sim: sim["SOC"]["trace"][10, 0],
-    ),
-]
-
-# Définir les paramètres à calibrer
-calib_params = [
-    ph.CalibrationParam("p_HS", lower=0.01, upper=0.30),
-    ph.CalibrationParam("p_SD", lower=0.01, upper=0.20),
-]
-
-# Exécuter la calibration
-result = ph.calibrate(
-    model, targets, calib_params,
-    gof="wsse",
-    method="nelder_mead",
-    n_restarts=10,
-    seed=42,
-)
-
-print(result.summary())
-print(result.target_comparison())
-result.apply_to_model(model)
-```
-
-| Méthode de recherche | Paramètres | Caractéristiques |
-|----------------------|------------|------------------|
-| `nelder_mead` | `n_restarts=10` | Optimisation sans dérivées multi-départ, précise mais plus lente |
-| `random_search` | `n_samples=1000` | Échantillonnage LHS avec évaluation individuelle, simple et intuitif |
-
-| Métrique GoF | Formule | Cas d'utilisation |
-|--------------|---------|-------------------|
-| `sse` | Σ(obs - préd)² | Par défaut, simple et rapide |
-| `wsse` | Σ(obs - préd)²/SE² | Lorsque les cibles multiples ont des échelles différentes |
-| `loglik_normal` | -Σ log N(obs \| préd, SE²) | Statistiquement fondé |
-
----
 
 ### Exportation
 
@@ -812,8 +595,6 @@ ph.export_to_excel(psa, "psa.xlsx")
 # Comparaison multi-stratégies
 ph.export_comparison_excel({"Strategy A": result_a, "Strategy B": result_b}, "comparison.xlsx")
 
-# Résultats d'ajustement IPD
-fitter.to_excel("fitting_results.xlsx")
 ```
 
 #### Modèle de vérification par formules Excel
@@ -850,14 +631,13 @@ ph.export_excel_model(model, "verification.xlsx")
 | ASUD               | Données tornade, Résultats par paramètre                              |
 | ASP                | Statistiques résumées, Toutes les simulations, Données CACE           |
 | PSM Cas de base    | Résumé, Probabilités d'état, Données de survie                        |
-| Ajustement IPD     | Comparaison de modèles, Données KM, Détails par distribution, Rapport de sélection |
 | Modèle de vérification | Résumé (avec différences), Feuille de calcul par stratégie (formules + entrées) |
 
 ---
 
 ## Galerie de visualisations
 
-PyHEOR fournit **28** graphiques professionnels, couvrant tous les types de modèles et flux d'analyse :
+PyHEOR fournit **19** graphiques professionnels, couvrant tous les types de modèles et flux d'analyse :
 
 ### Modèle de Markov (8 types)
 
@@ -889,14 +669,6 @@ PyHEOR fournit **28** graphiques professionnels, couvrant tous les types de mod�
 | `plot_microsim_survival()`   | Courbe de survie empirique (à partir de données simulées) |
 | `plot_microsim_outcomes()`   | Distributions des résultats patients (histogrammes QALYs / Coûts / AV) |
 
-### Ajustement IPD (4 types)
-
-| Méthode                                | Description                        |
-| -------------------------------------- | ---------------------------------- |
-| `fitter.plot_fits()`                 | KM + toutes les courbes d'ajustement paramétrique |
-| `fitter.plot_hazard()`               | Fonctions de risque par distribution |
-| `fitter.plot_cumhazard_diagnostic()` | Graphique de diagnostic log(H) vs log(t) |
-| `fitter.plot_qq()`                   | Graphique de quantiles Q-Q         |
 
 ### ACE / Comparaison multi-stratégies (4 types)
 
@@ -907,15 +679,6 @@ PyHEOR fournit **28** graphiques professionnels, couvrant tous les types de mod�
 | `plot_ceaf()`          | Frontière d'acceptabilité coût-efficacité (FACE) |
 | `plot_evpi()`          | Courbe de la valeur espérée de l'information parfaite (VEIP) |
 
-### Analyse d'impact budgétaire (5 types)
-
-| Fonction                       | Description                                    |
-| ------------------------------ | ---------------------------------------------- |
-| `plot_budget_impact()`       | Diagramme à barres d'impact budgétaire annuel + courbe cumulative |
-| `plot_budget_comparison()`   | Comparaison du coût total scénario actuel vs nouveau |
-| `plot_market_share()`        | Graphique en aires empilées à double panneau des parts de marché |
-| `plot_detail()`              | Ventilation des coûts empilés par stratégie     |
-| `plot_tornado()`             | Diagramme en tornade de sensibilité AIB        |
 
 ---
 
@@ -930,7 +693,7 @@ pyheor/
 │   ├── utils.py             # Fonctions utilitaires (complément C, actualisation, validation)
 │   ├── distributions.py     # Distributions de probabilité ASP (Beta, Gamma, ...)
 │   ├── survival.py          # 10 distributions de survie paramétriques
-│   ├── plotting.py          # Visualisation (28 types de graphiques)
+│   ├── plotting.py          # Visualisation (19 types de graphiques)
 │   │
 │   ├── models/              # ── Moteur de modélisation ──
 │   │   ├── markov.py        #  Modèle de Markov par cohorte (MarkovModel)
@@ -940,25 +703,17 @@ pyheor/
 │   │
 │   ├── analysis/            # ── Analyse et décision ──
 │   │   ├── results.py       #  Classes de résultats (BaseResult, OWSAResult, PSAResult, ...)
-│   │   ├── comparison.py    #  Comparaison multi-stratégies / ACE (CEAnalysis)
-│   │   ├── bia.py           #  Analyse d'impact budgétaire (BudgetImpactAnalysis)
-│   │   └── calibration.py   #  Calibration de modèle (Nelder-Mead, recherche aléatoire)
-│   │
-│   ├── evidence/            # ── Données et synthèse des preuves ──
-│   │   ├── fitting.py       #  Ajustement de courbes de survie IPD (SurvivalFitter)
-│   │   ├── digitize.py      #  Numérisation et reconstruction de courbes KM (méthode Guyot)
-│   │   └── nma.py           #  Intégration d'échantillons postérieurs NMA (NMAPosterior)
+│   │   └── comparison.py    #  Comparaison multi-stratégies / ACE (CEAnalysis)
 │   │
 │   └── export/              # ── Exportation ──
 │       ├── excel.py         #  Exportation de données de résultats Excel
 │       ├── excel_model.py   #  Exportation du modèle de vérification par formules Excel
 │       └── report.py        #  Rapport Markdown en un clic
 │
-├── tests/                   # Suite de tests pytest (243 tests)
+├── tests/                   # Suite de tests pytest
 └── examples/
     ├── demo_hiv_model.py    #  Exemple de modèle de Markov (VIH)
     ├── demo_psm_model.py    #  Exemple de modèle PSM (oncologie)
-    ├── demo_ipd_fitting.py  #  Exemple d'ajustement IPD
     ├── demo_microsim.py     #  Exemple de microsimulation
     └── demo_comparison.py   #  Exemple de comparaison multi-stratégies
 ```
@@ -986,21 +741,15 @@ pyheor/
 - [X] Modèle de survie partitionnée (PSM)
 - [X] 10 distributions de survie paramétriques
 - [X] Exportation Excel multi-feuilles + modèle de vérification par formules Excel
-- [X] Ajustement de courbes de survie IPD + comparaison de modèles AIC/BIC
-- [X] Visualisation KM + courbes ajustées + graphiques de diagnostic
 - [X] Microsimulation (simulation au niveau individuel)
 - [X] Comparaison multi-cohortes + analyse BNM + FACE + VEIP
-- [X] Intégration de méta-analyse en réseau (NMA)
 - [X] Simulation à événements discrets (SED) — temps continu, risques concurrents, intégration HR/AFT
-- [X] Analyse d'impact budgétaire (AIB) — modèles de population, évolution des parts de marché, courbes d'adoption, analyse de scénarios/sensibilité
-- [X] Reconstruction de courbes KM numérisées (méthode Guyot)
-- [X] Calibration de modèle (optimisation multi-départ Nelder-Mead, recherche aléatoire LHS, SSE/WSSE/vraisemblance GoF)
 - [X] Rapport Markdown en un clic (`generate_report`)
-- [X] Suite de tests formelle (pytest, 243 tests couvrant tous les modules)
+- [X] Suite de tests formelle (pytest)
 - [ ] Sortie structurée (`to_dict` / `to_json`) pour résultats lisibles par les LLM
 - [ ] Interprétation automatique (`interpret(wtp)`) — génération de texte de conclusion standardisé
 - [ ] Interface de modélisation en langage naturel — définition de modèle par JSON Schema, construction et exécution automatiques
-- [ ] Agent HEOR (`pyheor-agent`) — agent piloté par l'API Claude réalisant un flux de recherche HEOR complet en langage naturel : sélection du modèle, extraction des paramètres, construction du modèle, analyse et génération de rapport ; couche de preuves optionnelle (documents fournis par l'utilisateur / recherche PubMed / paramètres directs) ; disponible en API Python (`HEORAgent`) et en CLI
+- [ ] Agent HEOR (`pyheor-agent`) — définition, exécution et génération de rapports de modèles en langage naturel, disponible en API Python (`HEORAgent`) et en CLI
 - [ ] Accélération Rust (priorité basse) — liaisons PyO3 + maturin pour accélérer les boucles individuelles de microsimulation, les files d'événements DES et le parallélisme PSA
 
 ---

@@ -14,13 +14,16 @@ Each distribution provides:
 - hazard(t): h(t) = f(t) / S(t)
 - cumulative_hazard(t): H(t) = -log(S(t))
 - pdf(t): probability density function
-- quantile(p): inverse survival function
+- quantile(p): inverse CDF, i.e. t such that F(t) = p
 """
 
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import Optional, Union
 from scipy import stats as sp_stats
+
+# numpy renamed trapz -> trapezoid in 2.0; pyproject allows numpy>=1.21.
+_trapz = getattr(np, "trapezoid", None) or np.trapz
 
 
 class SurvivalDistribution(ABC):
@@ -78,7 +81,7 @@ class SurvivalDistribution(ABC):
         """
         t = np.linspace(0, t_max, n_points)
         s = self.survival(t)
-        return float(np.trapezoid(s, t))
+        return float(_trapz(s, t))
 
     @abstractmethod
     def __repr__(self) -> str:
@@ -429,6 +432,11 @@ class ProportionalHazards(SurvivalDistribution):
     def cumulative_hazard(self, t):
         return self.baseline.cumulative_hazard(t) * self.hr
 
+    def quantile(self, p):
+        # S(t) = S0(t)^hr = 1 - p  =>  S0(t) = (1-p)^(1/hr)
+        p = np.asarray(p, dtype=float)
+        return self.baseline.quantile(1.0 - (1.0 - p) ** (1.0 / self.hr))
+
     def __repr__(self):
         return f"PH({self.baseline}, HR={self.hr:.4f})"
 
@@ -460,6 +468,10 @@ class AcceleratedFailureTime(SurvivalDistribution):
         t = np.asarray(t, dtype=float)
         return self.baseline.hazard(t / self.af) / self.af
 
+    def quantile(self, p):
+        # S(t) = S0(t/af)  =>  t = af * quantile0(p)
+        return self.af * np.asarray(self.baseline.quantile(p), dtype=float)
+
     def __repr__(self):
         return f"AFT({self.baseline}, AF={self.af:.4f})"
 
@@ -471,7 +483,7 @@ class AcceleratedFailureTime(SurvivalDistribution):
 class KaplanMeier(SurvivalDistribution):
     """Empirical survival curve from Kaplan-Meier data.
 
-    Supports step-function interpolation of digitized/fitted KM curves.
+    Supports step-function interpolation of empirical KM estimates.
 
     Parameters
     ----------
@@ -529,12 +541,64 @@ class KaplanMeier(SurvivalDistribution):
 
     def hazard(self, t):
         t = np.asarray(t, dtype=float)
-        t_safe = np.maximum(t, 1e-300)
-        # Numerical differentiation of cumulative hazard
-        dt = 0.001
-        H1 = self.cumulative_hazard(t_safe)
-        H2 = self.cumulative_hazard(t_safe + dt)
-        return (H2 - H1) / dt
+        scalar = t.ndim == 0
+        t = np.atleast_1d(t)
+
+        # S is a step function, so the instantaneous hazard is a sum of point
+        # masses. Report the average hazard over the interval containing t --
+        # H(t_hi) - H(t_lo) spread across the interval width -- which keeps
+        # hazard() consistent with cumulative_hazard() instead of numerically
+        # differentiating a flat segment (which always yielded 0).
+        H = self.cumulative_hazard(self.times)
+        widths = np.diff(self.times)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            interval_h = np.where(widths > 0, np.diff(H) / widths, 0.0)
+
+        idx = np.clip(np.searchsorted(self.times, t, side='right') - 1,
+                      0, len(interval_h) - 1) if len(interval_h) else None
+        if idx is None:
+            result = np.zeros_like(t)
+        else:
+            result = interval_h[idx]
+            beyond = t > self.times[-1]
+            if np.any(beyond):
+                result = result.copy()
+                result[beyond] = (
+                    self._tail_rate if self.extrapolation == "exponential" else 0.0
+                )
+
+        return float(result[0]) if scalar else result
+
+    def quantile(self, p):
+        """Inverse CDF for a step function: smallest observed time with S(t) <= 1 - p.
+
+        Returns inf when the requested quantile lies beyond what the curve can
+        reach (constant extrapolation floors S at its last observed value),
+        rather than the silent NaN the generic brentq inversion produced.
+        """
+        p = np.asarray(p, dtype=float)
+        scalar = p.ndim == 0
+        p = np.atleast_1d(p)
+
+        results = np.empty_like(p)
+        for i, pi in enumerate(p):
+            if pi <= 0:
+                results[i] = 0.0
+                continue
+            if pi >= 1:
+                results[i] = np.inf
+                continue
+            target = 1.0 - pi
+            hit = np.nonzero(self.surv <= target)[0]
+            if len(hit):
+                results[i] = self.times[hit[0]]
+            elif self.extrapolation == "exponential" and self._tail_rate > 0:
+                results[i] = -np.log(target) / self._tail_rate
+            else:
+                # Constant extrapolation: S never falls below self.surv[-1].
+                results[i] = np.inf
+
+        return float(results[0]) if scalar else results
 
     def __repr__(self):
         return (
@@ -584,11 +648,10 @@ class PiecewiseExponential(SurvivalDistribution):
         scalar = t.ndim == 0
         t = np.atleast_1d(t)
 
-        result = np.full_like(t, self.rates[-1])
-        for i, bp in enumerate(self.breakpoints):
-            result[t <= bp] = self.rates[i]
-        # first interval
-        result[t <= (self.breakpoints[0] if len(self.breakpoints) > 0 else np.inf)] = self.rates[0]
+        # Interval i covers (breakpoints[i-1], breakpoints[i]]; searchsorted with
+        # side='left' maps t == breakpoints[i] into interval i, matching _cumhaz.
+        idx = np.searchsorted(self.breakpoints, t, side='left')
+        result = self.rates[idx]
 
         return float(result[0]) if scalar else result
 
