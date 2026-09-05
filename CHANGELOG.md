@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### DES clock semantics
+
+- `DESModel(clock="reset")` preserves the existing state-entry clock.
+- `clock="forward"` samples residual event times from cumulative hazards at
+  absolute study time, allowing calendar-time risk without a new event API.
+- Invalid horizons, patient counts, attribute lengths, and event TTEs now fail
+  explicitly instead of producing non-finite results or silently recycling data.
+
 ### Consistent figure layout
 
 - Plot defaults now use an installed CJK-capable font when available and are

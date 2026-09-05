@@ -257,6 +257,7 @@ model = ph.DESModel(
     states=["PFS", "Progressed", "Dead"],
     strategies={"SOC": "Standard of Care", "TRT": "New Treatment"},
     time_horizon=40,
+    clock="reset",  # or "forward" for calendar-time hazards
     dr_cost=0.03,
     dr_qaly=0.03,
 )

@@ -15,6 +15,15 @@ class TestDESConstruction:
         )
         assert model is not None
 
+    def test_clock_is_explicit(self):
+        assert DESModel(states=["Alive", "Dead"], strategies=["S1"], clock="forward").clock == "forward"
+        with pytest.raises(ValueError, match="clock"):
+            DESModel(states=["Alive", "Dead"], strategies=["S1"], clock="cycle")
+
+    def test_time_horizon_must_be_positive(self):
+        with pytest.raises(ValueError, match="time_horizon"):
+            DESModel(states=["Alive", "Dead"], strategies=["S1"], time_horizon=0)
+
 
 class TestDESRun:
     @pytest.fixture
@@ -69,3 +78,14 @@ class TestDESRun:
         result = model.run(n_patients=2000, seed=42)
         mean_lys = result.summary()["Mean LYs"].iloc[0]
         np.testing.assert_allclose(mean_lys, 10.0, rtol=0.20)
+
+    def test_forward_clock_conditions_on_absolute_time(self, monkeypatch):
+        model = DESModel(
+            states=["Alive", "Dead"], strategies=["S1"],
+            time_horizon=10, clock="forward",
+        )
+        monkeypatch.setattr(np.random, "uniform", lambda: 0.5)
+        dist = Weibull(shape=2.0, scale=2.0)
+        # H(2 + dt) - H(2) = -log(0.5), rather than a fresh draw from t=0.
+        expected = 2.0 * np.sqrt(1.0 - np.log(0.5)) - 2.0
+        assert model._sample_forward_tte(dist, current_time=2.0) == pytest.approx(expected)

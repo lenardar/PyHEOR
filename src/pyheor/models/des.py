@@ -125,6 +125,10 @@ class DiscreteEventSimulationModel:
         Pass a ``Param`` to enable sensitivity analysis.
     state_type : dict, optional
         Map state names to "alive" or "dead" (default: last state is dead).
+    clock : {"reset", "forward"}
+        Event-time clock. ``"reset"`` (default) samples time from entry into
+        the current state. ``"forward"`` conditions each event on the
+        absolute study time using its cumulative hazard.
 
     Examples
     --------
@@ -143,10 +147,16 @@ class DiscreteEventSimulationModel:
         dr_cost: Union[float, "Param"] = 0.0,
         dr_qaly: Union[float, "Param"] = 0.0,
         state_type: Optional[Dict[str, str]] = None,
+        clock: str = "reset",
     ):
         self.states = list(states)
         self.n_states = len(self.states)
         self.time_horizon = float(time_horizon)
+        if self.time_horizon <= 0 or not np.isfinite(self.time_horizon):
+            raise ValueError("time_horizon must be a finite positive number")
+        if clock not in {"reset", "forward"}:
+            raise ValueError("clock must be 'reset' or 'forward'")
+        self.clock = clock
 
         # Strategies
         if isinstance(strategies, dict):
@@ -593,9 +603,41 @@ class DiscreteEventSimulationModel:
     # =====================================================================
 
     def _sample_tte(self, dist: SurvivalDistribution) -> float:
-        """Sample a time-to-event from a survival distribution using inverse CDF."""
+        """Sample a relative time-to-event from a survival distribution."""
         u = np.random.uniform()
-        return dist.quantile(u)
+        tte = dist.quantile(u)
+        if not np.isfinite(tte) and not np.isinf(tte):
+            raise ValueError(f"Event distribution returned non-finite TTE: {tte!r}")
+        if tte < 0:
+            raise ValueError(f"Event distribution returned negative TTE: {tte!r}")
+        return float(tte)
+
+    def _sample_forward_tte(
+        self, dist: SurvivalDistribution, current_time: float,
+    ) -> float:
+        """Sample a residual TTE under a clock-forward cumulative hazard."""
+        from scipy.optimize import brentq
+
+        u = np.random.uniform()
+        if not 0 < u < 1:
+            return float("inf")
+        h0 = float(dist.cumulative_hazard(current_time))
+        if not np.isfinite(h0) or h0 < 0:
+            raise ValueError("Event distribution returned an invalid cumulative hazard")
+        target = h0 - np.log(u)
+        horizon_h = float(dist.cumulative_hazard(self.time_horizon))
+        if np.isnan(horizon_h) or horizon_h < target:
+            return float("inf")
+        if horizon_h == h0:
+            return float("inf")
+        event_time = brentq(
+            lambda t: float(dist.cumulative_hazard(t)) - target,
+            current_time, self.time_horizon,
+        )
+        tte = event_time - current_time
+        if tte < 0 or not np.isfinite(tte):
+            raise ValueError(f"Event distribution returned invalid TTE: {tte!r}")
+        return float(tte)
 
     def _simulate_patient(
         self,
@@ -661,7 +703,9 @@ class DiscreteEventSimulationModel:
 
             for ev in eligible:
                 dist = self._resolve_distribution(ev, params, attrs)
-                tte = self._sample_tte(dist)
+                tte = (self._sample_forward_tte(dist, current_time)
+                       if self.clock == "forward"
+                       else self._sample_tte(dist))
                 if tte < min_time:
                     min_time = tte
                     winning_event = ev
@@ -801,6 +845,16 @@ class DiscreteEventSimulationModel:
         """
         from ..analysis.results import DESResult
 
+        if isinstance(n_patients, bool) or not isinstance(n_patients, int) or n_patients <= 0:
+            raise ValueError("n_patients must be a positive integer")
+        if attrs is not None:
+            for name, values in attrs.items():
+                values = np.asarray(values)
+                if values.ndim != 1 or len(values) != n_patients:
+                    raise ValueError(
+                        f"attrs[{name!r}] must be a one-dimensional array of length n_patients"
+                    )
+
         if seed is not None:
             np.random.seed(seed)
 
@@ -891,6 +945,18 @@ class DiscreteEventSimulationModel:
         """
         from ..analysis.results import DESPSAResult
 
+        if isinstance(n_sim, bool) or not isinstance(n_sim, int) or n_sim <= 0:
+            raise ValueError("n_sim must be a positive integer")
+        if isinstance(n_patients, bool) or not isinstance(n_patients, int) or n_patients <= 0:
+            raise ValueError("n_patients must be a positive integer")
+        if attrs is not None:
+            for name, values in attrs.items():
+                values = np.asarray(values)
+                if values.ndim != 1 or len(values) != n_patients:
+                    raise ValueError(
+                        f"attrs[{name!r}] must be a one-dimensional array of length n_patients"
+                    )
+
         if seed is not None:
             np.random.seed(seed)
 
@@ -915,7 +981,7 @@ class DiscreteEventSimulationModel:
                     for i in range(n_patients):
                         pat_attrs = None
                         if attrs is not None:
-                            pat_attrs = {k: float(v[i % len(v)]) for k, v in attrs.items()}
+                            pat_attrs = {k: float(v[i]) for k, v in attrs.items()}
                         pr = self._simulate_patient(strategy, params, pat_attrs)
                         costs_list.append(pr['total_cost'])
                         qalys_list.append(pr['total_qalys'])
