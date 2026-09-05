@@ -126,6 +126,8 @@ class DiscreteEventSimulationModel:
         Pass a ``Param`` to enable sensitivity analysis.
     state_type : dict, optional
         Map state names to "alive" or "dead" (default: last state is dead).
+    initial_state : str or int
+        Starting health state for every patient (default: 0, the first state).
     clock : {"reset", "forward"}
         Event-time clock. ``"reset"`` (default) samples time from entry into
         the current state. ``"forward"`` conditions each event on the
@@ -154,6 +156,7 @@ class DiscreteEventSimulationModel:
         state_type: Optional[Dict[str, str]] = None,
         clock: str = "reset",
         discount_convention: str = "discrete",
+        initial_state: Union[str, int] = 0,
     ):
         self.states = list(states)
         if not self.states:
@@ -208,6 +211,23 @@ class DiscreteEventSimulationModel:
             self.dr_qaly = float(dr_qaly)
         self._validate_discount_rate(self.dr_cost, "dr_cost")
         self._validate_discount_rate(self.dr_qaly, "dr_qaly")
+
+        if isinstance(initial_state, str):
+            if initial_state not in self.states:
+                raise ValueError(
+                    f"Unknown initial_state {initial_state!r}; "
+                    f"available states are {self.states!r}"
+                )
+            self.initial_state_idx = self.states.index(initial_state)
+        else:
+            if isinstance(initial_state, bool):
+                raise TypeError("initial_state must be a state name or integer index")
+            self.initial_state_idx = int(initial_state)
+            if self.initial_state_idx != initial_state or not 0 <= self.initial_state_idx < self.n_states:
+                raise ValueError(
+                    f"initial_state index must be between 0 and {self.n_states - 1}, "
+                    f"got {initial_state!r}"
+                )
 
         # State types
         if state_type is not None:
@@ -370,6 +390,8 @@ class DiscreteEventSimulationModel:
             raise ValueError(f"Unknown state '{from_state}'")
         if to_state not in self.states:
             raise ValueError(f"Unknown state '{to_state}'")
+        if from_state == to_state:
+            raise ValueError("Self-loop events are not supported; use a recurrent-event model")
         if clock not in {None, "reset", "forward"}:
             raise ValueError("clock must be 'reset', 'forward', or None")
 
@@ -813,8 +835,9 @@ class DiscreteEventSimulationModel:
         """
         self._validate_discount_rate(self.dr_cost, "dr_cost")
         self._validate_discount_rate(self.dr_qaly, "dr_qaly")
-        current_state = 0  # start in first state
+        current_state = self.initial_state_idx
         current_time = 0.0
+        event_count = 0
         event_log = []
         time_in_state = {s: 0.0 for s in self.states}
         costs_by_cat: Dict[str, float] = {}
@@ -827,6 +850,16 @@ class DiscreteEventSimulationModel:
                 c = self._resolve_entry_cost(ec, strategy, params)
                 cat = ec.category
                 costs_by_cat[cat] = costs_by_cat.get(cat, 0) + c  # time=0, no discount
+
+        # The initial state is an entry at time zero as well. This keeps
+        # handlers consistent with explicit state-entry costs.
+        for handler in self._on_enter.get(self.states[current_state], []):
+            result = handler(patient_idx, current_time, attrs or {})
+            if result and "cost" in result:
+                amount = float(result["cost"])
+                if not np.isfinite(amount):
+                    raise ValueError("on_state_enter returned a non-finite cost")
+                costs_by_cat["event"] = costs_by_cat.get("event", 0.0) + amount
 
         while current_time < self.time_horizon and current_state not in self._absorbing:
             # Collect competing events from current state
@@ -874,6 +907,13 @@ class DiscreteEventSimulationModel:
 
             # Event time in absolute clock
             event_time = current_time + min_time
+
+            event_count += 1
+            if event_count > 10000:
+                raise RuntimeError(
+                    "DES exceeded 10000 events for one patient; "
+                    "check for zero-time or recurrent event cycles"
+                )
 
             if event_time >= self.time_horizon:
                 # Censor at time horizon
@@ -1213,6 +1253,7 @@ class DiscreteEventSimulationModel:
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Time horizon: {self.time_horizon} years",
+            f"  Initial state: {self.states[self.initial_state_idx]}",
             f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
             f"  Discount convention: {self.discount_convention}",
             f"  Parameters ({len(self.params)}):",

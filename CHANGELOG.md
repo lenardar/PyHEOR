@@ -23,6 +23,9 @@
   study horizon.
 - DES rejects empty or duplicate state/strategy definitions, invalid
   `state_type` values, unknown mapping keys, and missing parameter references.
+- DES accepts an explicit fixed `initial_state`; initial entry effects occur at
+  time zero, and unsupported self-loops or runaway zero-time cycles fail
+  explicitly.
 
 ### Consistent figure layout
 

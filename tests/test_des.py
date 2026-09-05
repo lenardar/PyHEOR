@@ -25,6 +25,16 @@ class TestDESConstruction:
         with pytest.raises(ValueError, match="time_horizon"):
             DESModel(states=["Alive", "Dead"], strategies=["S1"], time_horizon=0)
 
+    def test_initial_state_can_be_named_or_indexed(self):
+        assert DESModel(
+            states=["Alive", "Dead"], strategies=["S1"], initial_state="Dead"
+        ).initial_state_idx == 1
+        assert DESModel(
+            states=["Alive", "Dead"], strategies=["S1"], initial_state=1
+        ).initial_state_idx == 1
+        with pytest.raises(ValueError, match="initial_state"):
+            DESModel(states=["Alive", "Dead"], strategies=["S1"], initial_state="Missing")
+
     def test_model_inputs_are_explicitly_validated(self):
         with pytest.raises(ValueError, match="states"):
             DESModel(states=[], strategies=["S1"])
@@ -151,6 +161,22 @@ class TestDESRun:
         model = DESModel(states=["Alive", "Dead"], strategies=["S1"])
         with pytest.raises(ValueError, match="clock"):
             model.set_event("S1", "Alive", "Dead", Exponential(rate=1), clock="cycle")
+
+    def test_self_loop_events_are_rejected(self):
+        model = DESModel(states=["Alive", "Dead"], strategies=["S1"])
+        with pytest.raises(ValueError, match="Self-loop"):
+            model.set_event("S1", "Alive", "Alive", Exponential(rate=1))
+
+    def test_initial_state_entry_handler_runs_at_time_zero(self):
+        model = DESModel(
+            states=["Alive", "Dead"], strategies=["S1"],
+            initial_state="Dead", time_horizon=1,
+        )
+        seen = []
+        model.on_state_enter("Dead", lambda idx, time, attrs: seen.append(time))
+        result = model.run(n_patients=1, progress=False)
+        assert seen == [0.0]
+        assert result.results["S1"]["patient_results"][0]["event_log"] == []
 
     def test_state_entry_handler_cost_is_recorded_at_entry_time(self, monkeypatch):
         model = DESModel(
