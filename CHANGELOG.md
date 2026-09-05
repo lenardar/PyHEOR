@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Consistent figure layout
+
+- Plot defaults now use an installed CJK-capable font when available and are
+  scoped to each plotting call, so they do not alter unrelated Matplotlib work.
+- Strategy colours are stable across PSA, CEAC, convergence, survival, and
+  multi-strategy plots; the palette no longer repeats after six strategies.
+- Long multi-strategy Markov, PSM, and microsimulation traces use compact
+  multi-row panels with one shared legend instead of squeezing legends into
+  every subplot. Model-structure diagrams grow vertically with strategy count.
+- Monetary plots accept `currency` for their axis labels and tick formatting.
+
+### Tornado plot readability
+
+- Show 10 parameters by default, wrap long labels, and size automatic-height
+  plots according to label line counts. Installed CJK fonts are used when available.
+- Parameter bound annotations are opt-in (`show_values=True`) and appear in
+  separate columns. Low/high scenario markers preserve their input direction
+  even when a higher parameter produces a lower outcome.
+- Draw each endpoint range once, including scenarios on the same side of the
+  base case. Plot style changes stay local to the figure.
+- `label_width`, `font_family`, and `currency` allow label and unit customization.
+
 ### Follow-up calculation review
 
 - Excel retains the original state cost rate when its first applicable

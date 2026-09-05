@@ -17,6 +17,9 @@ import matplotlib.patches as mpatches
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Circle, RegularPolygon
 from matplotlib.path import Path
 import matplotlib.patheffects as pe
+from functools import wraps
+import textwrap
+from matplotlib import font_manager
 from typing import Optional, List, Dict, Tuple
 
 # =============================================================================
@@ -24,7 +27,7 @@ from typing import Optional, List, Dict, Tuple
 # =============================================================================
 
 COLORS = {
-    'strategies': ['#2196F3', '#FF5722', '#4CAF50', '#9C27B0', '#FF9800', '#607D8B'],
+    'strategies': ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9', '#332288', '#882255'],
     'states': ['#E8F5E9', '#BBDEFB', '#FFF9C4', '#FFCCBC', '#E1BEE7', '#B3E5FC'],
     'state_border': ['#4CAF50', '#1976D2', '#FBC02D', '#E64A19', '#7B1FA2', '#0288D1'],
     'state_dark': ['#2E7D32', '#0D47A1', '#F57F17', '#BF360C', '#4A148C', '#01579B'],
@@ -37,6 +40,36 @@ COLORS = {
 }
 
 
+def _plot_font():
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    return next((name for name in (
+        'Arial Unicode MS', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Heiti SC'
+    ) if name in available), 'DejaVu Sans')
+
+
+def _with_plot_style(func):
+    """Scope defaults to one plotting call; accept an optional font_family."""
+    @wraps(func)
+    def wrapped(*args, font_family=None, **kwargs):
+        with plt.rc_context():
+            _setup_style()
+            if font_family:
+                plt.rcParams['font.family'] = font_family
+            return func(*args, **kwargs)
+    return wrapped
+
+
+def _outside_legend(ax, *args, **kwargs):
+    """Keep a wrapped legend outside the data area, included by tight_layout."""
+    for key in ('loc', 'bbox_to_anchor', 'ncol', 'frameon'):
+        kwargs.pop(key, None)
+    legend = ax.legend(*args, loc='upper left', bbox_to_anchor=(1.02, 1),
+                       frameon=False, **kwargs)
+    for label in legend.get_texts():
+        label.set_text(textwrap.fill(label.get_text(), width=24))
+    return legend
+
+
 def _setup_style():
     """Apply clean plot styling."""
     plt.rcParams.update({
@@ -46,7 +79,8 @@ def _setup_style():
         'grid.alpha': 0.3,
         'grid.linestyle': '--',
         'grid.color': COLORS['grid'],
-        'font.family': 'sans-serif',
+        'font.family': _plot_font(),
+        'axes.unicode_minus': False,
         'font.size': 11,
         'axes.titlesize': 14,
         'axes.titleweight': 'bold',
@@ -64,8 +98,9 @@ def _get_strategy_colors(n: int) -> list:
     base = COLORS['strategies']
     if n <= len(base):
         return base[:n]
-    # Extend with repeats
-    return (base * ((n // len(base)) + 1))[:n]
+    # Keep earlier indices stable as strategies are added, without six-color repeats.
+    return base + [plt.cm.hsv(((i + 1) * .61803398875) % 1)
+                   for i in range(n - len(base))]
 
 
 def _get_state_colors(n: int) -> Tuple[list, list]:
@@ -77,6 +112,12 @@ def _get_state_colors(n: int) -> Tuple[list, list]:
     fills = (fills * ((n // len(fills)) + 1))[:n]
     borders = (borders * ((n // len(borders)) + 1))[:n]
     return fills, borders
+
+
+def _panel_shape(n_panels: int, max_columns: int = 3) -> Tuple[int, int]:
+    """Choose a compact grid that remains readable for many panels."""
+    columns = min(max_columns, n_panels)
+    return int(np.ceil(n_panels / columns)), columns
 
 
 # =============================================================================
@@ -116,9 +157,10 @@ def _edge_point(center: tuple, target: tuple, radius: float) -> tuple:
     return (center[0] + radius * dx / dist, center[1] + radius * dy / dist)
 
 
+@_with_plot_style
 def plot_transition_diagram(
     model, params: dict, strategy: Optional[str] = None,
-    cycle: int = 1, figsize: tuple = (10, 8),
+    cycle: int = 0, figsize: tuple = (10, 8),
     node_radius: float = 0.55, show_probs: bool = True,
     min_prob: float = 0.001, title: Optional[str] = None,
     ax=None,
@@ -146,7 +188,6 @@ def plot_transition_diagram(
     title : str, optional
         Custom title.
     """
-    _setup_style()
     
     if strategy is None:
         strategy = model.strategy_names[0]
@@ -322,6 +363,7 @@ def plot_transition_diagram(
 # Model Structure Diagram (TreeAge Style)
 # =============================================================================
 
+@_with_plot_style
 def plot_model_diagram(model, figsize: tuple = (14, 7), title: Optional[str] = None):
     """Plot TreeAge-style model structure diagram.
     
@@ -336,10 +378,6 @@ def plot_model_diagram(model, figsize: tuple = (14, 7), title: Optional[str] = N
     title : str, optional
         Custom title.
     """
-    _setup_style()
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.set_facecolor('white')
-    
     n_strategies = model.n_strategies
     n_states = model.n_states
     
@@ -350,9 +388,14 @@ def plot_model_diagram(model, figsize: tuple = (14, 7), title: Optional[str] = N
     x_terminal = 10.5
     
     # Total height needed
-    state_spacing = 0.8
-    strategy_spacing = n_states * state_spacing + 1.5
+    state_spacing = 1.0
+    strategy_spacing = n_states * state_spacing + 1.8
     total_height = n_strategies * strategy_spacing
+
+    # A fixed 7-inch canvas silently squeezes additional strategy branches.
+    figure_size = (figsize[0], max(figsize[1], total_height + 1.0))
+    fig, ax = plt.subplots(figsize=figure_size)
+    ax.set_facecolor('white')
     
     y_start = total_height / 2
     
@@ -378,16 +421,18 @@ def plot_model_diagram(model, figsize: tuple = (14, 7), title: Optional[str] = N
         y_strategy = y_start - s_idx * strategy_spacing - strategy_spacing / 2
         
         # --- Branch from decision to Markov node ---
+        branch_start = (x_decision + decision_size, decision_y)
+        branch_end = _edge_point((x_markov, y_strategy), branch_start, 0.35)
         ax.plot(
-            [x_decision + decision_size, x_markov - 0.4],
-            [decision_y, y_strategy],
+            [branch_start[0], branch_end[0]],
+            [branch_start[1], branch_end[1]],
             color=strategy_colors[s_idx], linewidth=2,
             solid_capstyle='round', zorder=3,
         )
         
         # Strategy label on branch
-        mid_x = (x_decision + decision_size + x_markov - 0.4) / 2
-        mid_y = (decision_y + y_strategy) / 2
+        mid_x = (branch_start[0] + branch_end[0]) / 2
+        mid_y = (branch_start[1] + branch_end[1]) / 2
         ax.text(
             mid_x, mid_y + 0.2,
             model.strategy_labels[strategy],
@@ -412,18 +457,20 @@ def plot_model_diagram(model, figsize: tuple = (14, 7), title: Optional[str] = N
         
         for st_idx, state in enumerate(model.states):
             y_state = y_strategy + (st_idx - (n_states - 1) / 2) * state_spacing
+            box_w = 1.6
+            box_h = 0.32
             
             # Branch line
+            state_start = _edge_point((x_markov, y_strategy),
+                                      (x_states - box_w / 2, y_state), 0.35)
             ax.plot(
-                [x_markov + 0.35, x_states - 0.6],
-                [y_strategy, y_state],
+                [state_start[0], x_states - box_w / 2],
+                [state_start[1], y_state],
                 color='#666666', linewidth=1.5,
                 solid_capstyle='round', zorder=3,
             )
             
             # State box
-            box_w = 1.2
-            box_h = 0.35
             state_box = FancyBboxPatch(
                 (x_states - box_w/2, y_state - box_h),
                 box_w, box_h * 2,
@@ -484,6 +531,7 @@ def plot_model_diagram(model, figsize: tuple = (14, 7), title: Optional[str] = N
 # Markov Trace Plot
 # =============================================================================
 
+@_with_plot_style
 def plot_trace(
     result, style: str = "area", figsize: tuple = (12, 5),
     title: Optional[str] = None, per_strategy: bool = True,
@@ -503,7 +551,6 @@ def plot_trace(
     per_strategy : bool
         If True, creates separate subplots per strategy.
     """
-    _setup_style()
     
     model = result.model
     strategies = model.strategy_names
@@ -512,10 +559,19 @@ def plot_trace(
     
     n_strat = len(strategies)
     
+    if style not in {"area", "line"}:
+        raise ValueError("style must be 'area' or 'line'")
+
     if per_strategy and n_strat > 1:
-        fig, axes = plt.subplots(1, n_strat, figsize=figsize, sharey=True)
-        if n_strat == 1:
-            axes = [axes]
+        n_rows, n_cols = _panel_shape(n_strat)
+        figure_size = (max(figsize[0], 4.3 * n_cols),
+                       max(figsize[1], 3.4 * n_rows + 1.0))
+        fig, axes_grid = plt.subplots(n_rows, n_cols, figsize=figure_size,
+                                      sharey=True, squeeze=False)
+        axes = list(axes_grid.flat)
+        for ax in axes[n_strat:]:
+            ax.remove()
+        axes = axes[:n_strat]
     else:
         fig, axes = plt.subplots(1, 1, figsize=figsize)
         axes = [axes]
@@ -554,15 +610,16 @@ def plot_trace(
     if per_strategy:
         handles = [mpatches.Patch(facecolor=fills[i], edgecolor=borders[i], 
                                    label=states[i]) for i in range(len(states))]
-        fig.legend(handles=handles, loc='lower center', ncol=len(states),
-                   bbox_to_anchor=(0.5, -0.02), fontsize=10)
+        fig.legend(handles=handles, loc='lower center',
+                   ncol=min(len(states), 4), bbox_to_anchor=(0.5, 0.01),
+                   frameon=False, fontsize=10)
     else:
         axes[0].legend(loc='upper right')
     
     if title:
         fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
     
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.08 if per_strategy else 0, 1, .97))
     return fig
 
 
@@ -573,128 +630,140 @@ def plot_trace(
 def plot_tornado(
     owsa_result, comparator=None, outcome="nmb",
     figsize: tuple = (10, None), title: Optional[str] = None,
-    max_params: int = 15,
+    max_params: int = 10, show_values: bool = False,
+    label_width: int = 30, font_family: Optional[str] = None,
+    currency: str = "$",
 ):
-    """Plot tornado diagram for one-way sensitivity analysis.
+    """Plot OWSA endpoint ranges with distinct low/high parameter scenarios.
 
-    Parameters
-    ----------
-    owsa_result : OWSAResult
-        OWSA result object.
-    comparator : str, optional
-        Comparator strategy.
-    outcome : str
-        "nmb" — x-axis shows INMB, ranked by INMB range.
-        "icer" — x-axis shows ICER, ranked by ICER range.
-    figsize : tuple
-        Figure size (height auto-calculated if None).
-    title : str, optional
-        Custom title.
-    max_params : int
-        Maximum number of parameters to show.
+    Height adapts to the number of wrapped label lines when figsize[1] is
+    None. show_values adds separate columns containing parameter inputs,
+    not outcome values. label_width controls wrapping (CJK characters count
+    as two columns). currency supplies the monetary unit used by the model.
+    Explicit figsize values are respected; increase height for dense plots.
     """
-    _setup_style()
+    import textwrap
+    import unicodedata
+    from matplotlib import font_manager
+    from matplotlib.lines import Line2D
 
-    summary = owsa_result.summary(comparator=comparator, outcome=outcome)
-    summary = summary.head(max_params)
+    if outcome not in {"nmb", "icer"}:
+        raise ValueError("outcome must be 'nmb' or 'icer'")
+    if isinstance(max_params, bool) or not isinstance(max_params, int) or max_params <= 0:
+        raise ValueError("max_params must be a positive integer")
+    if not isinstance(label_width, int) or label_width < 4:
+        raise ValueError("label_width must be an integer of at least 4")
 
-    n_params = len(summary)
-    if figsize[1] is None:
-        figsize = (figsize[0], max(4, n_params * 0.5 + 1.5))
-
-    fig, ax = plt.subplots(figsize=figsize)
-
-    # Choose columns based on outcome
-    if outcome == "icer":
-        col_low, col_high, col_base = 'ICER (Low)', 'ICER (High)', 'ICER (Base)'
-        xlabel = 'ICER ($/QALY)'
-        default_title = 'Tornado Diagram — ICER'
-    else:
-        col_low, col_high, col_base = 'INMB (Low)', 'INMB (High)', 'INMB (Base)'
-        xlabel = 'Incremental Net Monetary Benefit ($)'
-        default_title = f'Tornado Diagram (WTP = ${owsa_result.wtp:,.0f}/QALY)'
-
-    base_val = summary[col_base].iloc[0]
-
-    if outcome == "icer" and not np.isfinite(
-        summary[[col_low, col_high, col_base]].to_numpy(dtype=float)
-    ).all():
+    summary = owsa_result.summary(comparator=comparator, outcome=outcome).head(max_params)
+    if summary.empty:
+        raise ValueError("No OWSA parameters to plot")
+    prefix = "ICER" if outcome == "icer" else "INMB"
+    cols = [f"{prefix} ({bound})" for bound in ("Low", "High", "Base")]
+    values = summary[cols].to_numpy(dtype=float)
+    if not np.isfinite(values).all():
         raise ValueError(
-            "ICER tornado requires finite ratios in every scenario; "
-            "inspect the quadrant classifications or use outcome='nmb'."
+            "Tornado requires finite outcomes in every displayed scenario; "
+            "for ICER inspect quadrant classifications or use outcome='nmb'."
         )
+    base_val = values[0, 2]
+    if not np.allclose(values[:, 2], base_val):
+        raise ValueError("OWSA scenarios must share one base-case outcome")
 
-    for i, (_, row) in enumerate(summary.iterrows()):
-        low_val = row[col_low]
-        high_val = row[col_high]
+    def wrap_label(value):
+        # Preserve words in Latin labels, wrap unspaced CJK labels by width.
+        lines = []
+        for paragraph in str(value).split("\n"):
+            if any(unicodedata.east_asian_width(c) in "WF" for c in paragraph):
+                line, width = "", 0
+                for char in paragraph:
+                    size = 2 if unicodedata.east_asian_width(char) in "WF" else 1
+                    if width + size > label_width:
+                        lines.append(line)
+                        line, width = "", 0
+                    line += char
+                    width += size
+                lines.append(line)
+            else:
+                lines.extend(textwrap.wrap(paragraph, width=label_width) or [""])
+        return "\n".join(lines)
 
-        # Skip infinite ICER values
-        if outcome == "icer" and (
-            abs(low_val) == float('inf') or abs(high_val) == float('inf')
-        ):
-            continue
+    labels = [wrap_label(value) for value in summary["Parameter"]]
+    row_heights = np.array([max(.52, .22 * (label.count("\n") + 1) + .22)
+                            for label in labels])
+    positions = np.cumsum(row_heights) - row_heights / 2
+    plot_height = row_heights.sum()
+    width = figsize[0]
+    height = figsize[1] if figsize[1] is not None else max(4, plot_height + 1.9)
+    families = [font_family] if font_family else [
+        "Arial Unicode MS", "Noto Sans CJK SC", "Microsoft YaHei", "Heiti SC",
+    ]
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    family = next((name for name in families if name in available), "DejaVu Sans")
+    low_color, high_color = "#0072B2", "#D55E00"
 
-        left = min(low_val, high_val)
-        right = max(low_val, high_val)
-
-        # For ICER: lower is better (green), higher is worse (red)
-        # For INMB: higher is better (green), lower is worse (red)
-        if outcome == "icer":
-            color_lo = COLORS['positive'] if left < base_val else COLORS['negative']
-            color_hi = COLORS['negative'] if right > base_val else COLORS['positive']
+    # Keep this figure's style local to avoid changing the user's other plots.
+    with plt.rc_context({"font.family": family, "font.size": 10,
+                         "axes.unicode_minus": False}):
+        fig = plt.figure(figsize=(width, height), layout="constrained")
+        if show_values:
+            grid = fig.add_gridspec(1, 2, width_ratios=[4, 1.45])
+            ax = fig.add_subplot(grid[0])
+            table = fig.add_subplot(grid[1], sharey=ax)
+            table.set_xlim(0, 1)
+            table.axis("off")
+            table.set_title("Parameter inputs", fontsize=9, pad=26)
+            for x, label in ((.23, "Low"), (.77, "High")):
+                table.text(x, 1.01, label, transform=table.transAxes,
+                           ha="center", va="bottom", fontsize=9)
         else:
-            color_lo = COLORS['negative'] if left < base_val else COLORS['positive']
-            color_hi = COLORS['positive'] if right > base_val else COLORS['negative']
+            ax = fig.add_subplot(111)
+            table = None
 
-        # Draw two bars: left of base and right of base
-        if left < base_val:
-            ax.barh(n_params - 1 - i, base_val - left, left=left,
-                    height=0.6,
-                    color=(COLORS['positive'] if outcome == "icer"
-                           else COLORS['negative']),
-                    alpha=0.8, edgecolor='white', linewidth=0.5)
-        if right > base_val:
-            ax.barh(n_params - 1 - i, right - base_val, left=base_val,
-                    height=0.6,
-                    color=(COLORS['negative'] if outcome == "icer"
-                           else COLORS['positive']),
-                    alpha=0.8, edgecolor='white', linewidth=0.5)
-        if left >= base_val:
-            ax.barh(n_params - 1 - i, right - left, left=left,
-                    height=0.6,
-                    color=(COLORS['negative'] if outcome == "icer"
-                           else COLORS['positive']),
-                    alpha=0.8, edgecolor='white', linewidth=0.5)
-        if right <= base_val:
-            ax.barh(n_params - 1 - i, right - left, left=left,
-                    height=0.6,
-                    color=(COLORS['positive'] if outcome == "icer"
-                           else COLORS['negative']),
-                    alpha=0.8, edgecolor='white', linewidth=0.5)
+        for i, (_, row) in enumerate(summary.iterrows()):
+            low, high = values[i, :2]
+            left, right = sorted((low, high))
+            y = positions[i]
+            ax.barh(y, right - left, left=left, height=.25,
+                    color="#CCD8E2", edgecolor="none", zorder=2)
+            # Markers always encode parameter direction, even for inverse effects.
+            ax.plot(low, y, marker="|", markersize=13, markeredgewidth=2,
+                    color=low_color, linestyle="none", zorder=3)
+            ax.plot(high, y, marker="o", markersize=4,
+                    color=high_color, linestyle="none", zorder=4)
+            if table is not None:
+                table.text(.23, y, f'{row["Low Value"]:.3g}', ha="center", va="center")
+                table.text(.77, y, f'{row["High Value"]:.3g}', ha="center", va="center")
 
-        # Annotations: low and high bounds
-        ax.text(left - abs(right - left) * 0.02, n_params - 1 - i,
-                f'{row["Low Value"]:.3g}', ha='right', va='center',
-                fontsize=8, color='#666')
-        ax.text(right + abs(right - left) * 0.02, n_params - 1 - i,
-                f'{row["High Value"]:.3g}', ha='left', va='center',
-                fontsize=8, color='#666')
-
-    # Base case line
-    ax.axvline(base_val, color='#333', linewidth=1.5, linestyle='-', zorder=5)
-
-    ax.set_yticks(np.arange(n_params))
-    ax.set_yticklabels(summary['Parameter'].values[::-1], fontsize=10)
-    ax.set_xlabel(xlabel, fontsize=11)
-
-    if title is None:
-        title = default_title
-    ax.set_title(title, fontsize=14, fontweight='bold')
-
-    ax.grid(axis='x', alpha=0.3)
-    ax.grid(axis='y', visible=False)
-
-    fig.tight_layout()
+        ax.axvline(base_val, color="#444444", linewidth=1, linestyle="--", zorder=1)
+        ax.set_yticks(positions, labels=labels)
+        ax.set_ylim(plot_height + .12, -.12)
+        minimum, maximum = min(values.min(), base_val), max(values.max(), base_val)
+        padding = (maximum - minimum) * .09 or max(abs(base_val) * .05, 1)
+        ax.set_xlim(minimum - padding, maximum + padding)
+        ax.set_xlabel(
+            f"ICER ({currency}/QALY)" if outcome == "icer"
+            else f"Incremental Net Monetary Benefit ({currency})"
+        )
+        ax.xaxis.set_major_locator(plt.MaxNLocator(5))
+        ax.ticklabel_format(axis="x", style="sci", scilimits=(-4, 5), useOffset=False)
+        ax.grid(axis="x", alpha=.2)
+        ax.grid(axis="y", visible=False)
+        for spine in ("top", "right", "left"):
+            ax.spines[spine].set_visible(False)
+        ax.tick_params(axis="y", length=0, pad=9)
+        fig.suptitle(title or (
+            "Tornado Diagram — ICER" if outcome == "icer"
+            else f"Tornado Diagram (WTP = {currency}{owsa_result.wtp:,.0f}/QALY)"
+        ), fontsize=13)
+        handles = [
+            Line2D([], [], color=low_color, marker="|", linestyle="none",
+                   markersize=10, label="Low parameter"),
+            Line2D([], [], color=high_color, marker="o", linestyle="none",
+                   markersize=4, label="High parameter"),
+            Line2D([], [], color="#444444", linestyle="--", label="Base case"),
+        ]
+        ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(.5, 1.01),
+                  ncol=3, frameon=False, fontsize=9)
     return fig
 
 
@@ -702,15 +771,15 @@ def plot_tornado(
 # OWSA Single Parameter Plot
 # =============================================================================
 
+@_with_plot_style
 def plot_owsa_param(
     owsa_result, param_name: str, comparator=None,
-    figsize: tuple = (8, 5), title: Optional[str] = None,
+    figsize: tuple = (8, 5), title: Optional[str] = None, currency: str = "$",
 ):
     """Plot one-way sensitivity for a specific parameter.
     
     Shows how outcomes change as a single parameter varies.
     """
-    _setup_style()
     
     if comparator is None:
         comparator = owsa_result.model.strategy_names[0]
@@ -758,12 +827,12 @@ def plot_owsa_param(
     
     param_label = entries[0].get('label', param_name)
     ax.set_xlabel(param_label, fontsize=11)
-    ax.set_ylabel('Incremental NMB ($)', fontsize=11)
+    ax.set_ylabel(f'Incremental NMB ({currency})', fontsize=11)
     
     if title is None:
         title = f'One-Way Sensitivity: {param_label}'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend()
+    _outside_legend(ax, )
     
     fig.tight_layout()
     return fig
@@ -773,10 +842,11 @@ def plot_owsa_param(
 # CE Scatter Plot (PSA)
 # =============================================================================
 
+@_with_plot_style
 def plot_scatter(
     psa_result, comparator=None, wtp: Optional[float] = None,
     figsize: tuple = (9, 7), title: Optional[str] = None,
-    alpha: float = 0.3,
+    alpha: float = 0.3, currency: str = "$",
 ):
     """Plot cost-effectiveness scatter (incremental CE plane).
     
@@ -795,18 +865,22 @@ def plot_scatter(
     alpha : float
         Point transparency.
     """
-    _setup_style()
     
     if comparator is None:
         comparator = psa_result.model.strategy_names[0]
     
+    if comparator not in psa_result.model.strategy_names:
+        raise ValueError(f"Unknown comparator {comparator!r}")
+    if psa_result.model.n_strategies < 2:
+        raise ValueError("Incremental plots require at least two strategies")
     ce = psa_result.ce_table
     comp_df = ce[ce['strategy'] == comparator].sort_values('sim')
     
     fig, ax = plt.subplots(figsize=figsize)
     
     strategies = [s for s in psa_result.model.strategy_names if s != comparator]
-    colors = _get_strategy_colors(len(strategies))
+    palette = dict(zip(psa_result.model.strategy_names,
+                       _get_strategy_colors(psa_result.model.n_strategies)))
     
     for idx, strategy in enumerate(strategies):
         int_df = ce[ce['strategy'] == strategy].sort_values('sim')
@@ -817,16 +891,16 @@ def plot_scatter(
         ax.scatter(
             inc_qaly, inc_cost,
             s=15, alpha=alpha,
-            color=colors[idx],
+            color=palette[strategy],
             label=psa_result.model.strategy_labels[strategy],
-            edgecolors='none',
+            edgecolors='none', rasterized=True,
         )
         
         # Mean point
         ax.scatter(
             [inc_qaly.mean()], [inc_cost.mean()],
             s=150, marker='*',
-            color=colors[idx], edgecolors='black', linewidth=1,
+            color=palette[strategy], edgecolors='black', linewidth=1,
             zorder=10,
         )
     
@@ -834,35 +908,26 @@ def plot_scatter(
     ax.axhline(0, color='#999', linewidth=0.8)
     ax.axvline(0, color='#999', linewidth=0.8)
     
+    # Retain data limits when drawing a steep WTP line.
+    data_xlim, data_ylim = ax.get_xlim(), ax.get_ylim()
     # WTP line
     if wtp is not None:
         xlims = ax.get_xlim()
         x_range = np.linspace(xlims[0], xlims[1], 100)
         ax.plot(x_range, x_range * wtp, '--',
                 color=COLORS['wtp_line'], linewidth=1.5,
-                label=f'WTP = ${wtp:,.0f}/QALY')
+                label=f'WTP = {currency}{wtp:,.0f}/QALY')
     
-    # Quadrant labels
-    ax.text(0.98, 0.98, 'NE\n(More costly,\nmore effective)',
-            transform=ax.transAxes, ha='right', va='top',
-            fontsize=8, color='#999', alpha=0.6)
-    ax.text(0.02, 0.02, 'SW\n(Less costly,\nless effective)',
-            transform=ax.transAxes, ha='left', va='bottom',
-            fontsize=8, color='#999', alpha=0.6)
-    ax.text(0.02, 0.98, 'NW\n(More costly,\nless effective)',
-            transform=ax.transAxes, ha='left', va='top',
-            fontsize=8, color='#999', alpha=0.6)
-    ax.text(0.98, 0.02, 'SE\n(Less costly,\nmore effective)',
-            transform=ax.transAxes, ha='right', va='bottom',
-            fontsize=8, color='#999', alpha=0.6)
-    
+    ax.set_xlim(data_xlim)
+    ax.set_ylim(data_ylim)
+
     ax.set_xlabel('Incremental QALYs', fontsize=12)
-    ax.set_ylabel('Incremental Cost ($)', fontsize=12)
+    ax.set_ylabel(f'Incremental Cost ({currency})', fontsize=12)
     
     if title is None:
-        title = 'Cost-Effectiveness Plane'
+        title = f'Cost-Effectiveness Plane — vs {psa_result.model.strategy_labels[comparator]}'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend(loc='upper left', fontsize=10)
+    _outside_legend(ax, loc='upper left', fontsize=10)
     
     fig.tight_layout()
     return fig
@@ -872,10 +937,11 @@ def plot_scatter(
 # CEAC Plot
 # =============================================================================
 
+@_with_plot_style
 def plot_ceac(
     psa_result, comparator=None,
     wtp_range: tuple = (0, 100000), n_wtp: int = 200,
-    figsize: tuple = (10, 6), title: Optional[str] = None,
+    figsize: tuple = (10, 6), title: Optional[str] = None, currency: str = "$",
 ):
     """Plot cost-effectiveness acceptability curve (CEAC).
     
@@ -894,25 +960,25 @@ def plot_ceac(
     title : str, optional
         Custom title.
     """
-    _setup_style()
     
     ceac = psa_result.ceac_data(comparator=comparator, wtp_range=wtp_range, n_wtp=n_wtp)
     
     fig, ax = plt.subplots(figsize=figsize)
     
     strategies = ceac['strategy'].unique()
-    colors = _get_strategy_colors(len(strategies))
+    palette = dict(zip(psa_result.model.strategy_names,
+                       _get_strategy_colors(psa_result.model.n_strategies)))
     
     for idx, strategy in enumerate(strategies):
         df_s = ceac[ceac['strategy'] == strategy]
         label = df_s['Strategy'].iloc[0]
         ax.plot(
             df_s['WTP'], df_s['Prob CE'],
-            color=colors[idx], linewidth=2.5,
+            color=palette[strategy], linewidth=2.5,
             label=label,
         )
     
-    ax.set_xlabel('Willingness-to-Pay ($/QALY)', fontsize=12)
+    ax.set_xlabel(f'Willingness-to-Pay ({currency}/QALY)', fontsize=12)
     ax.set_ylabel('Probability Cost-Effective', fontsize=12)
     ax.set_ylim(-0.02, 1.02)
     ax.set_xlim(wtp_range)
@@ -923,7 +989,7 @@ def plot_ceac(
     if title is None:
         title = 'Cost-Effectiveness Acceptability Curve'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend(loc='best', fontsize=11)
+    _outside_legend(ax, loc='best', fontsize=11)
     
     fig.tight_layout()
     return fig
@@ -933,9 +999,10 @@ def plot_ceac(
 # PSA Convergence Plot
 # =============================================================================
 
+@_with_plot_style
 def plot_convergence(
     psa_result, comparator=None, wtp: float = 50000,
-    figsize: tuple = (10, 5), title: Optional[str] = None,
+    figsize: tuple = (10, 5), title: Optional[str] = None, currency: str = "$",
 ):
     """Plot PSA convergence (running mean of incremental NMB).
     
@@ -952,16 +1019,20 @@ def plot_convergence(
     title : str, optional
         Custom title.
     """
-    _setup_style()
     
     if comparator is None:
         comparator = psa_result.model.strategy_names[0]
     
+    if comparator not in psa_result.model.strategy_names:
+        raise ValueError(f"Unknown comparator {comparator!r}")
+    if psa_result.model.n_strategies < 2:
+        raise ValueError("Incremental plots require at least two strategies")
     ce = psa_result.ce_table
     comp_df = ce[ce['strategy'] == comparator].sort_values('sim')
     
     strategies = [s for s in psa_result.model.strategy_names if s != comparator]
-    colors = _get_strategy_colors(len(strategies))
+    palette = dict(zip(psa_result.model.strategy_names,
+                       _get_strategy_colors(psa_result.model.n_strategies)))
     
     fig, ax = plt.subplots(figsize=figsize)
     
@@ -977,18 +1048,18 @@ def plot_convergence(
         
         ax.plot(
             np.arange(1, len(inmb) + 1), running_mean,
-            color=colors[idx], linewidth=2,
+            color=palette[strategy], linewidth=2,
             label=psa_result.model.strategy_labels[strategy],
         )
     
     ax.axhline(0, color='#999', linewidth=0.8, linestyle='--')
     ax.set_xlabel('Number of Simulations', fontsize=12)
-    ax.set_ylabel('Running Mean INMB ($)', fontsize=12)
+    ax.set_ylabel(f'Running Mean INMB ({currency})', fontsize=12)
     
     if title is None:
-        title = f'PSA Convergence (WTP = ${wtp:,.0f}/QALY)'
+        title = f'PSA Convergence (WTP = {currency}{wtp:,.0f}/QALY)'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend()
+    _outside_legend(ax, )
     
     fig.tight_layout()
     return fig
@@ -998,6 +1069,7 @@ def plot_convergence(
 # PSM-Specific Plots
 # =============================================================================
 
+@_with_plot_style
 def plot_survival_curves(
     psm_result, figsize: tuple = (10, 6), title: Optional[str] = None,
     endpoints: Optional[List[str]] = None,
@@ -1007,7 +1079,6 @@ def plot_survival_curves(
 
     Shows overlaid survival curves for each strategy and endpoint.
     """
-    _setup_style()
 
     model = psm_result.model
     if endpoints is None:
@@ -1040,12 +1111,13 @@ def plot_survival_curves(
     ax.set_title(title, fontsize=14, fontweight='bold')
 
     if show_legend:
-        ax.legend(loc='best', fontsize=9)
+        _outside_legend(ax, loc='best', fontsize=9)
 
     fig.tight_layout()
     return fig
 
 
+@_with_plot_style
 def plot_state_area(
     psm_result, strategy: Optional[str] = None,
     figsize: tuple = (10, 6), title: Optional[str] = None,
@@ -1055,7 +1127,6 @@ def plot_state_area(
 
     Classic PSM visualization showing survival curve partitioning.
     """
-    _setup_style()
 
     model = psm_result.model
     if strategy is None:
@@ -1098,26 +1169,32 @@ def plot_state_area(
         title = f'Partitioned Survival — {model.strategy_labels[strategy]}'
     ax.set_title(title, fontsize=14, fontweight='bold')
 
-    ax.legend(loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=10)
+    _outside_legend(ax, loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=10)
 
     fig.tight_layout()
     return fig
 
 
+@_with_plot_style
 def plot_psm_trace(
     psm_result, figsize: tuple = (10, 6), title: Optional[str] = None,
 ):
     """Plot PSM state occupancy as line chart (all strategies, panel per state)."""
-    _setup_style()
 
     model = psm_result.model
     n_strategies = model.n_strategies
     colors = _get_strategy_colors(n_strategies)
     line_styles = ['-', '--', '-.', ':']
 
-    fig, axes = plt.subplots(1, model.n_states, figsize=figsize, sharey=True)
-    if model.n_states == 1:
-        axes = [axes]
+    n_rows, n_cols = _panel_shape(model.n_states)
+    figure_size = (max(figsize[0], 4.3 * n_cols),
+                   max(figsize[1], 3.4 * n_rows + 1.0))
+    fig, axes_grid = plt.subplots(n_rows, n_cols, figsize=figure_size,
+                                  sharey=True, squeeze=False)
+    axes = list(axes_grid.flat)
+    for ax in axes[model.n_states:]:
+        ax.remove()
+    axes = axes[:model.n_states]
 
     for s_idx, state in enumerate(model.states):
         ax = axes[s_idx]
@@ -1134,22 +1211,27 @@ def plot_psm_trace(
         if s_idx == 0:
             ax.set_ylabel('Proportion', fontsize=12)
         ax.set_ylim(-0.02, 1.05)
-        ax.legend(fontsize=8)
+
+    handles = [plt.Line2D([], [], color=colors[i], linewidth=2,
+                          label=model.strategy_labels[strategy])
+               for i, strategy in enumerate(model.strategy_names)]
+    fig.legend(handles=handles, loc='lower center', ncol=min(n_strategies, 4),
+               bbox_to_anchor=(.5, .01), frameon=False, fontsize=10)
 
     if title is None:
         title = 'State Occupancy by Strategy'
     fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, .08, 1, .97))
     return fig
 
 
+@_with_plot_style
 def plot_psm_comparison(
     psm_result, endpoint: str, figsize: tuple = (10, 6),
     title: Optional[str] = None,
 ):
     """Compare a single survival endpoint across strategies with shaded area."""
-    _setup_style()
 
     model = psm_result.model
     colors = _get_strategy_colors(model.n_strategies)
@@ -1188,7 +1270,7 @@ def plot_psm_comparison(
         title = f'{endpoint} Survival Comparison'
     ax.set_title(title, fontsize=14, fontweight='bold')
 
-    ax.legend(loc='best')
+    _outside_legend(ax, loc='best')
     fig.tight_layout()
     return fig
 
@@ -1197,6 +1279,7 @@ def plot_psm_comparison(
 # Microsimulation Plots
 # =============================================================================
 
+@_with_plot_style
 def plot_microsim_trace(
     result,
     strategy: Optional[str] = None,
@@ -1213,7 +1296,6 @@ def plot_microsim_trace(
     strategy : str, optional
         Plot a single strategy. Default: all strategies.
     """
-    _setup_style()
     model = result.model
     strategies = [strategy] if strategy else model.strategy_names
     n_strat = len(strategies)
@@ -1222,8 +1304,15 @@ def plot_microsim_trace(
         fig, axes = plt.subplots(1, 1, figsize=figsize)
         axes = [axes]
     else:
-        fig, axes = plt.subplots(1, n_strat, figsize=(figsize[0], figsize[1]),
-                                 sharey=True)
+        n_rows, n_cols = _panel_shape(n_strat)
+        figure_size = (max(figsize[0], 4.3 * n_cols),
+                       max(figsize[1], 3.4 * n_rows + 1.0))
+        fig, axes_grid = plt.subplots(n_rows, n_cols, figsize=figure_size,
+                                      sharey=True, squeeze=False)
+        axes = list(axes_grid.flat)
+        for ax in axes[n_strat:]:
+            ax.remove()
+        axes = axes[:n_strat]
 
     state_fills, state_borders = _get_state_colors(model.n_states)
     cycles = np.arange(model.n_cycles + 1) * model.cycle_length
@@ -1240,17 +1329,22 @@ def plot_microsim_trace(
         if s_idx == 0:
             ax.set_ylabel('Proportion in State', fontsize=11)
         ax.set_title(model.strategy_labels[strat], fontsize=12, fontweight='bold')
-        ax.legend(loc='best', fontsize=9)
         ax.set_ylim(-0.02, 1.05)
         ax.set_xlim(0, cycles[-1])
+
+    handles = [plt.Line2D([], [], color=state_borders[i], linewidth=2,
+                          label=state) for i, state in enumerate(model.states)]
+    fig.legend(handles=handles, loc='lower center', ncol=min(model.n_states, 4),
+               bbox_to_anchor=(.5, .01), frameon=False, fontsize=10)
 
     if title is None:
         title = 'Microsimulation — State Occupancy Trace'
     fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, .08, 1, .97))
     return fig
 
 
+@_with_plot_style
 def plot_microsim_survival(
     result,
     figsize: tuple = (10, 7),
@@ -1264,7 +1358,6 @@ def plot_microsim_survival(
     result : MicroSimResult
         Microsimulation result object.
     """
-    _setup_style()
     model = result.model
     colors = _get_strategy_colors(model.n_strategies)
 
@@ -1285,17 +1378,19 @@ def plot_microsim_survival(
     if title is None:
         title = 'Microsimulation — Survival Curves'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend(loc='best')
+    _outside_legend(ax, loc='best')
     fig.tight_layout()
     return fig
 
 
+@_with_plot_style
 def plot_microsim_outcomes(
     result,
     outcome: str = "qalys",
     figsize: tuple = (10, 6),
     title: Optional[str] = None,
     bins: int = 50,
+    currency: str = "$",
     **kwargs,
 ):
     """Plot histogram of per-patient outcomes.
@@ -1309,7 +1404,6 @@ def plot_microsim_outcomes(
     bins : int
         Number of histogram bins.
     """
-    _setup_style()
     model = result.model
     colors = _get_strategy_colors(model.n_strategies)
 
@@ -1325,8 +1419,12 @@ def plot_microsim_outcomes(
         'cost': 'Total Cost',
         'lys': 'Life Years',
     }
-    data_key = key_map.get(outcome, 'total_qalys')
-    data_label = label_map.get(outcome, outcome)
+    if outcome not in key_map:
+        raise ValueError("outcome must be 'qalys', 'cost', or 'lys'")
+    if isinstance(bins, bool) or not isinstance(bins, int) or bins <= 0:
+        raise ValueError("bins must be a positive integer")
+    data_key = key_map[outcome]
+    data_label = label_map[outcome]
 
     for s_idx, strat in enumerate(model.strategy_names):
         data = result.results[strat][data_key]
@@ -1337,13 +1435,14 @@ def plot_microsim_outcomes(
         ax.axvline(data.mean(), color=colors[s_idx], linewidth=2,
                    linestyle='--', alpha=0.8)
 
-    ax.set_xlabel(data_label, fontsize=12)
+    ax.set_xlabel(f'{data_label} ({currency})' if outcome == 'cost' else data_label,
+                  fontsize=12)
     ax.set_ylabel('Number of Patients', fontsize=12)
 
     if title is None:
         title = f'Microsimulation — Distribution of {data_label}'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend(loc='best', fontsize=10)
+    _outside_legend(ax, loc='best', fontsize=10)
     fig.tight_layout()
     return fig
 
@@ -1352,8 +1451,10 @@ def plot_microsim_outcomes(
 # CEAnalysis plots (multi-strategy comparison)
 # ═══════════════════════════════════════════════════════════════════════════
 
+@_with_plot_style
 def plot_ce_frontier(cea, figsize=(10, 8), title=None, show_labels=True,
-                     wtp=None, annotate_icer=True):
+                     wtp=None, annotate_icer=True, currency: str = "$",
+):
     """
     Plot CE plane with efficiency frontier.
 
@@ -1437,18 +1538,20 @@ def plot_ce_frontier(cea, figsize=(10, 8), title=None, show_labels=True,
                 label=f'WTP = {wtp:,.0f}/QALY')
 
     ax.set_xlabel("QALYs", fontsize=12)
-    ax.set_ylabel("Cost ($)", fontsize=12)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+    ax.set_ylabel(f"Cost ({currency})", fontsize=12)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
     if title is None:
         title = "Cost-Effectiveness Plane — Efficiency Frontier"
     ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.legend(loc="best", fontsize=10)
+    _outside_legend(ax, loc="best", fontsize=10)
     fig.tight_layout()
     return fig
 
 
+@_with_plot_style
 def plot_nmb_curve(cea, wtp_range=(0, 150000), n_wtp=301,
-                   figsize=(10, 7), title=None):
+                   figsize=(10, 7), title=None, currency: str = "$",
+):
     """
     Plot NMB curves for each strategy across WTP thresholds.
 
@@ -1484,21 +1587,23 @@ def plot_nmb_curve(cea, wtp_range=(0, 150000), n_wtp=301,
                     fontsize=8, color='gray', ha='center', va='top',
                     rotation=90, xytext=(5, -5), textcoords='offset points')
 
-    ax.set_xlabel("Willingness-to-Pay ($/QALY)", fontsize=12)
-    ax.set_ylabel("Net Monetary Benefit ($)", fontsize=12)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+    ax.set_xlabel(f"Willingness-to-Pay ({currency}/QALY)", fontsize=12)
+    ax.set_ylabel(f"Net Monetary Benefit ({currency})", fontsize=12)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
     ax.axhline(0, color='gray', linewidth=0.5, alpha=0.5)
     if title is None:
         title = "Net Monetary Benefit by WTP Threshold"
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend(loc='best', fontsize=10)
+    _outside_legend(ax, loc='best', fontsize=10)
     fig.tight_layout()
     return fig
 
 
+@_with_plot_style
 def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
-              show_ceac=True, figsize=(10, 7), title=None):
+              show_ceac=True, figsize=(10, 7), title=None, currency: str = "$",
+):
     """
     Plot Cost-Effectiveness Acceptability Frontier (CEAF).
 
@@ -1551,20 +1656,22 @@ def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
             alpha=0.08, color=colors[color_idx],
         )
 
-    ax.set_xlabel("Willingness-to-Pay ($/QALY)", fontsize=12)
+    ax.set_xlabel(f"Willingness-to-Pay ({currency}/QALY)", fontsize=12)
     ax.set_ylabel("Probability Cost-Effective", fontsize=12)
     ax.set_ylim(-0.02, 1.05)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
     if title is None:
         title = "Cost-Effectiveness Acceptability Frontier (CEAF)"
     ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend(loc='best', fontsize=10)
+    _outside_legend(ax, loc='best', fontsize=10)
     fig.tight_layout()
     return fig
 
 
+@_with_plot_style
 def plot_evpi(cea, wtp_range=(0, 150000), n_wtp=301,
-              figsize=(10, 7), title=None, population=None):
+              figsize=(10, 7), title=None, population=None, currency: str = "$",
+):
     """
     Plot Expected Value of Perfect Information (EVPI) curve.
 
@@ -1591,10 +1698,10 @@ def plot_evpi(cea, wtp_range=(0, 150000), n_wtp=301,
     ax1.plot(wtp_vals, evpi_vals, color=color1, linewidth=2.5,
              label='EVPI (per patient)')
     ax1.fill_between(wtp_vals, 0, evpi_vals, alpha=0.1, color=color1)
-    ax1.set_xlabel("Willingness-to-Pay ($/QALY)", fontsize=12)
-    ax1.set_ylabel("EVPI per Patient ($)", fontsize=12, color=color1)
-    ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+    ax1.set_xlabel(f"Willingness-to-Pay ({currency}/QALY)", fontsize=12)
+    ax1.set_ylabel(f"EVPI per Patient ({currency})", fontsize=12, color=color1)
+    ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
     ax1.tick_params(axis='y', labelcolor=color1)
 
     if population is not None:
@@ -1602,17 +1709,17 @@ def plot_evpi(cea, wtp_range=(0, 150000), n_wtp=301,
         pop_evpi = evpi_vals * population
         ax2.plot(wtp_vals, pop_evpi, color=color2, linewidth=1.5,
                  linestyle='--', label=f'Population EVPI (N={population:,.0f})')
-        ax2.set_ylabel(f"Population EVPI ($)", fontsize=12,
+        ax2.set_ylabel(f"Population EVPI ({currency})", fontsize=12,
                         color=color2)
         ax2.yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+            plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
         ax2.tick_params(axis='y', labelcolor=color2)
         # Combine legends
         h1, l1 = ax1.get_legend_handles_labels()
         h2, l2 = ax2.get_legend_handles_labels()
-        ax1.legend(h1 + h2, l1 + l2, loc='best', fontsize=10)
+        _outside_legend(ax1, h1 + h2, l1 + l2, loc='best', fontsize=10)
     else:
-        ax1.legend(loc='best', fontsize=10)
+        _outside_legend(ax1, loc='best', fontsize=10)
 
     if title is None:
         title = "Expected Value of Perfect Information (EVPI)"
