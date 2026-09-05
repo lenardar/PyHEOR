@@ -84,24 +84,23 @@ class Beta(Distribution):
             self.alpha = float(alpha)
             self.beta = float(beta)
         elif mean is not None and sd is not None:
-            if sd == 0 or sd is None:
-                # Degenerate: very tight around mean
-                self.alpha = mean * 10000
-                self.beta = (1 - mean) * 10000
-            else:
-                var = sd ** 2
-                common = mean * (1 - mean) / var - 1
-                if common <= 0:
-                    raise ValueError(
-                        f"Cannot parameterize Beta with mean={mean}, sd={sd}. "
-                        f"Variance too large relative to mean*(1-mean)."
-                    )
-                self.alpha = mean * common
-                self.beta = (1 - mean) * common
+            if not np.isfinite(mean) or not 0 < mean < 1:
+                raise ValueError("Beta mean must be finite and strictly between 0 and 1")
+            if not np.isfinite(sd) or sd <= 0:
+                raise ValueError("Beta sd must be finite and positive; use Fixed(mean) for zero uncertainty")
+            var = sd ** 2
+            common = mean * (1 - mean) / var - 1
+            if common <= 0:
+                raise ValueError(
+                    f"Cannot parameterize Beta with mean={mean}, sd={sd}. "
+                    f"Variance too large relative to mean*(1-mean)."
+                )
+            self.alpha = mean * common
+            self.beta = (1 - mean) * common
         else:
             raise ValueError("Provide either (mean, sd) or (alpha, beta)")
         
-        if self.alpha <= 0 or self.beta <= 0:
+        if not np.all(np.isfinite([self.alpha, self.beta])) or self.alpha <= 0 or self.beta <= 0:
             raise ValueError(f"Alpha ({self.alpha:.4f}) and beta ({self.beta:.4f}) must be > 0")
     
     def sample(self, n: int = 1, rng=None) -> np.ndarray:
@@ -141,14 +140,16 @@ class Gamma(Distribution):
             self.shape = float(shape)
             self.rate = float(rate)
         elif mean is not None and sd is not None:
-            if sd == 0:
-                self.shape = mean * 10000
-                self.rate = 10000
-            else:
-                self.shape = (mean / sd) ** 2
-                self.rate = mean / (sd ** 2)
+            if not np.isfinite(mean) or mean <= 0:
+                raise ValueError("Gamma mean must be finite and positive")
+            if not np.isfinite(sd) or sd <= 0:
+                raise ValueError("Gamma sd must be finite and positive; use Fixed(mean) for zero uncertainty")
+            self.shape = (mean / sd) ** 2
+            self.rate = mean / (sd ** 2)
         else:
             raise ValueError("Provide either (mean, sd) or (shape, rate)")
+        if not np.all(np.isfinite([self.shape, self.rate])) or self.shape <= 0 or self.rate <= 0:
+            raise ValueError("Gamma shape and rate must be finite and positive")
     
     def sample(self, n: int = 1, rng=None) -> np.ndarray:
         generator = rng if rng is not None else np.random

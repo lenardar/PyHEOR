@@ -545,6 +545,8 @@ class PartitionedSurvivalModel:
                 idx = self.states.index(state_name)
                 result[idx] = resolve_value(val, params, t)
 
+        if not np.all(np.isfinite(result)):
+            raise ValueError(f"Non-finite state cost or utility for strategy {strategy!r}, interval {t}")
         return result
 
     def _get_state_costs(self, category: str, strategy: str,

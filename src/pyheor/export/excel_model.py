@@ -92,13 +92,15 @@ def export_excel_model(model_or_result, filepath: str, params: dict = None):
             params = {name: p.base for name, p in model.params.items()}
 
     if isinstance(model, MarkovModel):
-        _validate_markov_excel_support(model, params)
-        py_results = model._simulate_single(params)
-        _build_markov_excel(model, filepath, params, py_results)
+        with model._attr_param_override(params):
+            _validate_markov_excel_support(model, params)
+            py_results = model._simulate_single(params)
+            _build_markov_excel(model, filepath, params, py_results)
     elif isinstance(model, PSMModel):
-        _validate_psm_excel_support(model, params)
-        py_results = model._simulate_single(params)
-        _build_psm_excel(model, filepath, params, py_results)
+        with model._attr_param_override(params):
+            _validate_psm_excel_support(model, params)
+            py_results = model._simulate_single(params)
+            _build_psm_excel(model, filepath, params, py_results)
     else:
         raise TypeError(
             f"Excel model export supports MarkovModel and PSMModel, "
@@ -264,7 +266,7 @@ def _build_markov_excel(model, filepath, params, py_results):
 
         cost_input_rows = {}
         for cat in model._costs:
-            vec = model._get_state_costs(cat, strategy, params, 0)
+            vec = model._resolve_state_values(model._costs[cat].values, strategy, params, 0)
             ws.cell(r, 1, cat)
             for j in range(n):
                 c = ws.cell(r, 2 + j, vec[j])
@@ -610,7 +612,7 @@ def _build_psm_excel(model, filepath, params, py_results):
         r += 1
         cost_input_rows = {}
         for cat in cost_cats:
-            vec = model._get_state_costs(cat, strategy, params, 0)
+            vec = model._resolve_state_values(model._costs[cat].values, strategy, params, 0)
             ws.cell(r, 1, cat)
             for j in range(n):
                 c = ws.cell(r, 2 + j, vec[j])
@@ -1261,9 +1263,13 @@ def _enable_excel_recalculation(workbook) -> None:
 
 def _write_setting(ws, row, label, value) -> int:
     """Write a setting row with input styling. Returns the row number."""
-    ws.cell(row, 1, label)
+    fixed = label in {"Discount Convention", "N Cycles", "Half-cycle Correction", "Initial State"}
+    ws.cell(row, 1, label + (" [fixed; regenerate workbook]" if fixed else ""))
     c = ws.cell(row, 2, value)
-    c.fill = _INPUT_FILL
+    if fixed:
+        c.font = _NOTE_FONT
+    else:
+        c.fill = _INPUT_FILL
     return row
 
 

@@ -224,12 +224,10 @@ class OWSAResult:
     
     @staticmethod
     def _compute_icer(cost_int, cost_comp, qaly_int, qaly_comp):
-        """Compute ICER, returning inf when ΔQALYs ≈ 0."""
+        """Return a ratio only when the incremental quadrant permits one."""
         d_cost = cost_int - cost_comp
         d_qaly = qaly_int - qaly_comp
-        if abs(d_qaly) < 1e-12:
-            return float('inf') if d_cost > 0 else float('-inf')
-        return d_cost / d_qaly
+        return classify_incremental(d_cost, d_qaly)[0]
 
     def summary(self, comparator: Optional[str] = None,
                 outcome: str = "nmb") -> pd.DataFrame:
@@ -308,6 +306,9 @@ class OWSAResult:
                 'ICER (Low)': low_icer,
                 'ICER (High)': high_icer,
                 'ICER (Base)': base_icer,
+                'ICER Classification (Low)': classify_incremental(low_cost_int - low_cost_comp, low_qaly_int - low_qaly_comp)[1],
+                'ICER Classification (High)': classify_incremental(high_cost_int - high_cost_comp, high_qaly_int - high_qaly_comp)[1],
+                'ICER Classification (Base)': classify_incremental(base_cost_int - base_cost_comp, base_qaly_int - base_qaly_comp)[1],
             }
 
             if outcome == "icer":
@@ -450,7 +451,7 @@ class PSAResult:
             
             mean_ic = inc_cost.mean()
             mean_iq = inc_qaly.mean()
-            icer_val = mean_ic / mean_iq if abs(mean_iq) > 1e-10 else float('inf')
+            icer_val, classification = classify_incremental(mean_ic, mean_iq)
             
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -462,6 +463,7 @@ class PSAResult:
                 'Inc. QALYs (2.5%)': np.percentile(inc_qaly, 2.5),
                 'Inc. QALYs (97.5%)': np.percentile(inc_qaly, 97.5),
                 'ICER': icer_val,
+                'ICER Classification': classification,
             })
         
         return pd.DataFrame(rows)

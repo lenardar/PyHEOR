@@ -616,6 +616,14 @@ def plot_tornado(
 
     base_val = summary[col_base].iloc[0]
 
+    if outcome == "icer" and not np.isfinite(
+        summary[[col_low, col_high, col_base]].to_numpy(dtype=float)
+    ).all():
+        raise ValueError(
+            "ICER tornado requires finite ratios in every scenario; "
+            "inspect the quadrant classifications or use outcome='nmb'."
+        )
+
     for i, (_, row) in enumerate(summary.iterrows()):
         low_val = row[col_low]
         high_val = row[col_high]

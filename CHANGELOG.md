@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Follow-up calculation review
+
+- Excel retains the original state cost rate when its first applicable
+  interval is later than zero, and honors cost/QALY discount-rate overrides.
+- Export-time choices (discount convention, interval count, HCC and initial
+  state) are marked as fixed metadata rather than yellow editable inputs.
+  Change these in Python and regenerate the workbook.
+- PSA and OWSA use the same incremental-quadrant classification as base case.
+  ICER tornado plots reject non-numeric scenarios and direct users to NMB.
+- Non-finite state costs and utilities raise an error with strategy and interval.
+- Beta/Gamma reject zero, negative and non-finite standard deviations. Use
+  `Fixed(mean)` to represent zero uncertainty; no artificial variance is added.
+
 This release tightens the calculation semantics for Markov and PSM models.
 Existing analyses should be rerun and reviewed because totals may change where
 the previous behavior counted an extra reward period or used ambiguous timing.
