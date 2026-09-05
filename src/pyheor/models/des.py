@@ -84,6 +84,7 @@ class _EventDef:
     from_idx: int
     to_idx: int
     distribution: Any  # SurvivalDistribution, callable, or None
+    clock: Optional[str] = None  # None inherits the model-level default
 
 
 @dataclass
@@ -129,6 +130,10 @@ class DiscreteEventSimulationModel:
         Event-time clock. ``"reset"`` (default) samples time from entry into
         the current state. ``"forward"`` conditions each event on the
         absolute study time using its cumulative hazard.
+    discount_convention : {"discrete", "continuous"}
+        How ``dr_cost`` and ``dr_qaly`` are defined. ``"discrete"`` (default)
+        uses annual-effective rates and ``(1 + rate) ** -time``. ``"continuous"``
+        uses continuously compounded rates and ``exp(-rate * time)``.
 
     Examples
     --------
@@ -148,15 +153,25 @@ class DiscreteEventSimulationModel:
         dr_qaly: Union[float, "Param"] = 0.0,
         state_type: Optional[Dict[str, str]] = None,
         clock: str = "reset",
+        discount_convention: str = "discrete",
     ):
         self.states = list(states)
+        if not self.states:
+            raise ValueError("states must contain at least one state")
+        if len(set(self.states)) != len(self.states):
+            raise ValueError(f"State names must be unique, got {self.states!r}")
         self.n_states = len(self.states)
         self.time_horizon = float(time_horizon)
         if self.time_horizon <= 0 or not np.isfinite(self.time_horizon):
             raise ValueError("time_horizon must be a finite positive number")
         if clock not in {"reset", "forward"}:
             raise ValueError("clock must be 'reset' or 'forward'")
+        if discount_convention not in {"discrete", "continuous"}:
+            raise ValueError(
+                "discount_convention must be 'discrete' or 'continuous'"
+            )
         self.clock = clock
+        self.discount_convention = discount_convention
 
         # Strategies
         if isinstance(strategies, dict):
@@ -165,6 +180,12 @@ class DiscreteEventSimulationModel:
         else:
             self.strategy_names = list(strategies)
             self.strategy_labels = {s: s for s in self.strategy_names}
+        if not self.strategy_names:
+            raise ValueError("strategies must contain at least one strategy")
+        if len(set(self.strategy_names)) != len(self.strategy_names):
+            raise ValueError(
+                f"Strategy names must be unique, got {self.strategy_names!r}"
+            )
         self.n_strategies = len(self.strategy_names)
 
         # Parameters (init early so discount rates can register into it)
@@ -185,9 +206,25 @@ class DiscreteEventSimulationModel:
             self.params["dr_qaly"] = dr_qaly
         else:
             self.dr_qaly = float(dr_qaly)
+        self._validate_discount_rate(self.dr_cost, "dr_cost")
+        self._validate_discount_rate(self.dr_qaly, "dr_qaly")
 
         # State types
         if state_type is not None:
+            unknown_states = set(state_type) - set(self.states)
+            if unknown_states:
+                raise ValueError(
+                    f"state_type contains unknown states: {sorted(unknown_states)!r}"
+                )
+            invalid_types = {
+                name: value for name, value in state_type.items()
+                if value not in {"alive", "dead"}
+            }
+            if invalid_types:
+                raise ValueError(
+                    "state_type values must be 'alive' or 'dead'; "
+                    f"got {invalid_types!r}"
+                )
             self._alive_states = set(
                 i for i, s in enumerate(self.states)
                 if state_type.get(s, "alive") == "alive"
@@ -277,6 +314,7 @@ class DiscreteEventSimulationModel:
         from_state: str,
         to_state: str,
         distribution: Any,
+        clock: Optional[str] = None,
     ) -> "DiscreteEventSimulationModel":
         """Define a transition event with a time-to-event distribution.
 
@@ -298,6 +336,10 @@ class DiscreteEventSimulationModel:
             - ``callable(params) -> SurvivalDistribution`` — parameter-dependent.
             - ``callable(params, attrs) -> SurvivalDistribution`` — also
               depends on patient attributes.
+        clock : {"reset", "forward"}, optional
+            Override the model's event-time clock for this event. Use
+            ``"reset"`` for time since entering ``from_state`` and
+            ``"forward"`` for absolute study time.
 
         Returns
         -------
@@ -328,6 +370,8 @@ class DiscreteEventSimulationModel:
             raise ValueError(f"Unknown state '{from_state}'")
         if to_state not in self.states:
             raise ValueError(f"Unknown state '{to_state}'")
+        if clock not in {None, "reset", "forward"}:
+            raise ValueError("clock must be 'reset', 'forward', or None")
 
         ev = _EventDef(
             from_state=from_state,
@@ -335,6 +379,7 @@ class DiscreteEventSimulationModel:
             from_idx=self.states.index(from_state),
             to_idx=self.states.index(to_state),
             distribution=distribution,
+            clock=clock,
         )
         self._events[strategy].append(ev)
         return self
@@ -463,14 +508,55 @@ class DiscreteEventSimulationModel:
         state : str
             State name.
         handler : callable
-            ``handler(patient_record)`` — can modify the record in place.
+            ``handler(patient_idx, time, attrs)``. Return ``{"cost": amount}``
+            to add a one-time cost at the state-entry time.
         """
+        if state not in self.states:
+            raise ValueError(f"Unknown state '{state}'")
+        if not callable(handler):
+            raise TypeError("handler must be callable")
         self._on_enter.setdefault(state, []).append(handler)
         return self
 
     # =====================================================================
     # Resolve helpers
     # =====================================================================
+
+    @staticmethod
+    def _validate_discount_rate(rate: float, name: str = "discount rate") -> float:
+        """Validate a DES discount rate and return it as a float."""
+        try:
+            value = float(rate)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"{name} must be a finite non-negative number") from exc
+        if not np.isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be a finite non-negative number, got {rate!r}")
+        return value
+
+    @staticmethod
+    def _resolve_param_ref(value: Any, params: dict, context: str) -> Any:
+        """Resolve a string parameter reference without silently defaulting."""
+        if isinstance(value, str):
+            if value not in params:
+                raise KeyError(
+                    f"Parameter '{value}' not found while resolving {context}. "
+                    f"Available: {list(params.keys())}"
+                )
+            return params[value]
+        return value
+
+    @staticmethod
+    def _validate_mapping_keys(mapping: dict, allowed: set, context: str):
+        unknown = set(mapping) - allowed
+        if unknown:
+            raise ValueError(
+                f"{context} contains unknown keys: {sorted(unknown, key=str)!r}"
+            )
+
+    def _validate_runtime_discount_rates(self, params: dict):
+        """Validate fixed and PSA-sampled discount rates before simulation."""
+        self._validate_discount_rate(params.get("dr_cost", self.dr_cost), "dr_cost")
+        self._validate_discount_rate(params.get("dr_qaly", self.dr_qaly), "dr_qaly")
 
     def _resolve_cost_rate(
         self, cost_def: _StateCostDef, strategy: str, state_idx: int,
@@ -485,9 +571,17 @@ class DiscreteEventSimulationModel:
 
         # Strategy-specific outer layer
         if isinstance(vals, dict):
+            self._validate_mapping_keys(
+                vals, set(self.strategy_names) | set(self.states),
+                f"State cost '{cost_def.category}'",
+            )
             if strategy in vals:
                 inner = vals[strategy]
                 if isinstance(inner, dict):
+                    self._validate_mapping_keys(
+                        inner, set(self.states),
+                        f"State cost '{cost_def.category}' for strategy '{strategy}'",
+                    )
                     v = inner.get(state, 0)
                 else:
                     v = inner  # single value for all states? unlikely
@@ -498,11 +592,20 @@ class DiscreteEventSimulationModel:
         else:
             v = vals
 
-        if isinstance(v, str):
-            v = params.get(v, 0)
+        v = self._resolve_param_ref(v, params, f"state cost '{cost_def.category}'")
         if callable(v):
             v = v(params)
-        return float(v)
+        try:
+            value = float(v)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"State cost '{cost_def.category}' resolved to a non-numeric value"
+            ) from exc
+        if not np.isfinite(value):
+            raise ValueError(
+                f"State cost '{cost_def.category}' resolved to a non-finite value"
+            )
+        return value
 
     def _resolve_entry_cost(
         self, ec: _EntryCostDef, strategy: str, params: dict,
@@ -510,12 +613,24 @@ class DiscreteEventSimulationModel:
         """Resolve one-time entry cost."""
         val = ec.value
         if isinstance(val, dict):
+            self._validate_mapping_keys(
+                val, set(self.strategy_names), f"Entry cost '{ec.category}'"
+            )
             val = val.get(strategy, 0)
-        if isinstance(val, str):
-            val = params.get(val, 0)
+        val = self._resolve_param_ref(val, params, f"entry cost '{ec.category}'")
         if callable(val):
             val = val(params)
-        return float(val)
+        try:
+            value = float(val)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"Entry cost '{ec.category}' resolved to a non-numeric value"
+            ) from exc
+        if not np.isfinite(value):
+            raise ValueError(
+                f"Entry cost '{ec.category}' resolved to a non-finite value"
+            )
+        return value
 
     def _resolve_utility(
         self, strategy: str, state_idx: int, params: dict,
@@ -530,9 +645,16 @@ class DiscreteEventSimulationModel:
             vals = vals(params)
 
         if isinstance(vals, dict):
+            self._validate_mapping_keys(
+                vals, set(self.strategy_names) | set(self.states), "Utility mapping"
+            )
             if strategy in vals:
                 inner = vals[strategy]
                 if isinstance(inner, dict):
+                    self._validate_mapping_keys(
+                        inner, set(self.states),
+                        f"Utility mapping for strategy '{strategy}'",
+                    )
                     v = inner.get(state, 0)
                 else:
                     v = inner
@@ -543,11 +665,18 @@ class DiscreteEventSimulationModel:
         else:
             v = vals
 
-        if isinstance(v, str):
-            v = params.get(v, 0)
+        v = self._resolve_param_ref(v, params, f"utility for state '{state}'")
         if callable(v):
             v = v(params)
-        return float(v)
+        try:
+            value = float(v)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"Utility for state '{state}' resolved to a non-numeric value"
+            ) from exc
+        if not np.isfinite(value):
+            raise ValueError(f"Utility for state '{state}' resolved to a non-finite value")
+        return value
 
     def _resolve_distribution(
         self, ev: _EventDef, params: dict, attrs: Optional[dict] = None,
@@ -572,39 +701,62 @@ class DiscreteEventSimulationModel:
     # Discounting helpers (continuous time)
     # =====================================================================
 
-    @staticmethod
-    def _discount_lump_sum(amount: float, time: float, rate: float) -> float:
-        """Discount a lump-sum amount at continuous time."""
-        if rate <= 0:
-            return amount
-        return amount / (1 + rate) ** time
+    @classmethod
+    def _discount_lump_sum(
+        cls,
+        amount: float,
+        time: float,
+        rate: float,
+        convention: str = "discrete",
+    ) -> float:
+        """Discount a lump-sum amount at a continuous-time event."""
+        if not np.isfinite(amount) or not np.isfinite(time):
+            raise ValueError("Lump-sum amount and time must be finite")
+        cls._validate_discount_rate(rate)
+        factor = discount_factor(time, rate, convention=convention)
+        return float(amount * factor)
 
-    @staticmethod
+    @classmethod
     def _discount_continuous(
-        rate_per_year: float, t_start: float, t_end: float, dr: float,
+        cls,
+        rate_per_year: float,
+        t_start: float,
+        t_end: float,
+        dr: float,
+        convention: str = "discrete",
     ) -> float:
         """Discounted integral of a constant rate from t_start to t_end.
 
-        ∫_{t_start}^{t_end} rate / (1+dr)^t dt
-
-        For dr > 0:  rate × [(1+dr)^{-t_start} - (1+dr)^{-t_end}] / ln(1+dr)
+        For ``discrete`` convention this integrates ``rate / (1+dr)^t``.
+        For ``continuous`` convention it integrates ``rate * exp(-dr*t)``.
         """
+        if not np.isfinite(rate_per_year) or not np.isfinite(t_start) or not np.isfinite(t_end):
+            raise ValueError("Continuous accrual rate and times must be finite")
+        cls._validate_discount_rate(dr)
+        if convention not in {"discrete", "continuous"}:
+            raise ValueError(
+                "discount_convention must be 'discrete' or 'continuous'"
+            )
         if t_end <= t_start:
             return 0.0
         if dr <= 0:
             return rate_per_year * (t_end - t_start)
-        ln_dr = np.log(1 + dr)
-        return rate_per_year * (
-            np.exp(-ln_dr * t_start) - np.exp(-ln_dr * t_end)
-        ) / ln_dr
+        if convention == "discrete":
+            log_dr = np.log1p(dr)
+            return float(rate_per_year * (
+                np.exp(-log_dr * t_start) - np.exp(-log_dr * t_end)
+            ) / log_dr)
+        return float(rate_per_year * (
+            np.exp(-dr * t_start) - np.exp(-dr * t_end)
+        ) / dr)
 
     # =====================================================================
     # Simulation engine
     # =====================================================================
 
-    def _sample_tte(self, dist: SurvivalDistribution) -> float:
+    def _sample_tte(self, dist: SurvivalDistribution, rng=None) -> float:
         """Sample a relative time-to-event from a survival distribution."""
-        u = np.random.uniform()
+        u = (rng if rng is not None else np.random).uniform()
         tte = dist.quantile(u)
         if not np.isfinite(tte) and not np.isinf(tte):
             raise ValueError(f"Event distribution returned non-finite TTE: {tte!r}")
@@ -613,12 +765,12 @@ class DiscreteEventSimulationModel:
         return float(tte)
 
     def _sample_forward_tte(
-        self, dist: SurvivalDistribution, current_time: float,
+        self, dist: SurvivalDistribution, current_time: float, rng=None,
     ) -> float:
         """Sample a residual TTE under a clock-forward cumulative hazard."""
         from scipy.optimize import brentq
 
-        u = np.random.uniform()
+        u = (rng if rng is not None else np.random).uniform()
         if not 0 < u < 1:
             return float("inf")
         h0 = float(dist.cumulative_hazard(current_time))
@@ -644,6 +796,8 @@ class DiscreteEventSimulationModel:
         strategy: str,
         params: dict,
         attrs: Optional[dict] = None,
+        patient_idx: Optional[int] = None,
+        rng=None,
     ) -> dict:
         """Simulate a single patient through the event-driven process.
 
@@ -657,6 +811,8 @@ class DiscreteEventSimulationModel:
             event_log : list of (time, from_state, to_state)
             time_in_state : dict[str, float]
         """
+        self._validate_discount_rate(self.dr_cost, "dr_cost")
+        self._validate_discount_rate(self.dr_qaly, "dr_qaly")
         current_state = 0  # start in first state
         current_time = 0.0
         event_log = []
@@ -703,9 +859,15 @@ class DiscreteEventSimulationModel:
 
             for ev in eligible:
                 dist = self._resolve_distribution(ev, params, attrs)
-                tte = (self._sample_forward_tte(dist, current_time)
-                       if self.clock == "forward"
-                       else self._sample_tte(dist))
+                clock = ev.clock or self.clock
+                if clock == "forward":
+                    tte = (self._sample_forward_tte(dist, current_time, rng)
+                           if rng is not None
+                           else self._sample_forward_tte(dist, current_time))
+                else:
+                    tte = (self._sample_tte(dist, rng)
+                           if rng is not None
+                           else self._sample_tte(dist))
                 if tte < min_time:
                     min_time = tte
                     winning_event = ev
@@ -761,19 +923,25 @@ class DiscreteEventSimulationModel:
             for ec in self._entry_costs:
                 if ec.state_idx == current_state:
                     c = self._resolve_entry_cost(ec, strategy, params)
-                    dc = self._discount_lump_sum(c, current_time, self.dr_cost)
+                    dc = self._discount_lump_sum(
+                        c, current_time, self.dr_cost, self.discount_convention
+                    )
                     cat = ec.category
                     costs_by_cat[cat] = costs_by_cat.get(cat, 0) + dc
 
             # On-enter handlers
             for handler in self._on_enter.get(self.states[current_state], []):
-                handler({
-                    'time': current_time,
-                    'state': self.states[current_state],
-                    'strategy': strategy,
-                    'params': params,
-                    'attrs': attrs,
-                })
+                result = handler(patient_idx, current_time, attrs or {})
+                if result and "cost" in result:
+                    amount = float(result["cost"])
+                    if not np.isfinite(amount):
+                        raise ValueError("on_state_enter returned a non-finite cost")
+                    costs_by_cat["event"] = costs_by_cat.get("event", 0.0) + (
+                        self._discount_lump_sum(
+                            amount, current_time, self.dr_cost,
+                            self.discount_convention,
+                        )
+                    )
 
         total_cost = sum(costs_by_cat.values())
 
@@ -795,7 +963,9 @@ class DiscreteEventSimulationModel:
 
         duration = t_end - t_start
         # Discounted LYs
-        lys = self._discount_continuous(1.0, t_start, t_end, self.dr_qaly)
+        lys = self._discount_continuous(
+            1.0, t_start, t_end, self.dr_qaly, self.discount_convention
+        )
         # Discounted QALYs
         u = self._resolve_utility(strategy, state_idx, params)
         qalys = lys * u
@@ -811,7 +981,9 @@ class DiscreteEventSimulationModel:
             rate = self._resolve_cost_rate(sc, strategy, state_idx, params)
             if rate == 0:
                 continue
-            dc = self._discount_continuous(rate, t_start, t_end, self.dr_cost)
+            dc = self._discount_continuous(
+                rate, t_start, t_end, self.dr_cost, self.discount_convention
+            )
             cat = sc.category
             costs_by_cat[cat] = costs_by_cat.get(cat, 0) + dc
 
@@ -859,7 +1031,12 @@ class DiscreteEventSimulationModel:
             np.random.seed(seed)
 
         params = self._get_base_params()
+        self._validate_runtime_discount_rates(params)
         results = {}
+        common_seeds = (
+            np.random.randint(0, 2**32 - 1, size=n_patients, dtype=np.uint32)
+            if self.n_strategies > 1 else None
+        )
 
         for strategy in self.strategy_names:
             if progress:
@@ -870,7 +1047,13 @@ class DiscreteEventSimulationModel:
                 pat_attrs = None
                 if attrs is not None:
                     pat_attrs = {k: float(v[i]) for k, v in attrs.items()}
-                pr = self._simulate_patient(strategy, params, pat_attrs)
+                patient_rng = (
+                    np.random.RandomState(int(common_seeds[i]))
+                    if common_seeds is not None else None
+                )
+                pr = self._simulate_patient(
+                    strategy, params, pat_attrs, patient_idx=i, rng=patient_rng,
+                )
                 patient_results.append(pr)
 
             # Aggregate
@@ -969,7 +1152,12 @@ class DiscreteEventSimulationModel:
             for name, param in self.params.items():
                 if param.dist is not None:
                     params[name] = float(param.dist.sample(1)[0])
+            self._validate_runtime_discount_rates(params)
             sampled_params_list.append(params)
+            common_seeds = (
+                np.random.randint(0, 2**32 - 1, size=n_patients, dtype=np.uint32)
+                if self.n_strategies > 1 else None
+            )
 
             # Simulate all strategies
             sim_result = {}
@@ -982,7 +1170,14 @@ class DiscreteEventSimulationModel:
                         pat_attrs = None
                         if attrs is not None:
                             pat_attrs = {k: float(v[i]) for k, v in attrs.items()}
-                        pr = self._simulate_patient(strategy, params, pat_attrs)
+                        patient_rng = (
+                            np.random.RandomState(int(common_seeds[i]))
+                            if common_seeds is not None else None
+                        )
+                        pr = self._simulate_patient(
+                            strategy, params, pat_attrs, patient_idx=i,
+                            rng=patient_rng,
+                        )
                         costs_list.append(pr['total_cost'])
                         qalys_list.append(pr['total_qalys'])
                         lys_list.append(pr['total_lys'])
@@ -1019,6 +1214,7 @@ class DiscreteEventSimulationModel:
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
             f"  Time horizon: {self.time_horizon} years",
             f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
+            f"  Discount convention: {self.discount_convention}",
             f"  Parameters ({len(self.params)}):",
         ]
         for name, p in self.params.items():

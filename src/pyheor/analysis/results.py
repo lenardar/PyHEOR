@@ -1110,15 +1110,7 @@ class DESResult:
             inc_qaly = r['mean_qalys'] - comp_qaly
             inc_ly = r['mean_lys'] - comp_ly
 
-            if abs(inc_qaly) < 1e-10:
-                icer_val = float('inf') if inc_cost > 0 else float('-inf')
-                icer_str = "Dominated" if inc_cost > 0 else "Dominant"
-            elif inc_cost < 0 and inc_qaly > 0:
-                icer_val = inc_cost / inc_qaly
-                icer_str = "Dominant"
-            else:
-                icer_val = inc_cost / inc_qaly
-                icer_str = f"{icer_val:,.0f}"
+            icer_val, classification = classify_incremental(inc_cost, inc_qaly)
 
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -1127,7 +1119,10 @@ class DESResult:
                 'Incremental QALYs': inc_qaly,
                 'Incremental LYs': inc_ly,
                 'ICER ($/QALY)': icer_val,
-                'ICER': icer_str,
+                # Keep the historical string column while exposing an
+                # explicit classification for consistent downstream use.
+                'ICER': classification,
+                'ICER Classification': classification,
             })
 
         return pd.DataFrame(rows)
@@ -1280,7 +1275,13 @@ class DESResult:
             absorb_times = np.array(absorb_times)
 
             for t in time_grid:
-                surv = (absorb_times > t).mean()
+                # Patients censored at the horizon remain in the risk set at
+                # the endpoint. Keep the existing right-continuous event
+                # handling for earlier grid points.
+                if np.isclose(t, self.model.time_horizon):
+                    surv = (absorb_times >= t).mean()
+                else:
+                    surv = (absorb_times > t).mean()
                 rows.append({
                     'Time': t,
                     'Strategy': self.model.strategy_labels[strat],
@@ -1372,7 +1373,7 @@ class DESPSAResult:
 
             mean_ic = inc_cost.mean()
             mean_iq = inc_qaly.mean()
-            icer_val = mean_ic / mean_iq if abs(mean_iq) > 1e-10 else float('inf')
+            icer_val, classification = classify_incremental(mean_ic, mean_iq)
 
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -1384,6 +1385,7 @@ class DESPSAResult:
                 'Inc. QALYs (2.5%)': np.percentile(inc_qaly, 2.5),
                 'Inc. QALYs (97.5%)': np.percentile(inc_qaly, 97.5),
                 'ICER': icer_val,
+                'ICER Classification': classification,
             })
         return pd.DataFrame(rows)
 

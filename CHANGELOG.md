@@ -7,8 +7,22 @@
 - `DESModel(clock="reset")` preserves the existing state-entry clock.
 - `clock="forward"` samples residual event times from cumulative hazards at
   absolute study time, allowing calendar-time risk without a new event API.
+- `set_event(..., clock=...)` can override the model default for individual
+  transitions, allowing clock-forward and clock-reset risks in one model.
 - Invalid horizons, patient counts, attribute lengths, and event TTEs now fail
   explicitly instead of producing non-finite results or silently recycling data.
+- DES state-entry handlers now follow the existing MicroSim contract and record
+  returned one-time costs at the actual entry time.
+- DES multi-strategy runs now use per-patient common random-number streams, so
+  strategy differences are not inflated by unrelated random-stream offsets.
+- DES supports explicit annual-effective (`"discrete"`) and continuously
+  compounded (`"continuous"`) discounting for both lump sums and continuous
+  state accruals; invalid rates fail before simulation.
+- DES base-case and PSA ICERs classify incremental quadrants before division,
+  and survival curves keep right-censored patients in the risk set at the
+  study horizon.
+- DES rejects empty or duplicate state/strategy definitions, invalid
+  `state_type` values, unknown mapping keys, and missing parameter references.
 
 ### Consistent figure layout
 
@@ -82,4 +96,5 @@ the previous behavior counted an extra reward period or used ambiguous timing.
   matrix sums, survival ordering, or state probabilities become invalid.
 - Python callbacks that cannot be translated faithfully fail explicitly.
 
-DES and MicroSim calculation behavior is unchanged in this release.
+MicroSim calculation behavior is unchanged in this release; DES changes are
+listed above under the follow-up calculation review.

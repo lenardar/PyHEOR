@@ -260,6 +260,7 @@ model = ph.DESModel(
     clock="reset",  # or "forward" for calendar-time hazards
     dr_cost=0.03,
     dr_qaly=0.03,
+    discount_convention="discrete",  # or "continuous"
 )
 
 model.add_param("hr_pfs", base=0.70,
@@ -335,11 +336,16 @@ model.add_param("p_progression",
 
 #### Discount Rates
 
-All models set discount rates via two independent parameters, `dr_cost` and `dr_qaly`. **The default is 0 (no discounting)**; whichever is not set will not be discounted.
+Models with an explicit discount convention (Markov, PSM, and DES) set discount rates via two independent parameters, `dr_cost` and `dr_qaly`. **The default is 0 (no discounting)**; whichever is not set will not be discounted. Use `discount_convention="discrete"` (the default) for annual-effective rates, or `discount_convention="continuous"` for continuously compounded rates. The choice is independent of whether the model itself uses cycles or continuous event time. MicroSim currently uses the discrete convention.
 
 ```python
 # Fixed discount rates
 model = ph.MarkovModel(..., dr_cost=0.03, dr_qaly=0.03)
+
+# Continuous compounding (available for Markov, PSM, and DES)
+model = ph.MarkovModel(
+    ..., dr_cost=0.03, dr_qaly=0.03, discount_convention="continuous"
+)
 
 # Discount costs only
 model = ph.MarkovModel(..., dr_cost=0.06)  # dr_qaly defaults to 0
