@@ -379,11 +379,9 @@ model = ph.MarkovModel(
 | Value                      | Description                                               |
 | -------------------------- | --------------------------------------------------------- |
 | `True` / `"trapezoidal"` | Trapezoidal method: use the average occupancy of adjacent trace time points for each interval (default) |
-| `"life-table"`            | Compatibility alias for `"trapezoidal"`; produces identical results |
 | `False` / `None`          | No correction                                             |
 
 ```python
-model.half_cycle_correction = "life-table"
 model.half_cycle_correction = "trapezoidal"
 model.half_cycle_correction = False
 ```
@@ -762,7 +760,7 @@ pyheor/
 - [X] One-way sensitivity analysis (OWSA) + tornado diagram
 - [X] Probabilistic sensitivity analysis (PSA) + CEAC + CE scatter plot
 - [X] Flexible cost system (first-cycle, time-dependent, WLOS, custom cost functions)
-- [X] Multi-method half-cycle correction (trapezoidal / life-table / none) & configurable discount rates
+- [X] Configurable half-cycle correction (trapezoidal / none) & discount rates
 - [X] OWSA tornado ICER ranking & discount rates directly included in sensitivity analysis via `Param`
 - [X] Partitioned survival model (PSM)
 - [X] 10 parametric survival distributions

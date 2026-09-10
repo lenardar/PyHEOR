@@ -72,8 +72,8 @@ the previous behavior counted an extra reward period or used ambiguous timing.
   N+1 observation points, while cost, QALY, and LY arrays contain N intervals.
 - Time-dependent callbacks receive 0-based interval indices: `0` through
   `N-1`.
-- `"life-table"` is a compatibility alias for trapezoidal half-cycle
-  correction; both average adjacent trace observations for each interval.
+- Half-cycle correction uses one explicit name, `"trapezoidal"`; the former
+  `"life-table"` compatibility alias has been removed.
 - State rewards accrue at interval midpoints, transition/custom event costs at
   interval ends, and `method="starting"` costs at time zero.
 - Discounting can use annual-effective (`"discrete"`) or continuously

@@ -131,7 +131,6 @@ class IndividualStateTransitionModel:
         Half-cycle correction method. Options:
 
         - True or ``"trapezoidal"``: endpoint weighting [0.5, 1, ..., 1, 0.5]
-        - ``"life-table"``: average adjacent per-cycle rewards
         - False or None: no correction
 
         Default: True (trapezoidal).
@@ -745,13 +744,6 @@ class IndividualStateTransitionModel:
             cost_hist *= hcc[np.newaxis, :]
             qaly_hist *= hcc[np.newaxis, :]
             ly_hist *= hcc[np.newaxis, :]
-
-        elif self._hcc_method == "life-table":
-            # Average adjacent per-cycle rewards
-            for arr in (cost_hist, qaly_hist, ly_hist):
-                orig = arr.copy()
-                arr[:, :-1] = (orig[:, :-1] + orig[:, 1:]) / 2.0
-                # last cycle unchanged
 
         cost_hist = cost_hist + cost_hist_nohcc
 

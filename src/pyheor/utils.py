@@ -217,7 +217,6 @@ def normalize_hcc(value):
         - True → "trapezoidal"
         - False or None → None (no correction)
         - "trapezoidal" → "trapezoidal"
-        - "life-table" → "trapezoidal" (compatibility alias)
 
     Returns
     -------
@@ -235,11 +234,11 @@ def normalize_hcc(value):
         return None
     elif isinstance(value, str):
         v = value.lower().strip()
-        if v in ("trapezoidal", "life-table"):
+        if v == "trapezoidal":
             return "trapezoidal"
         raise ValueError(
             f"Invalid half_cycle_correction: {value!r}. "
-            f"Expected True, False, None, 'trapezoidal', or 'life-table'."
+            f"Expected True, False, None, or 'trapezoidal'."
         )
     else:
         raise TypeError(
@@ -275,11 +274,6 @@ def interval_occupancy(trace, half_cycle_correction=None):
     if method == "trapezoidal":
         return (values[:-1] + values[1:]) / 2.0
     return values[:-1].copy()
-
-
-def life_table_corrected_trace(trace):
-    """Compatibility wrapper for interval-level trapezoidal occupancy."""
-    return interval_occupancy(trace, "trapezoidal")
 
 
 # =============================================================================

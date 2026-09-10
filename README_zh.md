@@ -372,11 +372,9 @@ model = ph.MarkovModel(
 | 值                         | 说明                                            |
 | -------------------------- | ----------------------------------------------- |
 | `True` / `"trapezoidal"` | 梯形法：每个时间区间使用相邻 trace 时点的平均占比（默认） |
-| `"life-table"`            | `"trapezoidal"` 的兼容别名，结果相同                         |
 | `False` / `None`          | 不校正                                          |
 
 ```python
-model.half_cycle_correction = "life-table"
 model.half_cycle_correction = "trapezoidal"
 model.half_cycle_correction = False
 ```

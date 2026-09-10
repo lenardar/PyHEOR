@@ -334,12 +334,12 @@ class TestHCCNormalization:
         )
         assert m._hcc_method == "trapezoidal"
 
-    def test_string_life_table(self):
-        m = MarkovModel(
-            states=["A", "B"], strategies=["S1"], n_cycles=5,
-            half_cycle_correction="life-table",
-        )
-        assert m._hcc_method == "trapezoidal"
+    def test_string_life_table_is_rejected(self):
+        with pytest.raises(ValueError, match="Invalid half_cycle_correction"):
+            MarkovModel(
+                states=["A", "B"], strategies=["S1"], n_cycles=5,
+                half_cycle_correction="life-table",
+            )
 
     def test_invalid_raises(self):
         with pytest.raises(ValueError):
@@ -353,7 +353,7 @@ class TestHCCNormalization:
             states=["A", "B"], strategies=["S1"], n_cycles=5,
             half_cycle_correction=True,
         )
-        m.half_cycle_correction = "life-table"
+        m.half_cycle_correction = "trapezoidal"
         assert m._hcc_method == "trapezoidal"
         m.half_cycle_correction = False
         assert m._hcc_method is None
@@ -382,7 +382,7 @@ class TestHCCNormalization:
         )
 
 
-class TestLifeTableHCC:
+class TestTrapezoidalHCC:
     @staticmethod
     def _make_model(hcc, n_cycles=10, dr_cost=0, dr_qaly=0):
         m = MarkovModel(
@@ -395,24 +395,16 @@ class TestLifeTableHCC:
         m.set_state_cost("drug", {"Alive": 1000, "Dead": 0})
         return m
 
-    def test_life_table_differs_from_no_hcc(self):
-        r_lt = self._make_model("life-table").run_base_case()
+    def test_trapezoidal_differs_from_no_hcc(self):
+        r_lt = self._make_model("trapezoidal").run_base_case()
         r_none = self._make_model(None).run_base_case()
         q_lt = r_lt.summary()["QALYs"].iloc[0]
         q_none = r_none.summary()["QALYs"].iloc[0]
         assert q_lt != q_none
 
-    def test_life_table_equals_trapezoidal(self):
-        """life-table is a compatibility alias for trapezoidal."""
-        r_lt = self._make_model("life-table").run_base_case()
-        r_trap = self._make_model("trapezoidal").run_base_case()
-        q_lt = r_lt.summary()["QALYs"].iloc[0]
-        q_trap = r_trap.summary()["QALYs"].iloc[0]
-        np.testing.assert_allclose(q_lt, q_trap, rtol=0, atol=0)
-
-    def test_life_table_manual_verification(self):
+    def test_trapezoidal_manual_verification(self):
         """Verify against hand-computed corrected trace."""
-        model = self._make_model("life-table")
+        model = self._make_model("trapezoidal")
         result = model.run_base_case()
         trace = result.results["S1"]["trace"]
         qalys_hcc = result.results["S1"]["qalys_hcc"]
@@ -425,9 +417,9 @@ class TestLifeTableHCC:
                 qalys_hcc[t], expected_qaly, atol=1e-10,
             )
 
-    def test_life_table_costs_manual(self):
-        """Verify life-table corrected costs."""
-        model = self._make_model("life-table")
+    def test_trapezoidal_costs_manual(self):
+        """Verify trapezoidal corrected costs."""
+        model = self._make_model("trapezoidal")
         result = model.run_base_case()
         trace = result.results["S1"]["trace"]
         costs_hcc = result.results["S1"]["costs_hcc"]["drug"]
@@ -440,9 +432,9 @@ class TestLifeTableHCC:
                 costs_hcc[t], expected_cost, atol=1e-10,
             )
 
-    def test_life_table_with_discount(self):
-        """Life-table + discounting runs without error."""
-        r = self._make_model("life-table", dr_cost=0.05, dr_qaly=0.05).run_base_case()
+    def test_trapezoidal_with_discount(self):
+        """Trapezoidal correction + discounting runs without error."""
+        r = self._make_model("trapezoidal", dr_cost=0.05, dr_qaly=0.05).run_base_case()
         q = r.summary()["QALYs"].iloc[0]
         assert q > 0
 
@@ -476,7 +468,7 @@ class TestGoldenCalculations:
 
     @pytest.mark.parametrize(
         ("hcc", "expected"),
-        [(False, 1.0), ("trapezoidal", 0.5), ("life-table", 0.5)],
+        [(False, 1.0), ("trapezoidal", 0.5)],
     )
     def test_death_at_first_interval_end(self, hcc, expected):
         model = MarkovModel(

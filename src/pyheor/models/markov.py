@@ -110,7 +110,7 @@ class CohortStateTransitionModel:
     half_cycle_correction : bool or str or None
         Half-cycle correction method. Options:
 
-        - True, ``"trapezoidal"``, or ``"life-table"``: average the two
+        - True or ``"trapezoidal"``: average the two
           adjacent state observations within each interval.
         - False or None: no correction
 

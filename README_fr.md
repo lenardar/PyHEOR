@@ -371,11 +371,9 @@ model = ph.MarkovModel(
 | Valeur                     | Description                                               |
 | -------------------------- | --------------------------------------------------------- |
 | `True` / `"trapezoidal"` | Méthode trapézoïdale : occupation moyenne des points de trace adjacents pour chaque intervalle (par défaut) |
-| `"life-table"`            | Alias de compatibilité de `"trapezoidal"` ; produit des résultats identiques |
 | `False` / `None`          | Pas de correction                                         |
 
 ```python
-model.half_cycle_correction = "life-table"
 model.half_cycle_correction = "trapezoidal"
 model.half_cycle_correction = False
 ```
