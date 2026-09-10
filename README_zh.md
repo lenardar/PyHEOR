@@ -729,10 +729,10 @@ pyheor/
 │
 ├── tests/                   # pytest 测试套件
 └── examples/
-    ├── demo_hiv_model.py    #  Markov 模型示例 (HIV)
-    ├── demo_psm_model.py    #  PSM 模型示例 (肿瘤)
-    ├── demo_microsim.py     #  微观模拟示例
-    └── demo_comparison.py   #  多策略比较示例
+    ├── markov_hiv/                 # HIV Markov 研究
+    ├── psm_oncology/               # 肿瘤 PSM + 公式工作簿
+    ├── microsim_sick_sicker/       # 个体水平模拟
+    └── multi_strategy_comparison/  # 前沿、NMB、CEAF 与 EVPI
 ```
 
 ---
@@ -743,7 +743,7 @@ pyheor/
 - **灵活的参数系统**：`ph.C` 自动补数，lambda 函数定义时变概率/费用
 - **与 R 生态对齐**：分布参数化、方法命名参考 hesim / flexsurv / DARTH
 - **生产级可视化**：所有图表开箱即用，配色统一，支持自定义
-- **可验证性**：Excel 导出 trace 数据，方便与 TreeAge / Excel 模型交叉验证
+- **可验证性**：导出带公式的 Excel 模型，可独立重算并与 Python 结果交叉验证
 
 ---
 

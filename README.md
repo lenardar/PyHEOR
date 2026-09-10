@@ -736,10 +736,10 @@ pyheor/
 │
 ├── tests/                   # pytest test suite
 └── examples/
-    ├── demo_hiv_model.py    #  Markov model example (HIV)
-    ├── demo_psm_model.py    #  PSM model example (oncology)
-    ├── demo_microsim.py     #  Microsimulation example
-    └── demo_comparison.py   #  Multi-strategy comparison example
+    ├── markov_hiv/                 # Markov HIV study
+    ├── psm_oncology/               # Oncology PSM + formula workbook
+    ├── microsim_sick_sicker/       # Individual-level simulation
+    └── multi_strategy_comparison/  # Frontier, NMB, CEAF and EVPI
 ```
 
 ---
@@ -750,7 +750,7 @@ pyheor/
 - **Flexible Parameter System**: `ph.C` auto-complement, lambda functions define time-dependent probabilities/costs
 - **Aligned with R Ecosystem**: Distribution parameterization and method naming reference hesim / flexsurv / DARTH
 - **Production-Quality Visualization**: All charts work out of the box, consistent color scheme, customizable
-- **Verifiability**: Excel export of trace data for easy cross-validation with TreeAge / Excel models
+- **Verifiability**: Formula-based Excel models for independent recalculation and cross-validation
 
 ---
 
