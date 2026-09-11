@@ -21,11 +21,10 @@ Supports:
 import numpy as np
 import pandas as pd
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from ..distributions import Distribution, sample_distribution
-from .markov import Param, _CostDef
+from ..distributions import sample_distribution
+from .common import Param as _Param, _CostDef
 from ..survival import SurvivalDistribution, ProportionalHazards
 from ..utils import (
     resolve_value, discount_factor, normalize_hcc, interval_occupancy,
@@ -93,8 +92,8 @@ class PartitionedSurvivalModel:
         strategies: Union[List[str], Dict[str, str]],
         n_cycles: int,
         cycle_length: float = 1.0,
-        dr_cost: Union[float, "Param"] = 0.0,
-        dr_qaly: Union[float, "Param"] = 0.0,
+        dr_cost: Union[float, "_Param"] = 0.0,
+        dr_qaly: Union[float, "_Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
         state_type: Optional[Dict[str, str]] = None,
         discount_convention: str = "discrete",
@@ -159,17 +158,17 @@ class PartitionedSurvivalModel:
         self._hcc_method = normalize_hcc(half_cycle_correction)
 
         # Parameters (init early so discount rates can register into it)
-        self.params: Dict[str, Param] = {}
+        self.params: Dict[str, _Param] = {}
 
         # Discount rates
-        if isinstance(dr_cost, Param):
+        if isinstance(dr_cost, _Param):
             self.dr_cost = dr_cost.base
             if not dr_cost.label:
                 dr_cost.label = "Discount Rate (Cost)"
             self.params["dr_cost"] = dr_cost
         else:
             self.dr_cost = float(dr_cost)
-        if isinstance(dr_qaly, Param):
+        if isinstance(dr_qaly, _Param):
             self.dr_qaly = dr_qaly.base
             if not dr_qaly.label:
                 dr_qaly.label = "Discount Rate (QALY)"
@@ -229,22 +228,22 @@ class PartitionedSurvivalModel:
     def add_param(self, name: str, base: float, dist=None, label=None,
                   low=None, high=None) -> "PartitionedSurvivalModel":
         """Add a single parameter to the model."""
-        self.params[name] = Param(
+        self.params[name] = _Param(
             base=base, dist=dist,
             label=label or name,
             low=low, high=high,
         )
         return self
 
-    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "PartitionedSurvivalModel":
+    def add_params(self, params_dict: Dict[str, Union[_Param, float]]) -> "PartitionedSurvivalModel":
         """Add multiple parameters at once."""
         for name, param in params_dict.items():
-            if isinstance(param, Param):
+            if isinstance(param, _Param):
                 if not param.label:
                     param.label = name
                 self.params[name] = param
             elif isinstance(param, (int, float)):
-                self.params[name] = Param(base=float(param), label=name)
+                self.params[name] = _Param(base=float(param), label=name)
             else:
                 raise TypeError(
                     f"Parameter '{name}': expected Param or numeric, got {type(param)}"

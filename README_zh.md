@@ -713,6 +713,7 @@ pyheor/
 │   ├── plotting.py          # 可视化 (19 种图表)
 │   │
 │   ├── models/              # ── 建模引擎 ──
+│   │   ├── common.py        #  公共参数与成本定义
 │   │   ├── markov.py        #  Markov 队列模型 (MarkovModel)
 │   │   ├── psm.py           #  分区生存模型 (PSMModel)
 │   │   ├── microsim.py      #  微观模拟 (MicroSimModel)

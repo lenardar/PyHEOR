@@ -11,70 +11,14 @@ This module implements the main CohortStateTransitionModel class which provides:
 import numpy as np
 import pandas as pd
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from ..distributions import Distribution, sample_distribution
+from ..distributions import sample_distribution
+from .common import Param as _Param, _CostDef
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
     normalize_hcc, interval_occupancy, validate_transition_matrix,
 )
-
-
-# =============================================================================
-# Parameter Definition
-# =============================================================================
-
-@dataclass
-class Param:
-    """A model parameter with point estimate and optional PSA distribution.
-    
-    Parameters
-    ----------
-    base : float
-        Base case (point estimate) value.
-    dist : Distribution, optional
-        Probability distribution for PSA sampling.
-    label : str, optional
-        Human-readable label for display in plots/tables.
-    low : float, optional
-        Lower bound for OWSA. Default: base * 0.8.
-    high : float, optional
-        Upper bound for OWSA. Default: base * 1.2.
-    
-    Examples
-    --------
-    >>> p = Param(0.15, dist=Beta(mean=0.15, sd=0.03), label="P(H→S)")
-    >>> p = Param(5000, dist=Gamma(mean=5000, sd=500), label="Drug cost")
-    >>> p = Param(0.7, low=0.5, high=0.9)  # Custom OWSA range
-    """
-    base: float
-    dist: Optional[Distribution] = None
-    label: Optional[str] = None
-    low: Optional[float] = None
-    high: Optional[float] = None
-    
-    def __post_init__(self):
-        if self.label is None:
-            self.label = ""
-        if self.low is None:
-            self.low = self.base * 0.8
-        if self.high is None:
-            self.high = self.base * 1.2
-
-
-# =============================================================================
-# Cost Definition
-# =============================================================================
-
-@dataclass 
-class _CostDef:
-    """Internal cost category definition."""
-    name: str
-    values: Any
-    first_cycle_only: bool = False
-    apply_cycles: Optional[List[int]] = None
-    method: str = "wlos"
 
 
 # =============================================================================
@@ -142,8 +86,8 @@ class CohortStateTransitionModel:
         strategies: Union[List[str], Dict[str, str]],
         n_cycles: int,
         cycle_length: float = 1.0,
-        dr_cost: Union[float, "Param"] = 0.0,
-        dr_qaly: Union[float, "Param"] = 0.0,
+        dr_cost: Union[float, "_Param"] = 0.0,
+        dr_qaly: Union[float, "_Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
         initial_state: Union[str, int] = 0,
         state_type: Optional[Dict[str, str]] = None,
@@ -192,17 +136,17 @@ class CohortStateTransitionModel:
         self._hcc_method = normalize_hcc(half_cycle_correction)
 
         # Parameters (init early so discount rates can register into it)
-        self.params: Dict[str, Param] = {}
+        self.params: Dict[str, _Param] = {}
 
         # Discount rates
-        if isinstance(dr_cost, Param):
+        if isinstance(dr_cost, _Param):
             self.dr_cost = dr_cost.base
             if not dr_cost.label:
                 dr_cost.label = "Discount Rate (Cost)"
             self.params["dr_cost"] = dr_cost
         else:
             self.dr_cost = float(dr_cost)
-        if isinstance(dr_qaly, Param):
+        if isinstance(dr_qaly, _Param):
             self.dr_qaly = dr_qaly.base
             if not dr_qaly.label:
                 dr_qaly.label = "Discount Rate (QALY)"
@@ -303,14 +247,14 @@ class CohortStateTransitionModel:
         CohortStateTransitionModel
             Self, for method chaining.
         """
-        self.params[name] = Param(
+        self.params[name] = _Param(
             base=base, dist=dist, 
             label=label or name,
             low=low, high=high,
         )
         return self
     
-    def add_params(self, params_dict: Dict[str, Union[Param, float]]) -> "CohortStateTransitionModel":
+    def add_params(self, params_dict: Dict[str, Union[_Param, float]]) -> "CohortStateTransitionModel":
         """Add multiple parameters at once.
         
         Parameters
@@ -324,12 +268,12 @@ class CohortStateTransitionModel:
             Self, for method chaining.
         """
         for name, param in params_dict.items():
-            if isinstance(param, Param):
+            if isinstance(param, _Param):
                 if not param.label:
                     param.label = name
                 self.params[name] = param
             elif isinstance(param, (int, float)):
-                self.params[name] = Param(base=float(param), label=name)
+                self.params[name] = _Param(base=float(param), label=name)
             else:
                 raise TypeError(
                     f"Parameter '{name}': expected Param or numeric, got {type(param)}"

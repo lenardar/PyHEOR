@@ -66,8 +66,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from ..distributions import Distribution
-from .markov import Param
+from .common import Param as _Param
 from ..survival import SurvivalDistribution
 from ..utils import resolve_value, discount_factor
 
@@ -151,8 +150,8 @@ class DiscreteEventSimulationModel:
         states: List[str],
         strategies: Union[List[str], Dict[str, str]],
         time_horizon: float = 40.0,
-        dr_cost: Union[float, "Param"] = 0.0,
-        dr_qaly: Union[float, "Param"] = 0.0,
+        dr_cost: Union[float, "_Param"] = 0.0,
+        dr_qaly: Union[float, "_Param"] = 0.0,
         state_type: Optional[Dict[str, str]] = None,
         clock: str = "reset",
         discount_convention: str = "discrete",
@@ -192,17 +191,17 @@ class DiscreteEventSimulationModel:
         self.n_strategies = len(self.strategy_names)
 
         # Parameters (init early so discount rates can register into it)
-        self.params: Dict[str, Param] = {}
+        self.params: Dict[str, _Param] = {}
 
         # Discount rates
-        if isinstance(dr_cost, Param):
+        if isinstance(dr_cost, _Param):
             self.dr_cost = dr_cost.base
             if not dr_cost.label:
                 dr_cost.label = "Discount Rate (Cost)"
             self.params["dr_cost"] = dr_cost
         else:
             self.dr_cost = float(dr_cost)
-        if isinstance(dr_qaly, Param):
+        if isinstance(dr_qaly, _Param):
             self.dr_qaly = dr_qaly.base
             if not dr_qaly.label:
                 dr_qaly.label = "Discount Rate (QALY)"
@@ -279,7 +278,7 @@ class DiscreteEventSimulationModel:
         low=None, high=None,
     ) -> "DiscreteEventSimulationModel":
         """Add a model parameter (same API as MarkovModel)."""
-        self.params[name] = Param(
+        self.params[name] = _Param(
             base=base, dist=dist,
             label=label or name,
             low=low, high=high,
@@ -289,12 +288,12 @@ class DiscreteEventSimulationModel:
     def add_params(self, params_dict):
         """Add multiple parameters at once."""
         for name, param in params_dict.items():
-            if isinstance(param, Param):
+            if isinstance(param, _Param):
                 if not param.label:
                     param.label = name
                 self.params[name] = param
             elif isinstance(param, (int, float)):
-                self.params[name] = Param(base=float(param), label=name)
+                self.params[name] = _Param(base=float(param), label=name)
             else:
                 raise TypeError(f"Parameter '{name}': expected Param or numeric")
         return self

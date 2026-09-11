@@ -1,6 +1,7 @@
 """Building blocks for health economic models."""
 
-from .markov import CohortStateTransitionModel, MarkovModel, Param
+from .common import Param
+from .markov import CohortStateTransitionModel, MarkovModel
 from .psm import PartitionedSurvivalModel, PSMModel
 from .microsim import IndividualStateTransitionModel, MicroSimModel, PatientProfile
 from .des import DiscreteEventSimulationModel, DESModel

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Shared model definitions
+
+- `Param` and the internal cycle-based cost definition now live in
+  `models.common`, so PSM, MicroSim, and DES no longer depend on the Markov
+  module for model-independent concepts. Use the public `pyheor.Param` API;
+  model-specific module aliases such as `pyheor.models.markov.Param` have
+  been removed before the first stable release.
+
 ### DES clock semantics
 
 - `DESModel(clock="reset")` preserves the existing state-entry clock.

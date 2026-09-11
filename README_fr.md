@@ -712,6 +712,7 @@ pyheor/
 │   ├── plotting.py          # Visualisation (19 types de graphiques)
 │   │
 │   ├── models/              # ── Moteur de modélisation ──
+│   │   ├── common.py        #  Définitions communes des paramètres et coûts
 │   │   ├── markov.py        #  Modèle de Markov par cohorte (MarkovModel)
 │   │   ├── psm.py           #  Modèle de survie partitionnée (PSMModel)
 │   │   ├── microsim.py      #  Microsimulation (MicroSimModel)

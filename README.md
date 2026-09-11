@@ -720,6 +720,7 @@ pyheor/
 │   ├── plotting.py          # Visualization (19 chart types)
 │   │
 │   ├── models/              # ── Modeling Engine ──
+│   │   ├── common.py        #  Shared parameter and cost definitions
 │   │   ├── markov.py        #  Markov cohort model (MarkovModel)
 │   │   ├── psm.py           #  Partitioned survival model (PSMModel)
 │   │   ├── microsim.py      #  Microsimulation (MicroSimModel)

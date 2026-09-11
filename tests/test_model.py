@@ -264,7 +264,7 @@ class TestSensitivityAnalysis:
 
     def test_owsa_discount_rate_param(self):
         """Discount rate can be varied in OWSA via Param."""
-        from pyheor.models.markov import Param
+        from pyheor import Param
         model = MarkovModel(
             states=["Alive", "Dead"],
             strategies=["S1", "S2"],

@@ -66,7 +66,8 @@ from .survival import (
 )
 
 # Models
-from .models.markov import CohortStateTransitionModel, MarkovModel, Param
+from .models.common import Param
+from .models.markov import CohortStateTransitionModel, MarkovModel
 from .models.psm import PartitionedSurvivalModel, PSMModel
 from .models.microsim import (
     IndividualStateTransitionModel,
