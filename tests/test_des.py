@@ -72,10 +72,60 @@ class TestDESConstruction:
         assert continuous_flow == pytest.approx(100 * (1 - np.exp(-0.2)) / 0.1)
 
     def test_invalid_parameter_reference_does_not_default_to_zero(self):
-        model = DESModel(states=["Alive", "Dead"], strategies=["S1"], time_horizon=1)
-        model.set_state_cost("care", {"Alive": "missing_cost"})
-        with pytest.raises(KeyError, match="missing_cost"):
+        model = DESModel(states=['Alive', 'Dead'], strategies=['S1'], time_horizon=1)
+        model.set_state_cost('care', {'Alive': 'missing_cost'})
+        with pytest.raises(KeyError, match='missing_cost'):
             model.run(n_patients=1, progress=False)
+
+    def test_n_patients_and_n_sim_accept_numpy_integers(self):
+        model = DESModel(states=['Alive', 'Dead'], strategies=['S1'], time_horizon=1)
+        model.set_event('S1', 'Alive', 'Dead', Exponential(rate=0.1))
+        # np.integer is accepted, matching PSMModel's run_psa(n_sim=...).
+        model.run(n_patients=np.int64(3), seed=1, progress=False)
+        model.run_psa(n_sim=np.int64(2), n_patients=3, seed=1, progress=False)
+
+    def test_set_events_from_forwards_clock(self):
+        model = DESModel(
+            states=['A', 'B', 'C'], strategies=['S1'], clock='reset',
+        )
+        model.set_events_from('S1', 'A', {
+            'B': Exponential(rate=0.1),
+            'C': Exponential(rate=0.1),
+        }, clock='forward')
+        events = [e for e in model._events['S1'] if e.from_idx == 0]
+        assert {e.clock for e in events} == {'forward'}
+
+    def test_mapping_rejects_mixed_state_and_strategy_keys(self):
+        model = DESModel(
+            states=['Alive', 'Dead'], strategies=['SOC', 'Alive'], time_horizon=1,
+        )
+        model.set_event('SOC', 'Alive', 'Dead', Exponential(rate=0.1))
+        model.set_event('Alive', 'Alive', 'Dead', Exponential(rate=0.1))
+        model.set_state_cost('care', {'SOC': {'Alive': 100}, 'Dead': 0})
+        with pytest.raises(ValueError, match='mixes state-level and strategy-level'):
+            model.run(n_patients=1, seed=1, progress=False)
+
+    def test_on_state_enter_supports_a_custom_cost_category(self):
+        model = DESModel(
+            states=['Alive', 'Dead'], strategies=['S1'], time_horizon=5,
+        )
+        model.set_event('S1', 'Alive', 'Dead', Exponential(rate=1000))
+        model.on_state_enter(
+            'Dead', lambda i, t, a: {'cost': 500.0, 'category': 'surgery'}
+        )
+        result = model.run(n_patients=1, seed=1, progress=False)
+        costs = result.results['S1']['costs_by_cat']
+        assert 'surgery' in costs
+        assert 'event' not in costs
+
+    def test_on_state_enter_defaults_to_event_category(self):
+        model = DESModel(
+            states=['Alive', 'Dead'], strategies=['S1'], time_horizon=5,
+        )
+        model.set_event('S1', 'Alive', 'Dead', Exponential(rate=1000))
+        model.on_state_enter('Dead', lambda i, t, a: {'cost': 500.0})
+        result = model.run(n_patients=1, seed=1, progress=False)
+        assert 'event' in result.results['S1']['costs_by_cat']
 
 
 class TestDESRun:

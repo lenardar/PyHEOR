@@ -37,6 +37,25 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### DES consistency fixes
+
+- `run()` and `run_psa()` accept `np.integer` for `n_patients`/`n_sim`,
+  matching `PSMModel.run_psa`.
+- `set_events_from()` forwards `clock` to every event it registers instead
+  of always falling back to the model default.
+- The arity check used to decide whether a distribution callable accepts
+  patient attributes now counts every declared parameter, not just those
+  without a default; `lambda p, a=None: ...` previously never received
+  `attrs`.
+- State-cost and utility mappings reject keys that mix state and strategy
+  names, matching the cohort engines. A state name colliding with a
+  strategy name previously resolved by strategy-name priority silently.
+- `on_state_enter` handlers can return `{"cost": amount, "category": name}`
+  to book the cost under a category of their choosing instead of always
+  `"event"`, which could collide with an existing state-cost category.
+- Documented that competing-event ties break by declaration order; relevant
+  only to degenerate or point-mass distributions.
+
 ### OWSA with more than two strategies
 
 - `OWSAResult.summary()`, `plot_tornado()` and `plot_owsa_param()` accept an

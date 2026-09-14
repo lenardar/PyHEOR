@@ -355,6 +355,7 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         strategy: str,
         from_state: str,
         events: Dict[str, Any],
+        clock: Optional[str] = None,
     ) -> "DiscreteEventSimulationModel":
         """Set multiple events from the same source state.
 
@@ -366,6 +367,9 @@ class DiscreteEventSimulationModel(ParameterisedModel):
             Source state.
         events : dict
             Maps destination state → distribution.
+        clock : str, optional
+            Forwarded to :meth:`set_event` for every destination; the model
+            default applies when omitted.
 
         Examples
         --------
@@ -375,7 +379,7 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         ... })
         """
         for to_state, dist in events.items():
-            self.set_event(strategy, from_state, to_state, dist)
+            self.set_event(strategy, from_state, to_state, dist, clock=clock)
         return self
 
     # =====================================================================
@@ -474,8 +478,11 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         state : str
             State name.
         handler : callable
-            ``handler(patient_idx, time, attrs)``. Return ``{"cost": amount}``
-            to add a one-time cost at the state-entry time.
+            ``handler(patient_idx, time, attrs)``. Return
+            ``{"cost": amount}`` to add a one-time cost at the state-entry
+            time, booked under the ``"event"`` category by default, or
+            ``{"cost": amount, "category": name}`` to use a category of
+            your choosing.
         """
         if state not in self.states:
             raise ValueError(f"Unknown state '{state}'")
@@ -519,6 +526,45 @@ class DiscreteEventSimulationModel(ParameterisedModel):
                 f"{context} contains unknown keys: {sorted(unknown, key=str)!r}"
             )
 
+    def _classify_mapping(self, mapping: dict, context: str) -> bool:
+        """Return True for a strategy-level mapping, False for state-level.
+
+        Rejects a mapping whose keys mix strategy and state names: allowing
+        both, with strategy names taking silent priority, means a state name
+        that happens to collide with a strategy name resolves unpredictably.
+        """
+        if not mapping:
+            return False
+        keys = set(mapping)
+        strategy_names = set(self.strategy_names)
+        state_names = set(self.states)
+
+        if keys <= strategy_names and all(
+            isinstance(value, dict) for value in mapping.values()
+        ):
+            for strategy, inner in mapping.items():
+                unknown = set(inner) - state_names
+                if unknown:
+                    raise ValueError(
+                        f"{context} for strategy {strategy!r} contains "
+                        f"unknown states: {sorted(unknown)!r}"
+                    )
+            return True
+
+        if keys <= state_names:
+            return False
+
+        unknown = keys - state_names - strategy_names
+        if unknown:
+            raise ValueError(
+                f"{context} contains unknown state or strategy names: "
+                f"{sorted(unknown)!r}"
+            )
+        raise ValueError(
+            f"{context} mixes state-level and strategy-level keys; use "
+            "either {state: value} or {strategy: {state: value}}."
+        )
+
     def _validate_runtime_discount_rates(self, params: dict):
         """Validate fixed and PSA-sampled discount rates before simulation."""
         self._validate_discount_rate(params.get("dr_cost", self.dr_cost), "dr_cost")
@@ -537,24 +583,13 @@ class DiscreteEventSimulationModel(ParameterisedModel):
 
         # Strategy-specific outer layer
         if isinstance(vals, dict):
-            self._validate_mapping_keys(
-                vals, set(self.strategy_names) | set(self.states),
-                f"State cost '{cost_def.category}'",
+            by_strategy = self._classify_mapping(
+                vals, f"State cost '{cost_def.category}'",
             )
-            if strategy in vals:
-                inner = vals[strategy]
-                if isinstance(inner, dict):
-                    self._validate_mapping_keys(
-                        inner, set(self.states),
-                        f"State cost '{cost_def.category}' for strategy '{strategy}'",
-                    )
-                    v = inner.get(state, 0)
-                else:
-                    v = inner  # single value for all states? unlikely
-            elif state in vals:
-                v = vals[state]
+            if by_strategy:
+                v = vals.get(strategy, {}).get(state, 0)
             else:
-                v = 0
+                v = vals.get(state, 0)
         else:
             v = vals
 
@@ -611,23 +646,11 @@ class DiscreteEventSimulationModel(ParameterisedModel):
             vals = vals(params)
 
         if isinstance(vals, dict):
-            self._validate_mapping_keys(
-                vals, set(self.strategy_names) | set(self.states), "Utility mapping"
-            )
-            if strategy in vals:
-                inner = vals[strategy]
-                if isinstance(inner, dict):
-                    self._validate_mapping_keys(
-                        inner, set(self.states),
-                        f"Utility mapping for strategy '{strategy}'",
-                    )
-                    v = inner.get(state, 0)
-                else:
-                    v = inner
-            elif state in vals:
-                v = vals[state]
+            by_strategy = self._classify_mapping(vals, "Utility mapping")
+            if by_strategy:
+                v = vals.get(strategy, {}).get(state, 0)
             else:
-                v = 0
+                v = vals.get(state, 0)
         else:
             v = vals
 
@@ -653,11 +676,10 @@ class DiscreteEventSimulationModel(ParameterisedModel):
             return d
         if callable(d):
             import inspect
-            sig = inspect.signature(d)
-            n_args = len([
-                p for p in sig.parameters.values()
-                if p.default is inspect.Parameter.empty
-            ])
+            # Count every declared parameter, not just required ones: a
+            # callable written as f(params, attrs=None) does accept attrs,
+            # but has only one parameter without a default.
+            n_args = len(inspect.signature(d).parameters)
             if n_args >= 2 and attrs is not None:
                 return d(params, attrs)
             return d(params)
@@ -803,7 +825,8 @@ class DiscreteEventSimulationModel(ParameterisedModel):
                 amount = float(result["cost"])
                 if not np.isfinite(amount):
                     raise ValueError("on_state_enter returned a non-finite cost")
-                costs_by_cat["event"] = costs_by_cat.get("event", 0.0) + amount
+                cat = result.get("category", "event")
+                costs_by_cat[cat] = costs_by_cat.get(cat, 0.0) + amount
 
         while current_time < self.time_horizon and current_state not in self._absorbing:
             # Collect competing events from current state
@@ -830,7 +853,11 @@ class DiscreteEventSimulationModel(ParameterisedModel):
                 current_time = self.time_horizon
                 break
 
-            # Sample time-to-event for each competing risk
+            # Sample time-to-event for each competing risk. Ties are broken
+            # by declaration order (strict `<` below): irrelevant for
+            # continuous distributions, but a point mass or coincident
+            # degenerate distributions would always resolve to whichever
+            # event was registered first.
             min_time = float('inf')
             winning_event = None
 
@@ -916,7 +943,8 @@ class DiscreteEventSimulationModel(ParameterisedModel):
                     amount = float(result["cost"])
                     if not np.isfinite(amount):
                         raise ValueError("on_state_enter returned a non-finite cost")
-                    costs_by_cat["event"] = costs_by_cat.get("event", 0.0) + (
+                    cat = result.get("category", "event")
+                    costs_by_cat[cat] = costs_by_cat.get(cat, 0.0) + (
                         self._discount_lump_sum(
                             amount, current_time, self.dr_cost,
                             self.discount_convention,
@@ -997,7 +1025,7 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         """
         from ..analysis.results import DESResult
 
-        if isinstance(n_patients, bool) or not isinstance(n_patients, int) or n_patients <= 0:
+        if isinstance(n_patients, bool) or not isinstance(n_patients, (int, np.integer)) or n_patients <= 0:
             raise ValueError("n_patients must be a positive integer")
         if attrs is not None:
             for name, values in attrs.items():
@@ -1102,9 +1130,9 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         """
         from ..analysis.results import DESPSAResult
 
-        if isinstance(n_sim, bool) or not isinstance(n_sim, int) or n_sim <= 0:
+        if isinstance(n_sim, bool) or not isinstance(n_sim, (int, np.integer)) or n_sim <= 0:
             raise ValueError("n_sim must be a positive integer")
-        if isinstance(n_patients, bool) or not isinstance(n_patients, int) or n_patients <= 0:
+        if isinstance(n_patients, bool) or not isinstance(n_patients, (int, np.integer)) or n_patients <= 0:
             raise ValueError("n_patients must be a positive integer")
         if attrs is not None:
             for name, values in attrs.items():
