@@ -37,6 +37,24 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### Incremental analysis: pairing, tolerance, and stale data
+
+- `classify_incremental` accepts separate `cost_tol` and `effect_tol` instead
+  of one tolerance for both currency and QALY scales. `icer()` on every
+  result class now derives both from the magnitudes actually involved, the
+  same way `calculate_icers` already scaled its frontier tolerance.
+- PSA `icer()` methods pair each strategy's per-simulation rows by
+  `sim` explicitly rather than relying on `ce_table`'s row order, matching
+  `ceac_data()` and the plotting code, which already did.
+- `CEAnalysis.from_result` and `.from_psa` both key strategies by their
+  display label. `from_psa` previously used the internal strategy name, so
+  `is_dominated()` expected different arguments depending on how the
+  `CEAnalysis` was constructed from the same model.
+- An extendedly dominated (`ED`) row's `ICER`, `Inc_Cost`, `Inc_QALYs` and
+  `Ref` are cleared to NaN/empty instead of keeping the values computed
+  before it was eliminated from the frontier, which read as a valid
+  sequential ICER.
+
 ### Shared parameter handling
 
 - `add_param`, `add_params`, discount-rate registration, the attribute

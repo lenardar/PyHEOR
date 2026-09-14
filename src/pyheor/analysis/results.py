@@ -11,26 +11,63 @@ from typing import Any, Dict, List, Optional
 
 
 def classify_incremental(
-    delta_cost: float, delta_effect: float, tol: float = 1e-10,
+    delta_cost: float, delta_effect: float,
+    cost_tol: float = 1e-10, effect_tol: Optional[float] = None,
 ):
-    """Return a numeric ICER when meaningful and a quadrant label."""
-    if abs(delta_effect) <= tol:
-        if delta_cost > tol:
+    """Return a numeric ICER when meaningful and a quadrant label.
+
+    Cost and effect live on unrelated scales (currency vs. QALYs), so one
+    tolerance for both is either too loose for money or too tight for
+    effect: ``classify_incremental(100.0, 1e-9)`` would otherwise report a
+    1e11 ICER instead of "No difference". ``effect_tol`` defaults to
+    ``cost_tol`` for callers that have not been updated to pass a
+    QALY-scale tolerance explicitly.
+    """
+    if effect_tol is None:
+        effect_tol = cost_tol
+
+    if abs(delta_effect) <= effect_tol:
+        if delta_cost > cost_tol:
             return np.nan, "Dominated"
-        if delta_cost < -tol:
+        if delta_cost < -cost_tol:
             return np.nan, "Dominant"
         return np.nan, "No difference"
 
     if delta_effect > 0:
-        if delta_cost <= tol:
+        if delta_cost <= cost_tol:
             return np.nan, "Dominant"
         value = delta_cost / delta_effect
         return value, f"{value:,.0f}"
 
-    if delta_cost >= -tol:
+    if delta_cost >= -cost_tol:
         return np.nan, "Dominated"
     value = delta_cost / delta_effect
     return value, f"{value:,.0f} (less effective, less costly)"
+
+
+def _scale_tol(*magnitudes: float, rtol: float = 1e-9, atol: float = 1e-10) -> float:
+    """A tolerance proportional to the largest magnitude in play.
+
+    Mirrors the relative tolerance used for frontier dominance, so a real
+    difference at the scale of Monte Carlo noise is not read as one.
+    """
+    scale = max((abs(m) for m in magnitudes if np.isfinite(m)), default=0.0)
+    return max(rtol * scale, atol)
+
+
+def _paired_psa_icer(ce: pd.DataFrame, strategy: str, comparator: str):
+    """Per-simulation incremental cost/QALYs, paired by simulation id.
+
+    Selecting each strategy's rows independently and subtracting by position
+    only pairs simulations correctly if both selections share one row order.
+    Sorting by ``sim`` makes that an explicit guarantee instead of an
+    accident of how ``ce_table`` was built.
+    """
+    int_df = ce.loc[ce['strategy'] == strategy].sort_values('sim')
+    comp_df = ce.loc[ce['strategy'] == comparator].sort_values('sim')
+    inc_cost = int_df['total_cost'].to_numpy() - comp_df['total_cost'].to_numpy()
+    inc_qaly = int_df['qalys'].to_numpy() - comp_df['qalys'].to_numpy()
+    return int_df, comp_df, inc_cost, inc_qaly
 
 
 class StrategyOutcomeResult:
@@ -75,7 +112,11 @@ class StrategyOutcomeResult:
             cost, qaly, ly = self._totals(strategy)
             inc_cost = cost - base_cost
             inc_qaly = qaly - base_qaly
-            value, classification = classify_incremental(inc_cost, inc_qaly)
+            value, classification = classify_incremental(
+                inc_cost, inc_qaly,
+                cost_tol=_scale_tol(cost, base_cost),
+                effect_tol=_scale_tol(qaly, base_qaly),
+            )
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
                 'vs': self.model.strategy_labels[comparator],
@@ -221,7 +262,11 @@ class OWSAResult:
         """Return a ratio only when the incremental quadrant permits one."""
         d_cost = cost_int - cost_comp
         d_qaly = qaly_int - qaly_comp
-        return classify_incremental(d_cost, d_qaly)[0]
+        return classify_incremental(
+            d_cost, d_qaly,
+            cost_tol=_scale_tol(cost_int, cost_comp),
+            effect_tol=_scale_tol(qaly_int, qaly_comp),
+        )[0]
 
     def summary(self, comparator: Optional[str] = None,
                 outcome: str = "nmb") -> pd.DataFrame:
@@ -300,9 +345,21 @@ class OWSAResult:
                 'ICER (Low)': low_icer,
                 'ICER (High)': high_icer,
                 'ICER (Base)': base_icer,
-                'ICER Classification (Low)': classify_incremental(low_cost_int - low_cost_comp, low_qaly_int - low_qaly_comp)[1],
-                'ICER Classification (High)': classify_incremental(high_cost_int - high_cost_comp, high_qaly_int - high_qaly_comp)[1],
-                'ICER Classification (Base)': classify_incremental(base_cost_int - base_cost_comp, base_qaly_int - base_qaly_comp)[1],
+                'ICER Classification (Low)': classify_incremental(
+                    low_cost_int - low_cost_comp, low_qaly_int - low_qaly_comp,
+                    cost_tol=_scale_tol(low_cost_int, low_cost_comp),
+                    effect_tol=_scale_tol(low_qaly_int, low_qaly_comp),
+                )[1],
+                'ICER Classification (High)': classify_incremental(
+                    high_cost_int - high_cost_comp, high_qaly_int - high_qaly_comp,
+                    cost_tol=_scale_tol(high_cost_int, high_cost_comp),
+                    effect_tol=_scale_tol(high_qaly_int, high_qaly_comp),
+                )[1],
+                'ICER Classification (Base)': classify_incremental(
+                    base_cost_int - base_cost_comp, base_qaly_int - base_qaly_comp,
+                    cost_tol=_scale_tol(base_cost_int, base_cost_comp),
+                    effect_tol=_scale_tol(base_qaly_int, base_qaly_comp),
+                )[1],
             }
 
             if outcome == "icer":
@@ -428,21 +485,27 @@ class PSAResult:
             comparator = self.model.strategy_names[0]
         
         ce = self.ce_table
-        comp_df = ce[ce['strategy'] == comparator]
         
         rows = []
         for strategy in self.model.strategy_names:
             if strategy == comparator:
                 continue
             
-            int_df = ce[ce['strategy'] == strategy]
-            
-            inc_cost = int_df['total_cost'].values - comp_df['total_cost'].values
-            inc_qaly = int_df['qalys'].values - comp_df['qalys'].values
+            int_df, comp_df, inc_cost, inc_qaly = _paired_psa_icer(
+                ce, strategy, comparator
+            )
             
             mean_ic = inc_cost.mean()
             mean_iq = inc_qaly.mean()
-            icer_val, classification = classify_incremental(mean_ic, mean_iq)
+            icer_val, classification = classify_incremental(
+                mean_ic, mean_iq,
+                cost_tol=_scale_tol(
+                    int_df['total_cost'].mean(), comp_df['total_cost'].mean()
+                ),
+                effect_tol=_scale_tol(
+                    int_df['qalys'].mean(), comp_df['qalys'].mean()
+                ),
+            )
             
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -834,19 +897,26 @@ class MicroSimPSAResult:
             comparator = self.model.strategy_names[0]
 
         ce = self.ce_table
-        comp_df = ce[ce['strategy'] == comparator]
 
         rows = []
         for strategy in self.model.strategy_names:
             if strategy == comparator:
                 continue
-            int_df = ce[ce['strategy'] == strategy]
-            inc_cost = int_df['total_cost'].values - comp_df['total_cost'].values
-            inc_qaly = int_df['qalys'].values - comp_df['qalys'].values
+            int_df, comp_df, inc_cost, inc_qaly = _paired_psa_icer(
+                ce, strategy, comparator
+            )
 
             mean_ic = inc_cost.mean()
             mean_iq = inc_qaly.mean()
-            icer_val, classification = classify_incremental(mean_ic, mean_iq)
+            icer_val, classification = classify_incremental(
+                mean_ic, mean_iq,
+                cost_tol=_scale_tol(
+                    int_df['total_cost'].mean(), comp_df['total_cost'].mean()
+                ),
+                effect_tol=_scale_tol(
+                    int_df['qalys'].mean(), comp_df['qalys'].mean()
+                ),
+            )
 
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -1173,19 +1243,26 @@ class DESPSAResult:
             comparator = self.model.strategy_names[0]
 
         ce = self.ce_table
-        comp_df = ce[ce['strategy'] == comparator]
 
         rows = []
         for strategy in self.model.strategy_names:
             if strategy == comparator:
                 continue
-            int_df = ce[ce['strategy'] == strategy]
-            inc_cost = int_df['total_cost'].values - comp_df['total_cost'].values
-            inc_qaly = int_df['qalys'].values - comp_df['qalys'].values
+            int_df, comp_df, inc_cost, inc_qaly = _paired_psa_icer(
+                ce, strategy, comparator
+            )
 
             mean_ic = inc_cost.mean()
             mean_iq = inc_qaly.mean()
-            icer_val, classification = classify_incremental(mean_ic, mean_iq)
+            icer_val, classification = classify_incremental(
+                mean_ic, mean_iq,
+                cost_tol=_scale_tol(
+                    int_df['total_cost'].mean(), comp_df['total_cost'].mean()
+                ),
+                effect_tol=_scale_tol(
+                    int_df['qalys'].mean(), comp_df['qalys'].mean()
+                ),
+            )
 
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],

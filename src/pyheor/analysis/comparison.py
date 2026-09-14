@@ -190,7 +190,15 @@ def calculate_icers(
             i_curr = nd_idx2[k]
             i_prev = nd_idx2[k - 1]
             if icers[i_curr] < icers[i_prev]:
+                # i_prev is no longer a step on the final frontier chain, so
+                # its incremental figures are stale rather than meaningful:
+                # clear them instead of leaving the pre-elimination values,
+                # which would otherwise look like a valid sequential ICER.
                 status[i_prev] = "ED"
+                icers[i_prev] = np.nan
+                inc_costs[i_prev] = np.nan
+                inc_qalys[i_prev] = np.nan
+                refs[i_prev] = ""
                 converged = False
                 break
 
@@ -360,7 +368,13 @@ class CEAnalysis:
         for col in ce.columns:
             col_map[col.lower()] = col
 
-        strat_col = col_map.get("strategy", col_map.get("strategy_label", None))
+        # Group by the internal strategy name, which is always present and
+        # unique, but display the label — matching from_result(), whose
+        # Strategy column already holds labels. Building a CEAnalysis from a
+        # base case and from a PSA of the same model should give the same
+        # is_dominated()/frontier() strategy identifiers either way.
+        strat_col = col_map.get("strategy")
+        label_col = col_map.get("strategy_label", strat_col)
         sim_col = col_map.get("simulation", col_map.get("sim", None))
         cost_col = col_map.get("cost", col_map.get("total_cost", None))
         qaly_col = col_map.get("qalys", None)
@@ -372,16 +386,18 @@ class CEAnalysis:
                 "Expected columns for strategy, simulation, cost, qalys."
             )
 
-        strategies = ce[strat_col].unique().tolist()
+        strategy_names = ce[strat_col].unique().tolist()
+        label_by_name = dict(zip(ce[strat_col], ce[label_col]))
+        strategies = [label_by_name[name] for name in strategy_names]
 
         # Align on the simulation labels themselves rather than assuming they
         # run 1..n: a gap would otherwise pair up unrelated draws, or truncate.
         sim_ids = np.sort(ce[sim_col].unique())
         n_sim = len(sim_ids)
-        psa_costs = np.zeros((n_sim, len(strategies)))
-        psa_qalys = np.zeros((n_sim, len(strategies)))
+        psa_costs = np.zeros((n_sim, len(strategy_names)))
+        psa_qalys = np.zeros((n_sim, len(strategy_names)))
 
-        for j, strat in enumerate(strategies):
+        for j, strat in enumerate(strategy_names):
             subset = ce.loc[ce[strat_col] == strat].set_index(sim_col)
             missing = set(sim_ids) - set(subset.index)
             if missing:
@@ -404,11 +420,10 @@ class CEAnalysis:
         # Try to get LYs
         lys = None
         if ly_col is not None:
-            psa_lys = np.zeros((n_sim, len(strategies)))
-            for j, strat in enumerate(strategies):
-                mask = ce[strat_col] == strat
-                subset = ce.loc[mask].sort_values(sim_col)
-                psa_lys[:, j] = subset[ly_col].values[:n_sim]
+            psa_lys = np.zeros((n_sim, len(strategy_names)))
+            for j, strat in enumerate(strategy_names):
+                subset = ce.loc[ce[strat_col] == strat].set_index(sim_col)
+                psa_lys[:, j] = subset.loc[sim_ids, ly_col].to_numpy()
             lys = psa_lys.mean(axis=0)
 
         return cls(

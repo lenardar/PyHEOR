@@ -86,6 +86,20 @@ class TestFrontierRobustness:
         )
         assert df.set_index("Strategy").loc["B", "Status"] == "ED"
 
+    def test_extendedly_dominated_row_does_not_keep_a_stale_icer(self):
+        # B's ICER (200) was real before C's cheaper-per-QALY step replaced
+        # it in the chain. Leaving that number in place would read as a
+        # valid sequential ICER rather than a discarded one.
+        row = calculate_icers(
+            strategies=["A", "B", "C"],
+            costs=[100.0, 200.0, 300.0],
+            qalys=[1.0, 1.5, 3.0],
+        ).set_index("Strategy").loc["B"]
+        assert np.isnan(row["ICER"])
+        assert np.isnan(row["Inc_Cost"])
+        assert np.isnan(row["Inc_QALYs"])
+        assert row["Ref"] == ""
+
     @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
     def test_non_finite_costs_are_rejected(self, bad):
         with pytest.raises(ValueError, match="finite"):
