@@ -96,9 +96,6 @@ def total_cost(model, category="care"):
     return model.run_base_case().results["S1"]["total_costs"][category]
 
 
-def xfail_microsim(reason):
-    return pytest.mark.xfail(strict=True, reason=reason)
-
 
 # =============================================================================
 # 1. N intervals, not N+1
@@ -115,11 +112,7 @@ class TestTenIntervalsGiveTenLifeYears:
     def test_psm(self, hcc):
         assert total_lys(build_psm(NEVER_DIES, hcc=hcc)) == pytest.approx(10.0)
 
-    @pytest.mark.parametrize("hcc", [
-        pytest.param(False, marks=xfail_microsim(
-            "microsim.py:692 accrues over N+1 observation points, giving 11 LY")),
-        True,
-    ])
+    @pytest.mark.parametrize("hcc", [False, True])
     def test_microsim(self, hcc):
         assert total_lys(build_microsim(ALIVE_FOREVER, hcc=hcc)) == pytest.approx(10.0)
 
@@ -173,11 +166,7 @@ class TestHalfYearCycleHalvesAnnualCost:
         model.set_state_cost("care", {"Alive": 100, "Dead": 0})
         assert total_cost(model) == pytest.approx(50.0)
 
-    @pytest.mark.parametrize("hcc", [
-        pytest.param(False, marks=xfail_microsim(
-            "microsim.py:692 accrues two observation points for one interval")),
-        True,
-    ])
+    @pytest.mark.parametrize("hcc", [False, True])
     def test_microsim(self, hcc):
         model = build_microsim(ALIVE_FOREVER, n_cycles=1, cycle_length=0.5, hcc=hcc)
         model.set_state_cost("care", {"Alive": 100, "Dead": 0})

@@ -830,7 +830,7 @@ class MicroSimResult:
                 'Total Cost': r['total_cost'],
                 'Total QALYs': r['total_qalys'],
                 'Total LYs': r['total_lys'],
-                'Alive Cycles': r['alive_cycles'],
+                'Years Alive': r['time_alive'],
             })
             dfs.append(df)
         return pd.concat(dfs, ignore_index=True)

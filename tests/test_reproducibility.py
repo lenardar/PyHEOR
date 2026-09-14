@@ -231,11 +231,6 @@ class TestCommonRandomNumbers:
             result.results["B"]["total_qalys"],
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="microsim.py:831-835 reuses one rng sequentially across "
-               "strategies instead of per-patient common random numbers",
-    )
     def test_microsim_aligns_patients_across_strategies(self):
         result = identical_strategy_model("microsim").run_base_case(
             seed=5, verbose=False

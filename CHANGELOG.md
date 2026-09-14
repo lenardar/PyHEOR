@@ -2,6 +2,98 @@
 
 ## Unreleased
 
+### MicroSim calculation semantics
+
+This release aligns the individual-level engine with the conventions the
+cohort engines already follow. Existing microsimulation analyses should be
+rerun and reviewed: totals change wherever the previous behavior counted an
+extra reward period, discounted at interval starts, or left event costs
+undiscounted. Deterministic transitions now reproduce the Markov totals
+exactly.
+
+- `n_cycles=N` means N reward intervals. The reward loop previously accrued
+  over all N+1 observation points, returning 11 life-years for ten one-year
+  intervals. Enabling half-cycle correction happened to mask this, because the
+  first and last endpoint weights cancelled the extra period.
+- Half-cycle correction averages the value at both interval endpoints rather
+  than weighting the first and last observation by one half, so time-varying
+  costs and utilities behave as they do in Markov and PSM.
+- State rewards discount at interval midpoints and event costs at the end of
+  the interval that produced them. Event costs were previously undiscounted.
+- `discount_convention` is accepted, selecting annual-effective or
+  continuously compounded discounting.
+- Transition callbacks receive 0-based interval indices, matching the cost and
+  utility callbacks. They previously received 1-based cycle numbers, so one
+  model exposed two different meanings of `t`.
+- Invalid transition matrices raise instead of being clipped and renormalised,
+  matching the cohort engine.
+- Multi-strategy runs draw per-patient common random numbers, so a strategy
+  difference no longer carries unrelated Monte Carlo noise.
+- Constructor arguments, mapping keys, handler state names, cost methods and
+  `apply_cycles` are validated as they are in the other engines. An unknown
+  state name in a cost or utility mapping is an error rather than a silent
+  zero.
+- `alive_cycles` is replaced by `time_alive`, measured in years on the same
+  footing as the life-year accrual; the patient outcome column is now
+  `Years Alive`.
+
+### Incremental analysis
+
+- MicroSim base-case and PSA ICERs classify the incremental quadrant before
+  dividing, so a strategy costing more for fewer QALYs is reported as
+  `Dominated` rather than as a negative ratio. The PSA variant gained the
+  `ICER Classification` column its counterparts already returned.
+- Efficiency frontier comparisons use a tolerance proportional to the scale of
+  the inputs. Floating-point noise no longer registers as strong dominance,
+  and two strategies that cannot be told apart are labelled `EQ` instead of
+  dominated.
+- `calculate_icers` rejects non-finite costs or effects, naming the offending
+  strategies, instead of silently ranking them last.
+- ICER tornado diagrams rank a parameter whose bound is dominant or dominated
+  first. The guard tested for infinity while the classifier returns NaN, so
+  such a parameter sorted last and could fall outside `max_params` entirely.
+
+### Reproducibility
+
+- DES derives per-patient streams from a `SeedSequence` instead of seeding
+  NumPy globally, so a seeded run no longer disturbs the caller's RNG state.
+  Per-patient streams are used for single-strategy runs too.
+- MicroSim PSA draws parameters through the seeded generator it already
+  created, making `run_psa(seed=...)` reproducible.
+- A `**kwargs` signature no longer counts as support for an explicit `rng`
+  argument, which previously left such draws unseeded.
+
+### Input validation
+
+- `Normal`, `LogNormal`, `Uniform`, `Triangular` and `Dirichlet` validate their
+  parameters at construction. `LogNormal(mean=-1, sd=0.5)` previously produced
+  a positive-valued distribution centred near +1, because the moment match
+  squares the mean.
+- Vector-valued draws are rejected where a scalar parameter is expected, so
+  using `Dirichlet` as a `Param` distribution explains the problem.
+- `KaplanMeier` validates lengths, bounds, monotonicity and the extrapolation
+  name; `PiecewiseExponential` validates rates and breakpoints.
+- The default quantile widens its search bracket until it contains the root
+  and returns infinity when a quantile is genuinely unreachable, such as with
+  a Gompertz cure fraction. It previously searched a fixed `[0, 1e6]` interval
+  and returned NaN on failure.
+- `CEAnalysis` validates that its columns and PSA matrices match the strategy
+  count, and pairs PSA draws by simulation id rather than by position.
+
+### Excel export
+
+- Weibull survival formulas parenthesise the power. Excel binds unary minus
+  more tightly than `^`, so `=EXP(-(t/s)^k)` evaluated as `EXP((-(t/s))^k)`:
+  `#NUM!` for fractional shapes, and a silently wrong survival probability for
+  even integer ones. Proportional-hazards and accelerated-failure-time
+  wrappers around a Weibull baseline inherited the defect.
+
+### Plotting
+
+- Importing `pyheor` no longer switches the Matplotlib backend to `Agg`, which
+  silenced `plt.show()` for the caller. Report generation switches only while
+  rendering and restores the previous backend.
+
 ### Shared model definitions
 
 - `Param` and the internal cycle-based cost definition now live in

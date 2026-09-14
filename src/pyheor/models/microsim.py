@@ -49,7 +49,7 @@ from .common import Param as _Param, _CostDef
 from ..distributions import sample_distribution
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
-    normalize_hcc,
+    normalize_hcc, validate_transition_matrix,
 )
 
 
@@ -161,9 +161,14 @@ class IndividualStateTransitionModel:
         initial_state: Union[str, int] = 0,
         state_type: Optional[Dict[str, str]] = None,
         seed: Optional[int] = None,
+        discount_convention: str = "discrete",
     ):
         # States
         self.states = list(states)
+        if not self.states:
+            raise ValueError("states must contain at least one state")
+        if len(set(self.states)) != len(self.states):
+            raise ValueError(f"State names must be unique, got {self.states!r}")
         self.n_states = len(self.states)
 
         # Strategies
@@ -173,12 +178,40 @@ class IndividualStateTransitionModel:
         else:
             self.strategy_names = list(strategies)
             self.strategy_labels = {s: s for s in self.strategy_names}
+        if not self.strategy_names:
+            raise ValueError("strategies must contain at least one strategy")
+        if len(set(self.strategy_names)) != len(self.strategy_names):
+            raise ValueError(
+                f"Strategy names must be unique, got {self.strategy_names!r}"
+            )
         self.n_strategies = len(self.strategy_names)
 
         # Model settings
-        self.n_cycles = n_cycles
-        self.n_patients = n_patients
-        self.cycle_length = cycle_length
+        if isinstance(n_cycles, bool) or not isinstance(n_cycles, (int, np.integer)):
+            raise TypeError(
+                f"n_cycles must be an integer, got {type(n_cycles).__name__}"
+            )
+        if n_cycles <= 0:
+            raise ValueError(f"n_cycles must be positive, got {n_cycles!r}")
+        if isinstance(n_patients, bool) or not isinstance(n_patients, (int, np.integer)):
+            raise TypeError(
+                f"n_patients must be an integer, got {type(n_patients).__name__}"
+            )
+        if n_patients <= 0:
+            raise ValueError(f"n_patients must be positive, got {n_patients!r}")
+        if not np.isfinite(cycle_length) or cycle_length <= 0:
+            raise ValueError(
+                f"cycle_length must be a positive finite number, got {cycle_length!r}"
+            )
+        if discount_convention not in {"discrete", "continuous"}:
+            raise ValueError(
+                f"Unknown discount_convention {discount_convention!r}; "
+                "expected 'discrete' or 'continuous'."
+            )
+        self.n_cycles = int(n_cycles)
+        self.n_patients = int(n_patients)
+        self.cycle_length = float(cycle_length)
+        self.discount_convention = discount_convention
         self._hcc_method = normalize_hcc(half_cycle_correction)
         self.seed = seed
 
@@ -200,15 +233,41 @@ class IndividualStateTransitionModel:
             self.params["dr_qaly"] = dr_qaly
         else:
             self.dr_qaly = float(dr_qaly)
+        discount_factor(0, self.dr_cost, convention=self.discount_convention)
+        discount_factor(0, self.dr_qaly, convention=self.discount_convention)
 
         # Initial state
         if isinstance(initial_state, str):
+            if initial_state not in self.states:
+                raise ValueError(
+                    f"Unknown initial_state {initial_state!r}; "
+                    f"available states are {self.states!r}"
+                )
             self.initial_state_idx = self.states.index(initial_state)
         else:
             self.initial_state_idx = int(initial_state)
+            if not 0 <= self.initial_state_idx < self.n_states:
+                raise ValueError(
+                    f"initial_state index must be between 0 and "
+                    f"{self.n_states - 1}, got {self.initial_state_idx}"
+                )
 
         # State types
         if state_type is not None:
+            unknown_states = set(state_type) - set(self.states)
+            if unknown_states:
+                raise ValueError(
+                    f"state_type contains unknown states: {sorted(unknown_states)!r}"
+                )
+            invalid_types = {
+                name: value for name, value in state_type.items()
+                if value not in {"alive", "dead"}
+            }
+            if invalid_types:
+                raise ValueError(
+                    "state_type values must be 'alive' or 'dead'; "
+                    f"got {invalid_types!r}"
+                )
             self._alive_states = set(
                 i for i, s in enumerate(self.states)
                 if state_type.get(s, "alive") == "alive"
@@ -367,6 +426,32 @@ class IndividualStateTransitionModel:
         The ``values`` can also accept patient attributes:
         - ``callable(params, cycle, attrs) -> {state: cost}``
         """
+        if method not in {"wlos", "starting"}:
+            raise ValueError(
+                f"Unknown cost method {method!r}; expected 'wlos' or 'starting'."
+            )
+        if method == "starting" and (first_cycle_only or apply_cycles is not None):
+            raise ValueError(
+                "method='starting' is a one-off charge at time zero, so it "
+                "cannot be combined with first_cycle_only or apply_cycles."
+            )
+        if apply_cycles is not None:
+            resolved_cycles = []
+            for cycle in apply_cycles:
+                if isinstance(cycle, bool) or not isinstance(cycle, (int, np.integer)):
+                    raise TypeError(
+                        f"apply_cycles must contain integers, got {cycle!r}"
+                    )
+                if not 0 <= cycle < self.n_cycles:
+                    raise ValueError(
+                        f"apply_cycles entry {cycle} is outside the model's "
+                        f"interval range 0..{self.n_cycles - 1}"
+                    )
+                resolved_cycles.append(int(cycle))
+            apply_cycles = tuple(resolved_cycles)
+        if not callable(values):
+            self._validate_state_mapping(values, "cost values")
+
         self._costs[category] = _CostDef(
             name=category,
             values=values,
@@ -382,6 +467,8 @@ class IndividualStateTransitionModel:
         The ``values`` can also accept patient attributes:
         - ``callable(params, cycle, attrs) -> {state: utility}``
         """
+        if not callable(values):
+            self._validate_state_mapping(values, "utility values")
         self._utility = values
         return self
 
@@ -404,6 +491,12 @@ class IndividualStateTransitionModel:
         --------
         >>> model.on_state_enter("Sick", lambda idx, t, a: {"cost": 5000})
         """
+        if state not in self.states:
+            raise ValueError(
+                f"Unknown state {state!r}; available states are {self.states!r}"
+            )
+        if not callable(handler):
+            raise TypeError("handler must be callable")
         if state not in self._on_enter:
             self._on_enter[state] = []
         self._on_enter[state].append(handler)
@@ -411,6 +504,12 @@ class IndividualStateTransitionModel:
 
     def on_state_exit(self, state: str, handler: Callable) -> "IndividualStateTransitionModel":
         """Register a handler called when a patient leaves a state."""
+        if state not in self.states:
+            raise ValueError(
+                f"Unknown state {state!r}; available states are {self.states!r}"
+            )
+        if not callable(handler):
+            raise TypeError("handler must be callable")
         if state not in self._on_exit:
             self._on_exit[state] = []
         self._on_exit[state].append(handler)
@@ -456,11 +555,46 @@ class IndividualStateTransitionModel:
                 resolved.append(resolved_row)
             P = resolve_complement(resolved)
 
-        P = np.clip(P, 0.0, 1.0)
-        row_sums = P.sum(axis=1, keepdims=True)
-        mask = row_sums.flatten() > 0
-        P[mask] = P[mask] / row_sums[mask]
+        # Repairing an invalid matrix would quietly turn a typo into a
+        # different model, so reject it the way the cohort engine does.
+        validate_transition_matrix(P)
         return P
+
+    def _validate_state_mapping(self, values, label: str) -> bool:
+        """Check mapping keys, returning True for a strategy-level mapping.
+
+        An unknown key is an error rather than a silent zero, so a misspelled
+        state cannot quietly drop a cost.
+        """
+        if not isinstance(values, dict) or not values:
+            return False
+
+        keys = list(values)
+        strategy_keys = [k for k in keys if k in self.strategy_names]
+        nested = [k for k in keys if isinstance(values[k], dict)]
+        if strategy_keys and len(strategy_keys) == len(keys) and nested:
+            if len(nested) != len(keys):
+                raise ValueError(
+                    f"{label} mixes strategy-level and state-level entries: "
+                    f"{keys!r}"
+                )
+            for strategy, inner in values.items():
+                unknown = set(inner) - set(self.states)
+                if unknown:
+                    raise ValueError(
+                        f"{label} for strategy {strategy!r} contains unknown "
+                        f"states: {sorted(unknown)!r}"
+                    )
+            return True
+
+        unknown = set(keys) - set(self.states)
+        if unknown:
+            raise ValueError(
+                f"{label} contains unknown keys: {sorted(unknown)!r}. "
+                f"Expected state names {self.states!r} or strategy names "
+                f"{self.strategy_names!r}."
+            )
+        return False
 
     def _resolve_state_values(self, values, strategy: str, params: dict,
                               t: int, attrs: dict = None) -> np.ndarray:
@@ -478,22 +612,18 @@ class IndividualStateTransitionModel:
         if not values:
             return result
 
-        first_key = next(iter(values))
-        if isinstance(first_key, str) and first_key in self.strategy_names:
-            if strategy in values:
-                state_vals = values[strategy]
-                if isinstance(state_vals, dict):
-                    for state_name, val in state_vals.items():
-                        if state_name in self.states:
-                            idx = self.states.index(state_name)
-                            result[idx] = resolve_value(val, params, t)
-                else:
-                    result[:] = resolve_value(state_vals, params, t)
+        by_strategy = self._validate_state_mapping(values, "state values")
+        if by_strategy:
+            if strategy not in values:
+                return result
+            state_vals = values[strategy]
+            for state_name, val in state_vals.items():
+                idx = self.states.index(state_name)
+                result[idx] = resolve_value(val, params, t)
         else:
             for state_name, val in values.items():
-                if state_name in self.states:
-                    idx = self.states.index(state_name)
-                    result[idx] = resolve_value(val, params, t)
+                idx = self.states.index(state_name)
+                result[idx] = resolve_value(val, params, t)
 
         return result
 
@@ -521,281 +651,260 @@ class IndividualStateTransitionModel:
     # Core Simulation Engine
     # =========================================================================
 
+    @staticmethod
+    def _callable_needs_attrs(fn) -> bool:
+        """Whether a user callback accepts the patient-attributes argument."""
+        if not callable(fn):
+            return False
+        import inspect
+        try:
+            return len(inspect.signature(fn).parameters) >= 3
+        except (ValueError, TypeError):
+            return False
+
+    def _draw_next_state(self, row: np.ndarray, draws: np.ndarray) -> np.ndarray:
+        """Inverse-transform sample destinations from one transition row.
+
+        Spending exactly one uniform per patient per interval is what keeps a
+        patient's path identical across strategies.
+        """
+        picks = np.searchsorted(np.cumsum(row), draws, side="right")
+        return np.minimum(picks, self.n_states - 1)
+
+    @staticmethod
+    def _interval_reward(values, begin, end, trapezoidal):
+        """Per-year value earned over one interval.
+
+        Trapezoidal correction averages the value at the two interval
+        endpoints, mirroring the cohort engines' averaging of occupancy.
+        """
+        if trapezoidal:
+            return (values[begin] + values[end]) / 2.0
+        return values[begin]
+
+    def _run_state_handlers(self, profile, has_attrs, interval, previous,
+                            current, event_cost_by_interval) -> None:
+        """Fire exit/enter callbacks and bank any one-off cost they return."""
+        for i in np.where(previous != current)[0]:
+            attrs = self._get_patient_attrs(profile, i) if has_attrs else {}
+            for state_idx, registry in (
+                (previous[i], self._on_exit), (current[i], self._on_enter),
+            ):
+                for handler in registry.get(self.states[state_idx], ()):
+                    outcome = handler(i, interval, attrs)
+                    if not outcome or "cost" not in outcome:
+                        continue
+                    amount = float(outcome["cost"])
+                    if not np.isfinite(amount):
+                        raise ValueError(
+                            "State handler returned a non-finite cost at "
+                            f"interval {interval} for patient {i}"
+                        )
+                    event_cost_by_interval[i, interval] += amount
+
     def _simulate_patients(
         self,
         strategy: str,
         params: dict,
         profile: PatientProfile,
-        rng: np.random.Generator,
+        uniforms: np.ndarray,
     ) -> dict:
         """Simulate all patients for one strategy.
+
+        ``uniforms`` is an ``(n_patients, n_cycles)`` array shared by every
+        strategy, so a strategy difference reflects the strategy rather than
+        unrelated Monte Carlo noise.
+
+        Rewards accrue over the ``n_cycles`` intervals between the
+        ``n_cycles + 1`` observation points, as in the cohort engines.
 
         Returns
         -------
         dict with keys:
             state_history : (n_patients, n_cycles+1) int array
-            cost_history  : (n_patients, n_cycles+1) float array
-            qaly_history  : (n_patients, n_cycles+1) float array
-            ly_history    : (n_patients, n_cycles+1) float array
-            event_costs   : (n_patients,) float — one-time event costs
-            trace         : (n_cycles+1, n_states) float — mean state occupancy
+            cost_history  : (n_patients, n_cycles) float, discounted
+            qaly_history  : (n_patients, n_cycles) float, discounted
+            ly_history    : (n_patients, n_cycles) float, discounted
+            event_costs   : (n_patients,) float, undiscounted lump sums
+            trace         : (n_cycles+1, n_states) float, mean occupancy
+            time_alive    : (n_patients,) float, undiscounted years alive
         """
         N = profile.n_patients
         T = self.n_cycles
 
-        # Histories
         state_hist = np.full((N, T + 1), -1, dtype=int)
-        cost_hist = np.zeros((N, T + 1))
-        # Costs declared method="starting" are event-like: they are charged on
-        # entry to a cycle and must NOT be endpoint-weighted by the half-cycle
-        # correction (Markov/PSM carve them out the same way). Keeping them in a
-        # separate matrix is what makes that carve-out possible here, since the
-        # per-patient reward loop otherwise collapses every category into one.
-        cost_hist_nohcc = np.zeros((N, T + 1))
-        qaly_hist = np.zeros((N, T + 1))
-        ly_hist = np.zeros((N, T + 1))
-        event_cost_total = np.zeros(N)
-
-        # Initial state
         state_hist[:, 0] = self.initial_state_idx
 
-        # Check if transitions depend on patient attributes
+        # Lump sums banked against the interval whose transition produced
+        # them, so they discount at that interval's end.
+        event_cost_by_interval = np.zeros((N, T))
+
         has_attrs = bool(profile.attributes)
+        can_batch = not (
+            has_attrs
+            and self._callable_needs_attrs(self._transitions.get(strategy))
+        )
 
-        # Pre-check transition callable arity
-        trans_fn = self._transitions.get(strategy)
-        trans_is_callable = callable(trans_fn)
-        trans_needs_attrs = False
-        if trans_is_callable:
-            import inspect
-            try:
-                sig = inspect.signature(trans_fn)
-                trans_needs_attrs = len(sig.parameters) >= 3
-            except (ValueError, TypeError):
-                trans_needs_attrs = False
-
-        # If transitions don't depend on patient attrs, compute matrix once per cycle
-        can_batch = not (trans_needs_attrs and has_attrs)
-
-        for t in range(1, T + 1):
-            cycle = t  # cycle number (1-based for transitions)
+        for interval in range(T):
+            previous = state_hist[:, interval]
+            current = previous.copy()
+            draws = uniforms[:, interval]
 
             if can_batch:
-                # Compute one matrix for all patients
-                P = self._get_transition_matrix(
-                    strategy, params, cycle, {}
-                )
-
-                # Sample next state for all alive patients at once
-                alive_mask = np.isin(state_hist[:, t - 1],
-                                     list(self._alive_states))
-                alive_indices = np.where(alive_mask)[0]
-
-                if len(alive_indices) == 0:
-                    state_hist[:, t] = state_hist[:, t - 1]
-                    continue
-
-                # Absorbing patients stay
-                state_hist[:, t] = state_hist[:, t - 1]
-
-                # For alive patients, sample from their current state's row
-                current_states = state_hist[alive_indices, t - 1]
-
-                # Vectorized multinomial sampling per-state-group
-                for s in np.unique(current_states):
-                    in_state = alive_indices[current_states == s]
-                    probs = P[s]
-                    # Ensure valid probability distribution
-                    probs = np.clip(probs, 0, None)
-                    total = probs.sum()
-                    if total > 0:
-                        probs = probs / total
-                    else:
-                        probs = np.zeros(self.n_states)
-                        probs[s] = 1.0
-                    new_states = rng.choice(self.n_states, size=len(in_state), p=probs)
-                    state_hist[in_state, t] = new_states
-
+                P = self._get_transition_matrix(strategy, params, interval, {})
+                alive = np.where(np.isin(previous, list(self._alive_states)))[0]
+                if len(alive):
+                    origins = previous[alive]
+                    for s in np.unique(origins):
+                        movers = alive[origins == s]
+                        current[movers] = self._draw_next_state(
+                            P[s], draws[movers]
+                        )
             else:
-                # Per-patient transitions (heterogeneous)
-                state_hist[:, t] = state_hist[:, t - 1]
-
                 for i in range(N):
-                    if state_hist[i, t - 1] not in self._alive_states:
+                    if previous[i] not in self._alive_states:
                         continue
                     attrs = self._get_patient_attrs(profile, i)
-                    P = self._get_transition_matrix(strategy, params, cycle, attrs)
-                    s = state_hist[i, t - 1]
-                    probs = P[s]
-                    probs = np.clip(probs, 0, None)
-                    total = probs.sum()
-                    if total > 0:
-                        probs = probs / total
-                    else:
-                        probs = np.zeros(self.n_states)
-                        probs[s] = 1.0
-                    state_hist[i, t] = rng.choice(self.n_states, p=probs)
+                    P = self._get_transition_matrix(
+                        strategy, params, interval, attrs
+                    )
+                    current[i] = self._draw_next_state(
+                        P[previous[i]], draws[i:i + 1]
+                    )[0]
 
-            # Event handlers for state transitions
+            state_hist[:, interval + 1] = current
+
             if self._on_enter or self._on_exit:
-                prev_states = state_hist[:, t - 1]
-                curr_states = state_hist[:, t]
-                changed = prev_states != curr_states
+                self._run_state_handlers(
+                    profile, has_attrs, interval, previous, current,
+                    event_cost_by_interval,
+                )
 
-                for i in np.where(changed)[0]:
-                    prev_s = self.states[prev_states[i]]
-                    curr_s = self.states[curr_states[i]]
-                    attrs = self._get_patient_attrs(profile, i) if has_attrs else {}
+        # --- Rewards, one row per interval ---
+        alive_mask = np.zeros(self.n_states)
+        for index in self._alive_states:
+            alive_mask[index] = 1.0
 
-                    # Exit handlers
-                    if prev_s in self._on_exit:
-                        for handler in self._on_exit[prev_s]:
-                            result = handler(i, t, attrs)
-                            if result and "cost" in result:
-                                event_cost_total[i] += result["cost"]
+        cost_hist = np.zeros((N, T))
+        qaly_hist = np.zeros((N, T))
+        ly_hist = np.zeros((N, T))
+        starting_cost = np.zeros(N)
 
-                    # Enter handlers
-                    if curr_s in self._on_enter:
-                        for handler in self._on_enter[curr_s]:
-                            result = handler(i, t, attrs)
-                            if result and "cost" in result:
-                                event_cost_total[i] += result["cost"]
+        needs_per_patient = has_attrs and (
+            self._callable_needs_attrs(self._utility)
+            or any(
+                self._callable_needs_attrs(cost.values)
+                for cost in self._costs.values()
+            )
+        )
+        trapezoidal = self._hcc_method == "trapezoidal"
 
-        # --- Compute per-cycle costs and QALYs ---
-        alive_mask_arr = np.zeros(self.n_states)
-        for i in self._alive_states:
-            alive_mask_arr[i] = 1.0
+        for interval in range(T):
+            begin = state_hist[:, interval]
+            end = state_hist[:, interval + 1]
 
-        # Pre-compute state-level costs and utilities per cycle
-        # (assuming they don't vary by patient unless attrs-dependent)
-        cost_needs_attrs = False
-        util_needs_attrs = False
-        for cat_name, cat_def in self._costs.items():
-            if callable(cat_def.values):
-                import inspect
-                try:
-                    sig = inspect.signature(cat_def.values)
-                    if len(sig.parameters) >= 3:
-                        cost_needs_attrs = True
-                except (ValueError, TypeError):
-                    pass
-        if callable(self._utility):
-            import inspect
-            try:
-                sig = inspect.signature(self._utility)
-                if len(sig.parameters) >= 3:
-                    util_needs_attrs = True
-            except (ValueError, TypeError):
-                pass
-
-        needs_per_patient = (cost_needs_attrs or util_needs_attrs) and has_attrs
-
-        for t in range(T + 1):
             if not needs_per_patient:
-                # Vectorized: same costs/utilities for all patients
-                total_cost_vec = np.zeros(self.n_states)
-                nohcc_cost_vec = np.zeros(self.n_states)
-                for cat in self._costs:
-                    c = self._get_state_costs(cat, strategy, params, t)
-                    cost_def = self._costs[cat]
-                    if cost_def.method == "starting":
-                        nohcc_cost_vec += c
-                    else:
-                        total_cost_vec += c * self.cycle_length
+                rate, lump = self._interval_cost_vectors(
+                    strategy, params, interval
+                )
+                utility = self._get_utilities(strategy, params, interval)
 
-                u_vec = self._get_utilities(strategy, params, t)
-                u_vec = u_vec * self.cycle_length  # QALYs per cycle
-
-                # Assign per patient based on their state
-                states_t = state_hist[:, t]
-                cost_hist[:, t] = total_cost_vec[states_t]
-                cost_hist_nohcc[:, t] = nohcc_cost_vec[states_t]
-                qaly_hist[:, t] = u_vec[states_t]
-                ly_hist[:, t] = alive_mask_arr[states_t] * self.cycle_length
-
+                cost_hist[:, interval] = self.cycle_length * self._interval_reward(
+                    rate, begin, end, trapezoidal
+                )
+                qaly_hist[:, interval] = self.cycle_length * self._interval_reward(
+                    utility, begin, end, trapezoidal
+                )
+                ly_hist[:, interval] = self.cycle_length * self._interval_reward(
+                    alive_mask, begin, end, trapezoidal
+                )
+                if interval == 0:
+                    starting_cost += lump[begin]
             else:
-                # Per-patient costs/utilities
                 for i in range(N):
-                    s = state_hist[i, t]
                     attrs = self._get_patient_attrs(profile, i)
+                    rate, lump = self._interval_cost_vectors(
+                        strategy, params, interval, attrs
+                    )
+                    utility = self._get_utilities(
+                        strategy, params, interval, attrs
+                    )
+                    cost_hist[i, interval] = self.cycle_length * self._interval_reward(
+                        rate, begin[i], end[i], trapezoidal
+                    )
+                    qaly_hist[i, interval] = self.cycle_length * self._interval_reward(
+                        utility, begin[i], end[i], trapezoidal
+                    )
+                    ly_hist[i, interval] = self.cycle_length * self._interval_reward(
+                        alive_mask, begin[i], end[i], trapezoidal
+                    )
+                    if interval == 0:
+                        starting_cost[i] += lump[begin[i]]
 
-                    total_cost = 0.0
-                    nohcc_cost = 0.0
-                    for cat in self._costs:
-                        c = self._get_state_costs(cat, strategy, params, t, attrs)
-                        cost_def = self._costs[cat]
-                        if cost_def.method == "starting":
-                            nohcc_cost += c[s]
-                        else:
-                            total_cost += c[s] * self.cycle_length
+        # --- Discounting: flows at interval midpoints, events at their end ---
+        intervals = np.arange(T, dtype=float)
+        flow_cost_df = discount_factor(
+            intervals + 0.5, self.dr_cost, self.cycle_length,
+            self.discount_convention,
+        )
+        flow_qaly_df = discount_factor(
+            intervals + 0.5, self.dr_qaly, self.cycle_length,
+            self.discount_convention,
+        )
+        event_cost_df = discount_factor(
+            intervals + 1.0, self.dr_cost, self.cycle_length,
+            self.discount_convention,
+        )
 
-                    cost_hist[i, t] = total_cost
-                    cost_hist_nohcc[i, t] = nohcc_cost
+        cost_hist_disc = cost_hist * flow_cost_df
+        qaly_hist_disc = qaly_hist * flow_qaly_df
+        ly_hist_disc = ly_hist * flow_qaly_df
 
-                    u = self._get_utilities(strategy, params, t, attrs)
-                    qaly_hist[i, t] = u[s] * self.cycle_length
-                    ly_hist[i, t] = alive_mask_arr[s] * self.cycle_length
-
-        # --- Half-cycle correction (cost_hist_nohcc is exempt by design) ---
-        if self._hcc_method == "trapezoidal":
-            hcc = np.ones(T + 1)
-            hcc[0] = 0.5
-            hcc[-1] = 0.5
-            cost_hist *= hcc[np.newaxis, :]
-            qaly_hist *= hcc[np.newaxis, :]
-            ly_hist *= hcc[np.newaxis, :]
-
-        cost_hist = cost_hist + cost_hist_nohcc
-
-        # --- Discounting ---
-        cycles = np.arange(T + 1, dtype=float)
-        df_c = discount_factor(cycles, self.dr_cost, self.cycle_length)
-        df_q = discount_factor(cycles, self.dr_qaly, self.cycle_length)
-
-        cost_hist_disc = cost_hist * df_c[np.newaxis, :]
-        qaly_hist_disc = qaly_hist * df_q[np.newaxis, :]
-        ly_hist_disc = ly_hist * df_q[np.newaxis, :]
-
-        # Add event costs (undiscounted for simplicity — they're one-offs)
-        # Distribute across last alive cycle
-        total_cost_per_patient = cost_hist_disc.sum(axis=1) + event_cost_total
+        # A starting cost is paid at time zero, so it is never discounted.
+        total_cost_per_patient = (
+            cost_hist_disc.sum(axis=1)
+            + starting_cost
+            + (event_cost_by_interval * event_cost_df).sum(axis=1)
+        )
         total_qaly_per_patient = qaly_hist_disc.sum(axis=1)
         total_ly_per_patient = ly_hist_disc.sum(axis=1)
 
-        # --- State occupancy trace (proportion) ---
         trace = np.zeros((T + 1, self.n_states))
-        for t in range(T + 1):
-            for s in range(self.n_states):
-                trace[t, s] = (state_hist[:, t] == s).mean()
+        for s in range(self.n_states):
+            trace[:, s] = (state_hist == s).mean(axis=0)
 
-        # --- Time-in-state (survival) ---
-        # Compute time alive (cycles alive × cycle_length)
-        alive_cycles = np.zeros(N)
-        for i in range(N):
-            for t in range(T + 1):
-                if state_hist[i, t] in self._alive_states:
-                    alive_cycles[i] = t
-                else:
-                    break
-            else:
-                alive_cycles[i] = T
+        # Undiscounted years alive, on the same footing as the LY accrual.
+        time_alive = ly_hist.sum(axis=1)
 
         return {
             'state_history': state_hist,
             'cost_history': cost_hist_disc,
             'qaly_history': qaly_hist_disc,
             'ly_history': ly_hist_disc,
-            'event_costs': event_cost_total,
+            'event_costs': event_cost_by_interval.sum(axis=1),
             'total_cost': total_cost_per_patient,
             'total_qalys': total_qaly_per_patient,
             'total_lys': total_ly_per_patient,
             'trace': trace,
-            'alive_cycles': alive_cycles,
+            'time_alive': time_alive,
             'mean_cost': float(total_cost_per_patient.mean()),
             'mean_qalys': float(total_qaly_per_patient.mean()),
             'mean_lys': float(total_ly_per_patient.mean()),
         }
 
+    def _interval_cost_vectors(self, strategy, params, interval, attrs=None):
+        """Split this interval's costs into a per-year rate and a lump sum."""
+        rate = np.zeros(self.n_states)
+        lump = np.zeros(self.n_states)
+        for category, definition in self._costs.items():
+            values = self._get_state_costs(
+                category, strategy, params, interval, attrs
+            )
+            if definition.method == "starting":
+                lump += values
+            else:
+                rate += values
+        return rate, lump
     # =========================================================================
     # Analysis Entry Points
     # =========================================================================
@@ -828,12 +937,13 @@ class IndividualStateTransitionModel:
         rng = np.random.default_rng(s)
         params = self._get_base_params()
         prof = profile or self._get_profile()
+        uniforms = rng.random((prof.n_patients, self.n_cycles))
 
         results = {}
         for strat in self.strategy_names:
             if verbose:
                 print(f"  Simulating {prof.n_patients} patients: {strat}...", end=" ")
-            results[strat] = self._simulate_patients(strat, params, prof, rng)
+            results[strat] = self._simulate_patients(strat, params, prof, uniforms)
             if verbose:
                 print(f"mean cost={results[strat]['mean_cost']:,.0f}, "
                       f"mean QALYs={results[strat]['mean_qalys']:.3f}")
@@ -888,11 +998,15 @@ class IndividualStateTransitionModel:
                     p[name] = float(sample_distribution(param.dist, 1, rng)[0])
             sampled_params.append(p)
 
-            # Simulate all strategies
+            # Shared across strategies within this draw, redrawn between draws.
+            uniforms = rng.random((prof.n_patients, self.n_cycles))
+
             iter_results = {}
             with self._attr_param_override(p):
                 for strat in self.strategy_names:
-                    iter_results[strat] = self._simulate_patients(strat, p, prof, rng)
+                    iter_results[strat] = self._simulate_patients(
+                        strat, p, prof, uniforms
+                    )
 
             psa_results.append(iter_results)
 
