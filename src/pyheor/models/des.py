@@ -67,6 +67,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .common import Param as _Param
+from ..distributions import sample_distribution
 from ..survival import SurvivalDistribution
 from ..utils import resolve_value, discount_factor
 
@@ -893,13 +894,9 @@ class DiscreteEventSimulationModel:
                 dist = self._resolve_distribution(ev, params, attrs)
                 clock = ev.clock or self.clock
                 if clock == "forward":
-                    tte = (self._sample_forward_tte(dist, current_time, rng)
-                           if rng is not None
-                           else self._sample_forward_tte(dist, current_time))
+                    tte = self._sample_forward_tte(dist, current_time, rng)
                 else:
-                    tte = (self._sample_tte(dist, rng)
-                           if rng is not None
-                           else self._sample_tte(dist))
+                    tte = self._sample_tte(dist, rng)
                 if tte < min_time:
                     min_time = tte
                     winning_event = ev
@@ -1066,16 +1063,13 @@ class DiscreteEventSimulationModel:
                         f"attrs[{name!r}] must be a one-dimensional array of length n_patients"
                     )
 
-        if seed is not None:
-            np.random.seed(seed)
+        # One independent stream per patient, reused across strategies, so a
+        # strategy difference is not inflated by unrelated draws.
+        patient_seeds = np.random.SeedSequence(seed).spawn(n_patients)
 
         params = self._get_base_params()
         self._validate_runtime_discount_rates(params)
         results = {}
-        common_seeds = (
-            np.random.randint(0, 2**32 - 1, size=n_patients, dtype=np.uint32)
-            if self.n_strategies > 1 else None
-        )
 
         for strategy in self.strategy_names:
             if progress:
@@ -1086,10 +1080,7 @@ class DiscreteEventSimulationModel:
                 pat_attrs = None
                 if attrs is not None:
                     pat_attrs = {k: float(v[i]) for k, v in attrs.items()}
-                patient_rng = (
-                    np.random.RandomState(int(common_seeds[i]))
-                    if common_seeds is not None else None
-                )
+                patient_rng = np.random.default_rng(patient_seeds[i])
                 pr = self._simulate_patient(
                     strategy, params, pat_attrs, patient_idx=i, rng=patient_rng,
                 )
@@ -1179,8 +1170,8 @@ class DiscreteEventSimulationModel:
                         f"attrs[{name!r}] must be a one-dimensional array of length n_patients"
                     )
 
-        if seed is not None:
-            np.random.seed(seed)
+        parameter_seq, patient_seq = np.random.SeedSequence(seed).spawn(2)
+        parameter_rng = np.random.default_rng(parameter_seq)
 
         psa_iterations = []
         sampled_params_list = []
@@ -1190,13 +1181,12 @@ class DiscreteEventSimulationModel:
             params = self._get_base_params()
             for name, param in self.params.items():
                 if param.dist is not None:
-                    params[name] = float(param.dist.sample(1)[0])
+                    params[name] = float(
+                        sample_distribution(param.dist, 1, parameter_rng)[0]
+                    )
             self._validate_runtime_discount_rates(params)
             sampled_params_list.append(params)
-            common_seeds = (
-                np.random.randint(0, 2**32 - 1, size=n_patients, dtype=np.uint32)
-                if self.n_strategies > 1 else None
-            )
+            patient_seeds = patient_seq.spawn(n_patients)
 
             # Simulate all strategies
             sim_result = {}
@@ -1209,10 +1199,7 @@ class DiscreteEventSimulationModel:
                         pat_attrs = None
                         if attrs is not None:
                             pat_attrs = {k: float(v[i]) for k, v in attrs.items()}
-                        patient_rng = (
-                            np.random.RandomState(int(common_seeds[i]))
-                            if common_seeds is not None else None
-                        )
+                        patient_rng = np.random.default_rng(patient_seeds[i])
                         pr = self._simulate_patient(
                             strategy, params, pat_attrs, patient_idx=i,
                             rng=patient_rng,

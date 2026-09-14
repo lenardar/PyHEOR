@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .common import Param as _Param, _CostDef
+from ..distributions import sample_distribution
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
     normalize_hcc,
@@ -884,7 +885,7 @@ class IndividualStateTransitionModel:
             p = self._get_base_params()
             for name, param in self.params.items():
                 if param.dist is not None:
-                    p[name] = float(param.dist.sample(1)[0])
+                    p[name] = float(sample_distribution(param.dist, 1, rng)[0])
             sampled_params.append(p)
 
             # Simulate all strategies

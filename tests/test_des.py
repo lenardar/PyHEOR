@@ -149,8 +149,13 @@ class TestDESRun:
             time_horizon=10, clock="reset",
         )
         model.set_event("S1", "Alive", "Dead", Exponential(rate=1), clock="forward")
-        monkeypatch.setattr(model, "_sample_tte", lambda dist: pytest.fail("used reset clock"))
-        monkeypatch.setattr(model, "_sample_forward_tte", lambda dist, time: 1.0)
+        monkeypatch.setattr(
+            model, "_sample_tte",
+            lambda dist, rng=None: pytest.fail("used reset clock"),
+        )
+        monkeypatch.setattr(
+            model, "_sample_forward_tte", lambda dist, time, rng=None: 1.0
+        )
 
         result = model.run(n_patients=1, seed=1, progress=False)
         assert result.results["S1"]["patient_results"][0]["event_log"] == [
@@ -185,7 +190,7 @@ class TestDESRun:
         )
         model.set_event("S1", "Alive", "Dead", Exponential(rate=1))
         model.on_state_enter("Dead", lambda idx, time, attrs: {"cost": 110.0})
-        monkeypatch.setattr(model, "_sample_tte", lambda dist: 1.0)
+        monkeypatch.setattr(model, "_sample_tte", lambda dist, rng=None: 1.0)
 
         result = model.run(n_patients=1, seed=1, progress=False)
         assert result.results["S1"]["total_cost"][0] == pytest.approx(100.0)
@@ -261,12 +266,12 @@ class TestDESResults:
         model = DESModel(states=["Alive", "Dead"], strategies=["S1"], time_horizon=5)
         model.set_event("S1", "Alive", "Dead", Exponential(rate=1))
 
-        monkeypatch.setattr(model, "_sample_tte", lambda dist: 5.0)
+        monkeypatch.setattr(model, "_sample_tte", lambda dist, rng=None: 5.0)
         result = model.run(n_patients=1, progress=False)
         curve = result.survival_curve(n_points=2)
         assert curve.iloc[-1]["Survival"] == pytest.approx(1.0)
 
-        monkeypatch.setattr(model, "_sample_tte", lambda dist: 1.0)
+        monkeypatch.setattr(model, "_sample_tte", lambda dist, rng=None: 1.0)
         result = model.run(n_patients=1, progress=False)
         curve = result.survival_curve(n_points=2)
         assert curve.iloc[-1]["Survival"] == pytest.approx(0.0)
