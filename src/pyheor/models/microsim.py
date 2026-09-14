@@ -45,7 +45,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from .common import Param as _Param, _CostDef
+from .common import Param as _Param, ParameterisedModel, _CostDef
 from ..distributions import sample_distribution
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
@@ -101,7 +101,7 @@ class PatientProfile:
 # Microsimulation Model
 # =============================================================================
 
-class IndividualStateTransitionModel:
+class IndividualStateTransitionModel(ParameterisedModel):
     """Individual-level state transition microsimulation model.
 
     Each patient is independently simulated through health states.
@@ -219,22 +219,9 @@ class IndividualStateTransitionModel:
         self.params: Dict[str, _Param] = {}
 
         # Discount rates
-        if isinstance(dr_cost, _Param):
-            self.dr_cost = dr_cost.base
-            if not dr_cost.label:
-                dr_cost.label = "Discount Rate (Cost)"
-            self.params["dr_cost"] = dr_cost
-        else:
-            self.dr_cost = float(dr_cost)
-        if isinstance(dr_qaly, _Param):
-            self.dr_qaly = dr_qaly.base
-            if not dr_qaly.label:
-                dr_qaly.label = "Discount Rate (QALY)"
-            self.params["dr_qaly"] = dr_qaly
-        else:
-            self.dr_qaly = float(dr_qaly)
-        discount_factor(0, self.dr_cost, convention=self.discount_convention)
-        discount_factor(0, self.dr_qaly, convention=self.discount_convention)
+        self._register_discount_rates(
+            dr_cost, dr_qaly, self.discount_convention
+        )
 
         # Initial state
         if isinstance(initial_state, str):
@@ -308,28 +295,7 @@ class IndividualStateTransitionModel:
     # Parameter Management
     # =========================================================================
 
-    def add_param(self, name: str, base: float, dist=None, label=None,
-                  low=None, high=None) -> "IndividualStateTransitionModel":
-        """Add a single parameter."""
-        self.params[name] = _Param(
-            base=base, dist=dist,
-            label=label or name,
-            low=low, high=high,
-        )
-        return self
 
-    def add_params(self, params_dict: Dict[str, Union[_Param, float]]) -> "IndividualStateTransitionModel":
-        """Add multiple parameters."""
-        for name, param in params_dict.items():
-            if isinstance(param, _Param):
-                if not param.label:
-                    param.label = name
-                self.params[name] = param
-            elif isinstance(param, (int, float)):
-                self.params[name] = _Param(base=float(param), label=name)
-            else:
-                raise TypeError(f"Expected Param or numeric, got {type(param)}")
-        return self
 
     # =========================================================================
     # Patient Population
@@ -519,8 +485,6 @@ class IndividualStateTransitionModel:
     # Internal Helpers
     # =========================================================================
 
-    def _get_base_params(self) -> Dict[str, float]:
-        return {name: p.base for name, p in self.params.items()}
 
     def _get_transition_matrix(self, strategy: str, params: dict,
                                cycle: int, attrs: dict) -> np.ndarray:
@@ -1022,26 +986,7 @@ class IndividualStateTransitionModel:
             sampled_params=sampled_params,
         )
 
-    # Parameters that live as model attributes rather than in the params dict.
-    # Must be written to the attribute in both OWSA and PSA -- a value sitting
-    # only in the params dict has no effect on the simulation.
-    _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
 
-    @contextmanager
-    def _attr_param_override(self, values: Dict[str, float]):
-        """Temporarily apply any _ATTR_PARAMS present in `values`."""
-        saved = {
-            name: getattr(self, name)
-            for name in self._ATTR_PARAMS
-            if name in values
-        }
-        try:
-            for name in saved:
-                setattr(self, name, values[name])
-            yield
-        finally:
-            for name, original in saved.items():
-                setattr(self, name, original)
 
     def run_owsa(
         self,

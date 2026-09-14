@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..distributions import sample_distribution
-from .common import Param as _Param, _CostDef
+from .common import Param as _Param, CohortSweepModel, _CostDef
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
     normalize_hcc, interval_occupancy, validate_transition_matrix,
@@ -25,7 +25,7 @@ from ..utils import (
 # CohortStateTransitionModel
 # =============================================================================
 
-class CohortStateTransitionModel:
+class CohortStateTransitionModel(CohortSweepModel):
     """Cohort Discrete-Time State Transition Model (cDTSTM).
     
     A Markov cohort model for health economic evaluation. Supports:
@@ -139,22 +139,9 @@ class CohortStateTransitionModel:
         self.params: Dict[str, _Param] = {}
 
         # Discount rates
-        if isinstance(dr_cost, _Param):
-            self.dr_cost = dr_cost.base
-            if not dr_cost.label:
-                dr_cost.label = "Discount Rate (Cost)"
-            self.params["dr_cost"] = dr_cost
-        else:
-            self.dr_cost = float(dr_cost)
-        if isinstance(dr_qaly, _Param):
-            self.dr_qaly = dr_qaly.base
-            if not dr_qaly.label:
-                dr_qaly.label = "Discount Rate (QALY)"
-            self.params["dr_qaly"] = dr_qaly
-        else:
-            self.dr_qaly = float(dr_qaly)
-        discount_factor(0, self.dr_cost, convention=self.discount_convention)
-        discount_factor(0, self.dr_qaly, convention=self.discount_convention)
+        self._register_discount_rates(
+            dr_cost, dr_qaly, self.discount_convention
+        )
         
         # Initial state
         if isinstance(initial_state, str):
@@ -225,60 +212,7 @@ class CohortStateTransitionModel:
     # Parameter Management
     # =========================================================================
     
-    def add_param(self, name: str, base: float, dist=None, label=None,
-                  low=None, high=None) -> "CohortStateTransitionModel":
-        """Add a single parameter to the model.
-        
-        Parameters
-        ----------
-        name : str
-            Parameter name (used as key).
-        base : float
-            Base case value.
-        dist : Distribution, optional
-            PSA distribution.
-        label : str, optional
-            Display label.
-        low, high : float, optional
-            OWSA bounds.
-            
-        Returns
-        -------
-        CohortStateTransitionModel
-            Self, for method chaining.
-        """
-        self.params[name] = _Param(
-            base=base, dist=dist, 
-            label=label or name,
-            low=low, high=high,
-        )
-        return self
     
-    def add_params(self, params_dict: Dict[str, Union[_Param, float]]) -> "CohortStateTransitionModel":
-        """Add multiple parameters at once.
-        
-        Parameters
-        ----------
-        params_dict : dict
-            Maps parameter names to Param objects or numeric values.
-            
-        Returns
-        -------
-        CohortStateTransitionModel
-            Self, for method chaining.
-        """
-        for name, param in params_dict.items():
-            if isinstance(param, _Param):
-                if not param.label:
-                    param.label = name
-                self.params[name] = param
-            elif isinstance(param, (int, float)):
-                self.params[name] = _Param(base=float(param), label=name)
-            else:
-                raise TypeError(
-                    f"Parameter '{name}': expected Param or numeric, got {type(param)}"
-                )
-        return self
     
     # =========================================================================
     # Transition Probabilities
@@ -666,9 +600,6 @@ class CohortStateTransitionModel:
     # Internal: Parameter Resolution
     # =========================================================================
     
-    def _get_base_params(self) -> Dict[str, float]:
-        """Get base case parameter values as a dict."""
-        return {name: p.base for name, p in self.params.items()}
 
     def _resolve_transition_data(
         self, transitions: Any, params: Dict[str, float], cycle: int,
@@ -1071,102 +1002,8 @@ class CohortStateTransitionModel:
         sim = self._simulate_single(params)
         return BaseResult(model=self, results=sim, params=params)
     
-    # Parameters that live as model attributes rather than in the params dict
-    # passed to _simulate_single. When varied in OWSA or sampled in PSA, the
-    # corresponding model attribute must be temporarily overwritten -- reading
-    # them out of the params dict alone has no effect on the simulation.
-    _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
 
-    @contextmanager
-    def _attr_param_override(self, values: Dict[str, float]):
-        """Temporarily apply any _ATTR_PARAMS present in `values`."""
-        saved = {
-            name: getattr(self, name)
-            for name in self._ATTR_PARAMS
-            if name in values
-        }
-        try:
-            for name in saved:
-                setattr(self, name, values[name])
-            yield
-        finally:
-            for name, original in saved.items():
-                setattr(self, name, original)
 
-    def run_owsa(
-        self,
-        params: Optional[List[str]] = None,
-        range_pct: float = 0.2,
-        wtp: float = 50000,
-    ) -> "OWSAResult":
-        """Run one-way sensitivity analysis (OWSA).
-
-        Each parameter is varied independently to its low and high values
-        while all other parameters remain at base case.
-
-        Parameters
-        ----------
-        params : list of str, optional
-            Parameter names to vary. Default: all parameters with
-            low/high bounds or distributions defined.
-        range_pct : float
-            Percentage range for variation if low/high not set (default: ±20%).
-        wtp : float
-            Willingness-to-pay threshold for NMB calculation.
-
-        Returns
-        -------
-        OWSAResult
-            Results with tornado plot and sensitivity summary.
-        """
-        from ..analysis.results import OWSAResult
-
-        if params is None:
-            params = [
-                name for name, p in self.params.items()
-                if p.dist is not None
-            ]
-            if not params:
-                params = list(self.params.keys())
-
-        base_params = self._get_base_params()
-        base_result = self._simulate_single(base_params)
-
-        owsa_data = []
-
-        for param_name in params:
-            p = self.params[param_name]
-            low = p.low if p.low is not None else p.base * (1 - range_pct)
-            high = p.high if p.high is not None else p.base * (1 + range_pct)
-
-            is_attr = param_name in self._ATTR_PARAMS
-
-            for bound, val in [('low', low), ('high', high)]:
-                test_params = base_params.copy()
-                test_params[param_name] = val
-
-                if is_attr:
-                    with self._attr_param_override({param_name: val}):
-                        result = self._simulate_single(test_params)
-                else:
-                    result = self._simulate_single(test_params)
-
-                owsa_data.append({
-                    'param': param_name,
-                    'label': p.label,
-                    'value': val,
-                    'base_value': p.base,
-                    'bound': bound,
-                    'result': result,
-                })
-        
-        return OWSAResult(
-            model=self,
-            base_result=base_result,
-            base_params=base_params,
-            owsa_data=owsa_data,
-            wtp=wtp,
-        )
     
     def run_psa(
         self,

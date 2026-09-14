@@ -66,7 +66,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from .common import Param as _Param
+from .common import Param as _Param, ParameterisedModel
 from ..distributions import sample_distribution
 from ..survival import SurvivalDistribution
 from ..utils import resolve_value, discount_factor
@@ -107,7 +107,7 @@ class _EntryCostDef:
 # DiscreteEventSimulationModel
 # =============================================================================
 
-class DiscreteEventSimulationModel:
+class DiscreteEventSimulationModel(ParameterisedModel):
     """Discrete Event Simulation model for health economic evaluation.
 
     Parameters
@@ -195,20 +195,9 @@ class DiscreteEventSimulationModel:
         self.params: Dict[str, _Param] = {}
 
         # Discount rates
-        if isinstance(dr_cost, _Param):
-            self.dr_cost = dr_cost.base
-            if not dr_cost.label:
-                dr_cost.label = "Discount Rate (Cost)"
-            self.params["dr_cost"] = dr_cost
-        else:
-            self.dr_cost = float(dr_cost)
-        if isinstance(dr_qaly, _Param):
-            self.dr_qaly = dr_qaly.base
-            if not dr_qaly.label:
-                dr_qaly.label = "Discount Rate (QALY)"
-            self.params["dr_qaly"] = dr_qaly
-        else:
-            self.dr_qaly = float(dr_qaly)
+        self._register_discount_rates(
+            dr_cost, dr_qaly, self.discount_convention
+        )
         self._validate_discount_rate(self.dr_cost, "dr_cost")
         self._validate_discount_rate(self.dr_qaly, "dr_qaly")
 
@@ -274,55 +263,10 @@ class DiscreteEventSimulationModel:
     # Parameters
     # =====================================================================
 
-    def add_param(
-        self, name: str, base: float, dist=None, label=None,
-        low=None, high=None,
-    ) -> "DiscreteEventSimulationModel":
-        """Add a model parameter (same API as MarkovModel)."""
-        self.params[name] = _Param(
-            base=base, dist=dist,
-            label=label or name,
-            low=low, high=high,
-        )
-        return self
 
-    def add_params(self, params_dict):
-        """Add multiple parameters at once."""
-        for name, param in params_dict.items():
-            if isinstance(param, _Param):
-                if not param.label:
-                    param.label = name
-                self.params[name] = param
-            elif isinstance(param, (int, float)):
-                self.params[name] = _Param(base=float(param), label=name)
-            else:
-                raise TypeError(f"Parameter '{name}': expected Param or numeric")
-        return self
 
-    def _get_base_params(self) -> Dict[str, float]:
-        """Get base-case parameter values."""
-        return {name: p.base for name, p in self.params.items()}
 
-    # Parameters that live as model attributes rather than in the params dict.
-    # Discount rates are read off self during simulation, so a value sampled
-    # into the params dict has no effect unless written to the attribute too.
-    _ATTR_PARAMS = {'dr_cost', 'dr_qaly'}
 
-    @contextmanager
-    def _attr_param_override(self, values: Dict[str, float]):
-        """Temporarily apply any _ATTR_PARAMS present in `values`."""
-        saved = {
-            name: getattr(self, name)
-            for name in self._ATTR_PARAMS
-            if name in values
-        }
-        try:
-            for name in saved:
-                setattr(self, name, values[name])
-            yield
-        finally:
-            for name, original in saved.items():
-                setattr(self, name, original)
 
     # =====================================================================
     # Events (state transitions)

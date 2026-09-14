@@ -66,6 +66,56 @@ class TestIcerRanking:
         assert not np.isnan(frame["Range"]).any()
 
 
+class TestParameterBounds:
+    """``range_pct`` applies only where the caller gave no explicit bound."""
+
+    def swept_values(self, model, **kwargs):
+        data = model.run_owsa(**kwargs).owsa_data
+        return {
+            (d["param"], d["bound"]): d["value"] for d in data
+        }
+
+    def test_default_range_is_twenty_percent(self):
+        model = MarkovModel(
+            states=["Alive", "Dead"], strategies=["SOC", "TRT"], n_cycles=1
+        )
+        model.add_param("c_trt", base=100)
+        for strategy in ("SOC", "TRT"):
+            model.set_transitions(strategy, lambda p, t: ALIVE_FOREVER)
+        model.set_state_cost(
+            "care", {"SOC": {"Alive": 0}, "TRT": {"Alive": "c_trt"}}
+        )
+
+        values = self.swept_values(model)
+        assert values[("c_trt", "low")] == pytest.approx(80.0)
+        assert values[("c_trt", "high")] == pytest.approx(120.0)
+
+    def test_range_pct_widens_parameters_without_bounds(self):
+        model = MarkovModel(
+            states=["Alive", "Dead"], strategies=["SOC", "TRT"], n_cycles=1
+        )
+        model.add_param("c_trt", base=100)
+        for strategy in ("SOC", "TRT"):
+            model.set_transitions(strategy, lambda p, t: ALIVE_FOREVER)
+        model.set_state_cost(
+            "care", {"SOC": {"Alive": 0}, "TRT": {"Alive": "c_trt"}}
+        )
+
+        values = self.swept_values(model, range_pct=0.5)
+        assert values[("c_trt", "low")] == pytest.approx(50.0)
+        assert values[("c_trt", "high")] == pytest.approx(150.0)
+
+    def test_explicit_bounds_are_not_overridden(self):
+        values = self.swept_values(owsa_model(), range_pct=0.5)
+
+        assert values[("u_trt", "low")] == pytest.approx(0.4)
+        assert values[("u_trt", "high")] == pytest.approx(0.8)
+
+    def test_unknown_parameter_is_rejected(self):
+        with pytest.raises(ValueError, match="Unknown parameters"):
+            owsa_model().run_owsa(params=["nonexistent"])
+
+
 class TestNmbRanking:
     def test_ranks_by_inmb_span(self):
         frame = owsa_model().run_owsa(wtp=50000).summary(outcome="nmb")

@@ -37,6 +37,19 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### Shared parameter handling
+
+- `add_param`, `add_params`, discount-rate registration, the attribute
+  override used by sensitivity analysis, and the Markov/PSM `run_owsa` now
+  live in `models.common` rather than being copied into each engine. The
+  copies had already drifted apart in their error messages.
+- `run_owsa(range_pct=...)` has an effect again. `Param` fills `low` and
+  `high` in for reporting, so the sweep could not tell an explicit bound from
+  a default one and always used ±20%. An explicit bound still wins;
+  `range_pct` now governs the parameters without one.
+- `run_owsa(params=[...])` rejects unknown parameter names.
+- An invalid discount rate names the argument at fault.
+
 ### Result table consistency
 
 - `icer()` returns the same columns for every engine. `ICER` is numeric and is
