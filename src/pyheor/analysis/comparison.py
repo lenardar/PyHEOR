@@ -24,6 +24,12 @@ from typing import Optional, Sequence, Tuple, Union
 # Standalone ICER calculation with dominance detection
 # ---------------------------------------------------------------------------
 
+# Dominance comparisons are scaled by this factor times the largest magnitude
+# in each column, so accumulated floating-point error is not read as a real
+# difference.
+_DOMINANCE_RTOL = 1e-9
+
+
 def calculate_icers(
     strategies: Sequence[str],
     costs: Sequence[float],
@@ -48,17 +54,44 @@ def calculate_icers(
     qalys : sequence of float
         Mean total QALYs per strategy.
 
+    Comparisons use a tolerance proportional to the scale of the inputs, so
+    floating-point noise is not reported as dominance.
+
     Returns
     -------
     pd.DataFrame
         Columns: Strategy, Cost, QALYs, Status, ICER, Inc_Cost, Inc_QALYs, Ref
         Status: "Ref" (reference/cheapest), "ND" (non-dominated on frontier),
-                "D" (strongly dominated), "ED" (extendedly dominated)
+                "D" (strongly dominated), "ED" (extendedly dominated),
+                "EQ" (indistinguishable from the reference)
+
+    Raises
+    ------
+    ValueError
+        If the inputs differ in length or contain non-finite values.
     """
     strategies = list(strategies)
     costs = np.asarray(costs, dtype=float)
     qalys = np.asarray(qalys, dtype=float)
     n = len(strategies)
+
+    if costs.shape != (n,) or qalys.shape != (n,):
+        raise ValueError(
+            "strategies, costs and qalys must have the same length; got "
+            f"{n}, {costs.size} and {qalys.size}"
+        )
+    for label, values in (("costs", costs), ("qalys", qalys)):
+        if not np.all(np.isfinite(values)):
+            bad = [strategies[i] for i in np.flatnonzero(~np.isfinite(values))]
+            raise ValueError(
+                f"{label} must be finite; got non-finite values for {bad!r}. "
+                "A non-finite input cannot be ranked against the others."
+            )
+
+    # Compare on the scale of each quantity: 1e-7 is noise next to a cost of
+    # 1e5 but a real difference next to a QALY of 1.
+    cost_tol = _DOMINANCE_RTOL * max(float(np.max(np.abs(costs))), 1.0)
+    qaly_tol = _DOMINANCE_RTOL * max(float(np.max(np.abs(qalys))), 1.0)
 
     if n < 2:
         return pd.DataFrame({
@@ -91,8 +124,15 @@ def calculate_icers(
         for i in range(n):
             if i == j:
                 continue
-            if (s_costs[i] <= s_costs[j] and s_qalys[i] >= s_qalys[j]
-                    and (s_costs[i] < s_costs[j] or s_qalys[i] > s_qalys[j])):
+            no_worse = (
+                s_costs[i] <= s_costs[j] + cost_tol
+                and s_qalys[i] >= s_qalys[j] - qaly_tol
+            )
+            strictly_better = (
+                s_costs[i] < s_costs[j] - cost_tol
+                or s_qalys[i] > s_qalys[j] + qaly_tol
+            )
+            if no_worse and strictly_better:
                 status[j] = "D"
                 break
 
@@ -101,7 +141,7 @@ def calculate_icers(
     while not converged:
         converged = True
         # Get non-dominated indices
-        nd_idx = [i for i in range(n) if status[i] != "D" and status[i] != "ED"]
+        nd_idx = [i for i in range(n) if status[i] not in ("D", "ED", "EQ")]
 
         if len(nd_idx) < 2:
             if nd_idx:
@@ -125,9 +165,14 @@ def calculate_icers(
             inc_qalys[i_curr] = dq
             refs[i_curr] = s_names[i_prev]
 
-            if dq <= 0:
-                # Should have been caught by strong dominance, but safety net
-                status[i_curr] = "D"
+            if dq <= qaly_tol:
+                # Not a step along the frontier. Either the strategy buys no
+                # extra effect for a higher cost, or it cannot be told apart
+                # from the reference at all.
+                if abs(dc) <= cost_tol:
+                    status[i_curr] = "EQ"
+                else:
+                    status[i_curr] = "D"
                 converged = False
                 break
             else:

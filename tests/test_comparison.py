@@ -51,6 +51,56 @@ class TestCalculateICERs:
         assert len(on_frontier) == 3
 
 
+class TestFrontierRobustness:
+    """Numerical edge cases in the dominance comparisons."""
+
+    def test_floating_point_noise_does_not_create_dominance(self):
+        df = calculate_icers(
+            strategies=["A", "B"],
+            costs=[100.0, 100.0 + 1e-13],
+            qalys=[1.0, 1.0],
+        )
+        assert not df["Status"].isin(["D", "ED"]).any()
+
+    def test_equivalent_strategies_are_not_dominated(self):
+        df = calculate_icers(
+            strategies=["A", "B"],
+            costs=[100.0, 100.0],
+            qalys=[1.0, 1.0],
+        )
+        assert not df["Status"].isin(["D", "ED"]).any()
+
+    def test_genuine_dominance_is_still_detected(self):
+        df = calculate_icers(
+            strategies=["A", "B"],
+            costs=[100.0, 200.0],
+            qalys=[2.0, 1.0],
+        )
+        assert df.set_index("Strategy").loc["B", "Status"] == "D"
+
+    def test_extended_dominance_is_still_detected(self):
+        df = calculate_icers(
+            strategies=["A", "B", "C"],
+            costs=[100.0, 200.0, 300.0],
+            qalys=[1.0, 1.5, 3.0],
+        )
+        assert df.set_index("Strategy").loc["B", "Status"] == "ED"
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+    def test_non_finite_costs_are_rejected(self, bad):
+        with pytest.raises(ValueError, match="finite"):
+            calculate_icers(["A", "B", "C"], [100.0, bad, 300.0], [1.0, 2.0, 3.0])
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+    def test_non_finite_qalys_are_rejected(self, bad):
+        with pytest.raises(ValueError, match="finite"):
+            calculate_icers(["A", "B", "C"], [100.0, 200.0, 300.0], [1.0, bad, 3.0])
+
+    def test_length_mismatch_is_rejected(self):
+        with pytest.raises(ValueError, match="same length"):
+            calculate_icers(["A", "B"], [100.0], [1.0, 2.0])
+
+
 # =========================================================================
 # CEAnalysis construction
 # =========================================================================
