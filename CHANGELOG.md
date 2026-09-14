@@ -37,6 +37,15 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### OWSA with more than two strategies
+
+- `OWSAResult.summary()`, `plot_tornado()` and `plot_owsa_param()` accept an
+  explicit `intervention` argument and require one once a model has more
+  than two strategies. They previously picked the first non-comparator
+  strategy silently, which is ambiguous with three or more.
+- A parameter missing its low or high bound now raises a clear error instead
+  of a bare `StopIteration`.
+
 ### Incremental analysis: pairing, tolerance, and stale data
 
 - `classify_incremental` accepts separate `cost_tol` and `effect_tol` instead

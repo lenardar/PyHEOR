@@ -628,7 +628,7 @@ def plot_trace(
 # =============================================================================
 
 def plot_tornado(
-    owsa_result, comparator=None, outcome="nmb",
+    owsa_result, comparator=None, intervention=None, outcome="nmb",
     figsize: tuple = (10, None), title: Optional[str] = None,
     max_params: int = 10, show_values: bool = False,
     label_width: int = 30, font_family: Optional[str] = None,
@@ -654,7 +654,9 @@ def plot_tornado(
     if not isinstance(label_width, int) or label_width < 4:
         raise ValueError("label_width must be an integer of at least 4")
 
-    summary = owsa_result.summary(comparator=comparator, outcome=outcome).head(max_params)
+    summary = owsa_result.summary(
+        comparator=comparator, intervention=intervention, outcome=outcome,
+    ).head(max_params)
     if summary.empty:
         raise ValueError("No OWSA parameters to plot")
     prefix = "ICER" if outcome == "icer" else "INMB"
@@ -773,18 +775,26 @@ def plot_tornado(
 
 @_with_plot_style
 def plot_owsa_param(
-    owsa_result, param_name: str, comparator=None,
+    owsa_result, param_name: str, comparator=None, intervention=None,
     figsize: tuple = (8, 5), title: Optional[str] = None, currency: str = "$",
 ):
     """Plot one-way sensitivity for a specific parameter.
     
-    Shows how outcomes change as a single parameter varies.
+    Shows how outcomes change as a single parameter varies. With more than
+    two strategies, ``intervention`` must be given explicitly.
     """
     
     if comparator is None:
         comparator = owsa_result.model.strategy_names[0]
     
-    intervention = [s for s in owsa_result.model.strategy_names if s != comparator][0]
+    others = [s for s in owsa_result.model.strategy_names if s != comparator]
+    if intervention is None:
+        if len(others) > 1:
+            raise ValueError(
+                "intervention must be given explicitly when the model has "
+                f"more than two strategies; choose from {others!r}"
+            )
+        intervention = others[0]
     
     entries = [d for d in owsa_result.owsa_data if d['param'] == param_name]
     if not entries:

@@ -269,13 +269,21 @@ class OWSAResult:
         )[0]
 
     def summary(self, comparator: Optional[str] = None,
+                intervention: Optional[str] = None,
                 outcome: str = "nmb") -> pd.DataFrame:
         """Summarize OWSA results.
+
+        OWSA is a pairwise comparison, so with more than two strategies the
+        one being evaluated must be named explicitly.
 
         Parameters
         ----------
         comparator : str, optional
             Comparator strategy (default: first strategy).
+        intervention : str, optional
+            Strategy being evaluated against ``comparator``. Required when
+            the model has more than two strategies; defaults to the other
+            one otherwise.
         outcome : str
             "nmb" — rank by INMB range (default).
             "icer" — rank by ICER range (matches R heemod tornado).
@@ -288,8 +296,21 @@ class OWSAResult:
         if comparator is None:
             comparator = self.model.strategy_names[0]
 
-        # Determine the intervention strategy
-        intervention = [s for s in self.model.strategy_names if s != comparator][0]
+        others = [s for s in self.model.strategy_names if s != comparator]
+        if intervention is None:
+            if len(others) > 1:
+                raise ValueError(
+                    "intervention must be given explicitly when the model "
+                    f"has more than two strategies; choose from {others!r}"
+                )
+            intervention = others[0]
+        elif intervention not in self.model.strategy_names:
+            raise ValueError(
+                f"Unknown intervention {intervention!r}; available strategies "
+                f"are {self.model.strategy_names!r}"
+            )
+        elif intervention == comparator:
+            raise ValueError("intervention must differ from comparator")
 
         # Base case values
         base_cost_comp = sum(self.base_result[comparator]['total_costs'].values())
@@ -305,9 +326,15 @@ class OWSAResult:
         param_names = list(dict.fromkeys(d['param'] for d in self.owsa_data))
 
         for param_name in param_names:
-            entries = [d for d in self.owsa_data if d['param'] == param_name]
-            low_entry = next(d for d in entries if d['bound'] == 'low')
-            high_entry = next(d for d in entries if d['bound'] == 'high')
+            entries = {d['bound']: d for d in self.owsa_data if d['param'] == param_name}
+            missing = {'low', 'high'} - set(entries)
+            if missing:
+                raise ValueError(
+                    f"OWSA data for {param_name!r} is missing bound(s) "
+                    f"{sorted(missing)!r}"
+                )
+            low_entry = entries['low']
+            high_entry = entries['high']
 
             low_result = low_entry['result']
             high_result = high_entry['result']
@@ -381,15 +408,22 @@ class OWSAResult:
     
     # --- Plotting Shortcuts ---
     
-    def plot_tornado(self, comparator=None, outcome="nmb", **kwargs):
+    def plot_tornado(self, comparator=None, intervention=None, outcome="nmb", **kwargs):
         """Plot tornado diagram."""
         from ..plotting import plot_tornado
-        return plot_tornado(self, comparator=comparator, outcome=outcome, **kwargs)
+        return plot_tornado(
+            self, comparator=comparator, intervention=intervention,
+            outcome=outcome, **kwargs,
+        )
     
-    def plot_owsa(self, param_name: str, comparator=None, **kwargs):
+    def plot_owsa(self, param_name: str, comparator=None, intervention=None,
+                  **kwargs):
         """Plot one-way sensitivity for a specific parameter."""
         from ..plotting import plot_owsa_param
-        return plot_owsa_param(self, param_name, comparator=comparator, **kwargs)
+        return plot_owsa_param(
+            self, param_name, comparator=comparator, intervention=intervention,
+            **kwargs,
+        )
 
 
 class PSAResult:

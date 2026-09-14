@@ -116,6 +116,43 @@ class TestParameterBounds:
             owsa_model().run_owsa(params=["nonexistent"])
 
 
+class TestMultiStrategyRequiresExplicitIntervention:
+    def model(self):
+        model = MarkovModel(
+            states=["Alive", "Dead"], strategies=["SOC", "A", "B"], n_cycles=1,
+            half_cycle_correction=False,
+        )
+        model.add_param("c_a", base=100)
+        model.add_param("c_b", base=200)
+        for strategy in ("SOC", "A", "B"):
+            model.set_transitions(strategy, lambda p, t: ALIVE_FOREVER)
+        model.set_state_cost(
+            "care",
+            {"SOC": {"Alive": 0}, "A": {"Alive": "c_a"}, "B": {"Alive": "c_b"}},
+        )
+        return model
+
+    def test_summary_rejects_ambiguous_intervention(self):
+        owsa = self.model().run_owsa()
+        with pytest.raises(ValueError, match="intervention must be given"):
+            owsa.summary()
+
+    def test_summary_accepts_explicit_intervention(self):
+        owsa = self.model().run_owsa()
+        frame = owsa.summary(intervention="B")
+        assert not frame.empty
+
+    def test_unknown_intervention_is_rejected(self):
+        owsa = self.model().run_owsa()
+        with pytest.raises(ValueError, match="Unknown intervention"):
+            owsa.summary(intervention="Nonexistent")
+
+    def test_intervention_must_differ_from_comparator(self):
+        owsa = self.model().run_owsa()
+        with pytest.raises(ValueError, match="must differ"):
+            owsa.summary(comparator="SOC", intervention="SOC")
+
+
 class TestNmbRanking:
     def test_ranks_by_inmb_span(self):
         frame = owsa_model().run_owsa(wtp=50000).summary(outcome="nmb")
