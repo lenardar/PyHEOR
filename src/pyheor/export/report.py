@@ -238,8 +238,7 @@ def _build_owsa(owsa_result, img_dir, rel_img, max_params, dpi) -> str:
 
 def _build_psa(psa_result, img_dir, rel_img, wtp, dpi) -> str:
     """PSA section with CE plane and CEAC."""
-    n = getattr(psa_result, 'n_sim', None) or getattr(psa_result, 'n_outer', 0)
-    lines = [f"## 5. 概率敏感性分析 (PSA, n={n})\n"]
+    lines = [f"## 5. 概率敏感性分析 (PSA, n={psa_result.n_sim})\n"]
 
     # Summary
     lines.append("### 汇总统计\n")

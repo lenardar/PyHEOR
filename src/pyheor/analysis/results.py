@@ -884,6 +884,9 @@ class MicroSimPSAResult:
     def n_outer(self) -> int:
         return len(self.psa_results)
 
+    #: Alias for n_outer, matching the cohort engines' PSAResult.n_sim.
+    n_sim = n_outer
+
     @property
     def ce_table(self) -> pd.DataFrame:
         """Cost-effectiveness table across all PSA iterations."""
@@ -1208,6 +1211,18 @@ class DESResult(StrategyOutcomeResult):
 
         return pd.DataFrame(rows)
 
+    # --- Plotting Shortcuts ---
+
+    def plot_survival(self, **kwargs):
+        """Plot empirical survival curves from the event log."""
+        from ..plotting import plot_microsim_survival
+        return plot_microsim_survival(self, **kwargs)
+
+    def plot_outcomes_histogram(self, outcome: str = "qalys", **kwargs):
+        """Plot a histogram of per-patient outcomes."""
+        from ..plotting import plot_microsim_outcomes
+        return plot_microsim_outcomes(self, outcome=outcome, **kwargs)
+
 
 class DESPSAResult:
     """Results from DES probabilistic sensitivity analysis.
@@ -1231,6 +1246,9 @@ class DESPSAResult:
     @property
     def n_outer(self) -> int:
         return len(self.psa_iterations)
+
+    #: Alias for n_outer, matching the cohort engines' PSAResult.n_sim.
+    n_sim = n_outer
 
     @property
     def ce_table(self) -> pd.DataFrame:

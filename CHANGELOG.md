@@ -37,6 +37,17 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### Naming consistency
+
+- `MicroSimPSAResult` and `DESPSAResult` expose `n_sim` as an alias for
+  `n_outer`, matching the cohort engines' `PSAResult.n_sim`. `report.py`
+  previously worked around the split with
+  `getattr(psa_result, 'n_sim', None) or getattr(psa_result, 'n_outer', 0)`.
+- `DESResult` gained `plot_survival()` and `plot_outcomes_histogram()`; it
+  was the only base-case result class without any plotting shortcuts, even
+  though its `survival_curve()` and per-patient outcome arrays are shaped
+  the same way MicroSim's are.
+
 ### Report generation guards
 
 - `generate_report` raises a clear error for a single-strategy model instead

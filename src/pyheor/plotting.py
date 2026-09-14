@@ -1388,7 +1388,10 @@ def plot_microsim_survival(
     ax.set_ylabel('Proportion Alive', fontsize=12)
 
     if title is None:
-        title = 'Microsimulation — Survival Curves'
+        # Shared with DESResult.plot_survival, since both report the same
+        # (Time, Strategy, Survival) shape from survival_curve().
+        source = "DES" if type(result).__name__.startswith("DES") else "Microsimulation"
+        title = f'{source} — Survival Curves'
     ax.set_title(title, fontsize=14, fontweight='bold')
     _outside_legend(ax, loc='best')
     fig.tight_layout()

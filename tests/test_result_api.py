@@ -156,3 +156,41 @@ class TestPsaPlotShortcuts:
         ceac = psa.ceac_data(wtp_range=(0, 100000), n_wtp=5)
         totals = ceac.groupby("WTP")["Prob CE"].sum()
         np.testing.assert_allclose(totals.to_numpy(), 1.0)
+
+
+class TestDesResultHasPlotShortcuts:
+    """DESResult previously had no plot_* methods, unlike the other engines."""
+
+    def test_plot_survival_renders(self):
+        figure = des_result().plot_survival()
+        try:
+            assert "DES" in figure.axes[0].get_title()
+        finally:
+            plt.close(figure)
+
+    def test_plot_outcomes_histogram_renders(self):
+        figure = des_result().plot_outcomes_histogram(outcome="cost")
+        try:
+            assert figure is not None
+        finally:
+            plt.close(figure)
+
+
+class TestPsaSampleCountNaming:
+    """n_outer and n_sim refer to the same count on every PSA result."""
+
+    def test_microsim_psa(self):
+        model = MicroSimModel(
+            states=["Alive", "Dead"], strategies=["S1"], n_cycles=2, n_patients=5,
+        )
+        model.set_transitions("S1", lambda p, t: ALIVE_FOREVER)
+        model.set_utility({"Alive": 1.0, "Dead": 0.0})
+        psa = model.run_psa(n_outer=3, seed=1, verbose=False)
+        assert psa.n_sim == psa.n_outer == 3
+
+    def test_des_psa(self):
+        from pyheor.survival import Exponential
+        model = DESModel(states=["Alive", "Dead"], strategies=["S1"], time_horizon=5)
+        model.set_event("S1", "Alive", "Dead", Exponential(rate=0.1))
+        psa = model.run_psa(n_sim=3, n_patients=3, seed=1, progress=False)
+        assert psa.n_sim == psa.n_outer == 3
