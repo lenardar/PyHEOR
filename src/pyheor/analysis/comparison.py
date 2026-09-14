@@ -269,11 +269,31 @@ class CEAnalysis:
         self.lys = np.asarray(lys, dtype=float) if lys is not None else None
         self.n_strategies = len(self.strategies)
 
+        expected = (self.n_strategies,)
+        for label, values in (
+            ("costs", self.costs), ("qalys", self.qalys), ("lys", self.lys),
+        ):
+            if values is not None and values.shape != expected:
+                raise ValueError(
+                    f"{label} must have one entry per strategy; expected "
+                    f"{self.n_strategies}, got {values.size}"
+                )
+
         # PSA data
         self.has_psa = psa_costs is not None and psa_qalys is not None
         if self.has_psa:
             self.psa_costs = np.asarray(psa_costs, dtype=float)
             self.psa_qalys = np.asarray(psa_qalys, dtype=float)
+            if self.psa_costs.shape != self.psa_qalys.shape:
+                raise ValueError(
+                    "psa_costs and psa_qalys must have the same shape, got "
+                    f"{self.psa_costs.shape} and {self.psa_qalys.shape}"
+                )
+            if self.psa_costs.ndim != 2 or self.psa_costs.shape[1] != self.n_strategies:
+                raise ValueError(
+                    "psa_costs and psa_qalys must be (n_sim, n_strategies) with "
+                    f"{self.n_strategies} columns, got {self.psa_costs.shape}"
+                )
             self.n_sim = self.psa_costs.shape[0]
         else:
             self.psa_costs = None
@@ -354,16 +374,29 @@ class CEAnalysis:
 
         strategies = ce[strat_col].unique().tolist()
 
-        # Build per-simulation matrices
-        n_sim = int(ce[sim_col].max())
+        # Align on the simulation labels themselves rather than assuming they
+        # run 1..n: a gap would otherwise pair up unrelated draws, or truncate.
+        sim_ids = np.sort(ce[sim_col].unique())
+        n_sim = len(sim_ids)
         psa_costs = np.zeros((n_sim, len(strategies)))
         psa_qalys = np.zeros((n_sim, len(strategies)))
 
         for j, strat in enumerate(strategies):
-            mask = ce[strat_col] == strat
-            subset = ce.loc[mask].sort_values(sim_col)
-            psa_costs[:, j] = subset[cost_col].values[:n_sim]
-            psa_qalys[:, j] = subset[qaly_col].values[:n_sim]
+            subset = ce.loc[ce[strat_col] == strat].set_index(sim_col)
+            missing = set(sim_ids) - set(subset.index)
+            if missing:
+                raise ValueError(
+                    f"Strategy {strat!r} is missing simulations "
+                    f"{sorted(missing)[:5]}; every strategy must be present in "
+                    "every simulation to pair incremental results."
+                )
+            if subset.index.duplicated().any():
+                raise ValueError(
+                    f"Strategy {strat!r} has duplicate simulation ids in ce_table"
+                )
+            aligned = subset.loc[sim_ids]
+            psa_costs[:, j] = aligned[cost_col].to_numpy()
+            psa_qalys[:, j] = aligned[qaly_col].to_numpy()
 
         mean_costs = psa_costs.mean(axis=0)
         mean_qalys = psa_qalys.mean(axis=0)
