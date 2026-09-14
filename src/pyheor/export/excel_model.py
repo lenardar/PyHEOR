@@ -1165,7 +1165,9 @@ def _survival_formula(spec, time_ref):
     if kind == "exponential":
         return f"=EXP(-{spec['rate']}*{time_ref})"
     if kind == "weibull":
-        return f"=EXP(-({time_ref}/{spec['scale']})^{spec['shape']})"
+        # Excel binds unary minus tighter than '^', so the power needs its own
+        # parentheses or '-(t/s)^k' would evaluate as '(-(t/s))^k'.
+        return f"=EXP(-(({time_ref}/{spec['scale']})^{spec['shape']}))"
     if kind == "loglogistic":
         return f"=1/(1+({time_ref}/{spec['scale']})^{spec['shape']})"
     if kind == "lognormal":
