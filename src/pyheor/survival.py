@@ -67,12 +67,25 @@ class SurvivalDistribution(ABC):
             elif pi >= 1:
                 results[i] = np.inf
             else:
-                try:
-                    results[i] = brentq(lambda t: 1 - self.survival(t) - pi, 0, 1e6)
-                except ValueError:
-                    results[i] = np.nan
+                results[i] = self._invert_survival(float(pi))
 
         return float(results[0]) if scalar else results
+
+    def _invert_survival(self, p: float) -> float:
+        """Solve S(t) = 1 - p, widening the bracket until it contains a root.
+
+        A quantile beyond the reach of the distribution is infinite, not
+        undefined: returning NaN here would silently poison downstream sums.
+        """
+        from scipy.optimize import brentq
+
+        target = 1.0 - p
+        upper = 1.0
+        while self.survival(upper) > target:
+            upper *= 2.0
+            if upper > 1e12:
+                return np.inf
+        return brentq(lambda t: self.survival(t) - target, 0.0, upper)
 
     def restricted_mean(self, t_max: float, n_points: int = 1000) -> float:
         """Restricted mean survival time (RMST) up to t_max.
@@ -321,7 +334,10 @@ class Gompertz(SurvivalDistribution):
         t = np.asarray(t, dtype=float)
         if abs(self.shape) < 1e-12:
             return self.rate * t
-        return self.rate / self.shape * (np.exp(self.shape * t) - 1)
+        # Overflow in the far tail is expected and yields inf, matching the
+        # survival() branch above.
+        with np.errstate(over="ignore", invalid="ignore"):
+            return self.rate / self.shape * np.expm1(self.shape * t)
 
     def __repr__(self):
         return f"Gompertz(shape={self.shape:.6f}, rate={self.rate:.6f})"
@@ -505,14 +521,43 @@ class KaplanMeier(SurvivalDistribution):
     """
 
     def __init__(self, times, survival_probs, extrapolation: str = "constant"):
+        if extrapolation not in {"constant", "exponential"}:
+            raise ValueError(
+                "extrapolation must be 'constant' or 'exponential', "
+                f"got {extrapolation!r}"
+            )
         self.times = np.asarray(times, dtype=float)
         self.surv = np.asarray(survival_probs, dtype=float)
         self.extrapolation = extrapolation
+
+        if self.times.ndim != 1 or self.times.size == 0:
+            raise ValueError(
+                "KaplanMeier times must be a non-empty one-dimensional array"
+            )
+        if self.surv.shape != self.times.shape:
+            raise ValueError(
+                "KaplanMeier times and survival_probs must have the same "
+                f"length, got {self.times.size} and {self.surv.size}"
+            )
+        if not np.all(np.isfinite(self.times)) or not np.all(np.isfinite(self.surv)):
+            raise ValueError(
+                "KaplanMeier times and survival_probs must be finite"
+            )
+        if np.any(self.times < 0):
+            raise ValueError("KaplanMeier times must be non-negative")
+        if np.any(self.surv < 0) or np.any(self.surv > 1):
+            raise ValueError("KaplanMeier survival_probs must lie in [0, 1]")
 
         # Sort by time
         order = np.argsort(self.times)
         self.times = self.times[order]
         self.surv = self.surv[order]
+
+        if np.any(np.diff(self.surv) > 1e-12):
+            raise ValueError(
+                "KaplanMeier survival_probs must be non-increasing in time; "
+                "an increasing curve would imply a negative hazard"
+            )
 
         # Prepend t=0, S=1 if not present
         if self.times[0] > 0:
@@ -636,6 +681,18 @@ class PiecewiseExponential(SurvivalDistribution):
     def __init__(self, breakpoints, rates):
         self.breakpoints = np.asarray(breakpoints, dtype=float)
         self.rates = np.asarray(rates, dtype=float)
+        if not np.all(np.isfinite(self.rates)) or np.any(self.rates < 0):
+            raise ValueError(
+                "PiecewiseExponential rates must be finite and non-negative"
+            )
+        if not np.all(np.isfinite(self.breakpoints)):
+            raise ValueError("PiecewiseExponential breakpoints must be finite")
+        if np.any(self.breakpoints <= 0):
+            raise ValueError("PiecewiseExponential breakpoints must be positive")
+        if np.any(np.diff(self.breakpoints) <= 0):
+            raise ValueError(
+                "PiecewiseExponential breakpoints must be strictly increasing"
+            )
         if len(self.rates) != len(self.breakpoints) + 1:
             raise ValueError(
                 f"rates length ({len(self.rates)}) must be "
