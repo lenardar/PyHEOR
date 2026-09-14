@@ -114,6 +114,20 @@ exactly.
 - `CEAnalysis` validates that its columns and PSA matrices match the strategy
   count, and pairs PSA draws by simulation id rather than by position.
 
+### Documentation and dead code
+
+- The PSM module docstring's state formula was reversed relative to the
+  implementation (`State_k = S_{k-1} - S_k` vs. the actual `S_k - S_{k-1}`).
+- Removed the unused `_return_raw`/`survival_curves_raw` path in PSM. It
+  returned the same values as `survival_curves`, because the curve-crossing
+  check raises rather than clamping; there was nothing left to compare
+  against once that check was added.
+- Removed the unused Tunnels bullet from the MicroSim module docstring; the
+  feature was never implemented.
+- `export_to_excel`'s docstring described a `Discounting` sheet that does not
+  exist; discount factors are a column within the cost and QALY sheets.
+- Removed a dead import and an unreachable branch in the Excel exporters.
+
 ### Excel export
 
 - Weibull survival formulas parenthesise the power. Excel binds unary minus

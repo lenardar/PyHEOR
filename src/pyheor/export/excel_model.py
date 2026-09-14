@@ -798,33 +798,28 @@ def _build_psm_excel(model, filepath, params, py_results):
             else:
                 occupancy = sp_range
 
-            # Costs
+            # Costs. method is either "wlos" (a rate, scaled by cycle length
+            # and subject to first_cycle_only/apply_cycles) or "starting" (a
+            # one-off charge at time zero, which overrides both).
             for cat in cost_cats:
                 cdef = model._costs[cat]
-                base = f"SUMPRODUCT({occupancy},{cvr[cat]})"
-
-                if cdef.method == "wlos":
-                    inner = f"{base}*{cl_ref}"
-                else:
-                    inner = base
-
-                if cdef.first_cycle_only:
-                    raw_f = f"=IF({CL(COL_CYC)}{rr}=0,{inner},0)"
-                elif cdef.apply_cycles is not None:
-                    checks = ",".join(
-                        f"{CL(COL_CYC)}{rr}={cycle}"
-                        for cycle in cdef.apply_cycles
-                    )
-                    condition = f"OR({checks})" if checks else "FALSE"
-                    raw_f = f"=IF({condition},{inner},0)"
-                else:
-                    raw_f = f"={inner}"
 
                 if cdef.method == "starting":
                     starting = f"SUMPRODUCT({sp_range},{cvr[cat]})"
-                    raw_f = (
-                        f"=IF({CL(COL_CYC)}{rr}=0,{starting},0)"
-                    )
+                    raw_f = f"=IF({CL(COL_CYC)}{rr}=0,{starting},0)"
+                else:
+                    inner = f"SUMPRODUCT({occupancy},{cvr[cat]})*{cl_ref}"
+                    if cdef.first_cycle_only:
+                        raw_f = f"=IF({CL(COL_CYC)}{rr}=0,{inner},0)"
+                    elif cdef.apply_cycles is not None:
+                        checks = ",".join(
+                            f"{CL(COL_CYC)}{rr}={cycle}"
+                            for cycle in cdef.apply_cycles
+                        )
+                        condition = f"OR({checks})" if checks else "FALSE"
+                        raw_f = f"=IF({condition},{inner},0)"
+                    else:
+                        raw_f = f"={inner}"
 
                 ws.cell(rr, craw[cat], raw_f)
                 ws.cell(rr, craw[cat]).number_format = _FMT_COST

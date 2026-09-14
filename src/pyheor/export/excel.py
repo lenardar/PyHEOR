@@ -25,10 +25,10 @@ def export_to_excel(
 
     Creates a multi-sheet Excel workbook with:
     - Summary: Key results, ICER
-    - State Trace: State occupancy per cycle
-    - Costs: Per-cycle costs by category
-    - QALYs: Per-cycle QALYs and LYs
-    - Discounting: Discount factors and intermediate calculations
+    - Trace_<strategy>: State occupancy per cycle
+    - Costs_<strategy>: Per-cycle costs by category, including discount
+      factors and the raw/HCC/discounted breakdown
+    - QALYs_<strategy>: Per-cycle QALYs and LYs, including discount factors
     - Parameters: All parameter values used
 
     For PSM models, also includes:
@@ -207,9 +207,11 @@ def _export_markov_base(result, filepath: str):
 
 
 def _write_transition_matrices(writer, model, params):
-    """Write transition matrices for each strategy."""
-    from ..utils import _Complement, C, resolve_complement
+    """Write each strategy's transition matrix for interval 0.
 
+    For a time-varying model this is a snapshot of the first interval only;
+    use ``export_excel_model`` for a full time-varying audit trail.
+    """
     rows_all = []
     for strategy in model.strategy_names:
         label = model.strategy_labels[strategy]

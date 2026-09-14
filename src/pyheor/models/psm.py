@@ -8,7 +8,7 @@ A PSM derives health state occupancy from overlaid survival curves:
 
 More generally, for N survival curves and N+1 states:
 - State_1 = S_1(t)
-- State_k = S_{k-1}(t) - S_k(t)  for k = 2..N
+- State_k = S_k(t) - S_{k-1}(t)  for k = 2..N
 - State_{N+1} = 1 - S_N(t)
 
 Supports:
@@ -472,26 +472,17 @@ class PartitionedSurvivalModel(CohortSweepModel):
     # Simulation Engine
     # =========================================================================
 
-    def _compute_state_probs(
+    def _resolve_survival_values(
         self, strategy: str, params: Dict[str, float],
-        _return_raw: bool = False,
     ) -> np.ndarray:
-        """Compute state probabilities from survival curves.
-
-        Parameters
-        ----------
-        _return_raw : bool
-            If True, also return the unclamped survival values (for reporting
-            what the curves looked like before the monotonicity fix).
+        """Evaluate and validate every endpoint curve for one strategy.
 
         Returns
         -------
         np.ndarray
-            Shape (n_cycles + 1, n_states). State membership at each cycle.
+            Shape (n_cycles + 1, n_endpoints).
         """
         times = np.arange(self.n_cycles + 1) * self.cycle_length
-
-        # Evaluate all survival curves
         surv_values = np.zeros((self.n_cycles + 1, self.n_endpoints))
         for j, endpoint in enumerate(self.survival_endpoints):
             curve = self._resolve_curve(strategy, endpoint, params)
@@ -524,8 +515,6 @@ class PartitionedSurvivalModel(CohortSweepModel):
                 )
             surv_values[:, j] = values
 
-        raw_values = surv_values.copy()
-
         # Ordered endpoints must not cross: S_1(t) <= ... <= S_N(t).
         for j in range(1, self.n_endpoints):
             crossed = surv_values[:, j] < surv_values[:, j - 1] - 1e-12
@@ -537,6 +526,19 @@ class PartitionedSurvivalModel(CohortSweepModel):
                     f"{self.survival_endpoints[j - 1]!r} at time indices "
                     f"{indices.tolist()}. Check the curve parameters."
                 )
+        return surv_values
+
+    def _compute_state_probs(
+        self, strategy: str, params: Dict[str, float],
+    ) -> np.ndarray:
+        """Compute state probabilities from survival curves.
+
+        Returns
+        -------
+        np.ndarray
+            Shape (n_cycles + 1, n_states). State membership at each cycle.
+        """
+        surv_values = self._resolve_survival_values(strategy, params)
 
         # Derive state probabilities
         state_probs = np.zeros((self.n_cycles + 1, self.n_states))
@@ -544,13 +546,9 @@ class PartitionedSurvivalModel(CohortSweepModel):
         # First state: S_1(t)
         state_probs[:, 0] = surv_values[:, 0]
 
-        # Middle states: S_{k-1}(t) - S_k(t)  (note: endpoint k maps to state k)
-        # Actually for the standard 3-state PSM:
-        # states = [PFS, Prog, Dead], endpoints = [PFS, OS]
-        # PFS_state = S_PFS(t)
-        # Prog_state = S_OS(t) - S_PFS(t)
-        # Dead_state = 1 - S_OS(t)
-        # So: state[0] = surv[0], state[k] = surv[k] - surv[k-1] for k=1..N-1, state[N] = 1 - surv[N-1]
+        # Middle states: state[k] = S_k(t) - S_{k-1}(t), e.g. for
+        # states=[PFS, Progressed, Dead], endpoints=[PFS, OS]:
+        # PFS = S_PFS(t), Progressed = S_OS(t) - S_PFS(t), Dead = 1 - S_OS(t)
         for k in range(1, self.n_endpoints):
             state_probs[:, k] = surv_values[:, k] - surv_values[:, k - 1]
 
@@ -566,8 +564,6 @@ class PartitionedSurvivalModel(CohortSweepModel):
                 f"outside [0, 1] at: {bad.tolist()}."
             )
 
-        if _return_raw:
-            return state_probs, surv_values, raw_values
         return state_probs
 
     def _simulate_single(self, params: Dict[str, float]) -> Dict[str, Any]:
@@ -593,9 +589,7 @@ class PartitionedSurvivalModel(CohortSweepModel):
         alive_mask[self._alive_states] = 1.0
 
         for strategy in self.strategy_names:
-            trace, surv_values, surv_raw = self._compute_state_probs(
-                strategy, params, _return_raw=True
-            )
+            trace = self._compute_state_probs(strategy, params)
 
             start_occupancy = interval_occupancy(trace, None)
             reward_occupancy = interval_occupancy(trace, self._hcc_method)
@@ -693,12 +687,9 @@ class PartitionedSurvivalModel(CohortSweepModel):
 
             # --- Survival values for plotting ---
             times = np.arange(self.n_cycles + 1) * self.cycle_length
+            surv_values = self._resolve_survival_values(strategy, params)
             surv_curves = {
                 endpoint: surv_values[:, j]
-                for j, endpoint in enumerate(self.survival_endpoints)
-            }
-            surv_curves_raw = {
-                endpoint: surv_raw[:, j]
                 for j, endpoint in enumerate(self.survival_endpoints)
             }
 
@@ -706,7 +697,6 @@ class PartitionedSurvivalModel(CohortSweepModel):
             results[strategy] = {
                 'trace': trace,
                 'survival_curves': surv_curves,
-                'survival_curves_raw': surv_curves_raw,
                 'times': times,
                 'interval_times': (interval_index + 0.5) * self.cycle_length,
                 'costs_by_cycle': costs_by_cycle,

@@ -11,7 +11,6 @@ Key features
 - Patient heterogeneity: individual attributes (age, sex, risk, …)
   that influence transition probabilities, costs, and utilities
 - State entry/exit event handlers (e.g. one-time costs on entering a state)
-- Tunnels: automatic sub-state tracking for time-in-state-dependent logic
 - Per-patient outcome tracking (costs, QALYs, state history)
 - Base case, OWSA, and PSA (outer-loop parameter uncertainty ×
   inner-loop patient stochasticity)
