@@ -37,6 +37,27 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### Excel export fixes
+
+- Sheet names no longer collide after Excel's 31-character truncation.
+  Strategy labels agreeing on their first ~25 characters previously produced
+  the same sheet name, and the second strategy's data silently overwrote the
+  first's.
+- The Markov QALY sheet's `Time (yrs)` column now uses the same interval
+  midpoint as its `Discount Factor` column; it previously used the interval
+  start, contradicting the factor computed two columns over.
+- `export_excel_model`'s PH/AFT wrappers resolve the baseline curve before
+  writing the hazard-ratio/acceleration-factor input cell. If the baseline
+  cannot be translated to a formula, the wrapper now falls back cleanly
+  instead of leaving an editable cell that nothing references.
+- Renamed the `(raw)`/`QALY(raw)`/`LY(raw)` columns in `export_excel_model`
+  workbooks to `(occ)`/`QALY(occ)`/`LY(occ)`: they hold the half-cycle-
+  corrected occupancy-weighted reward, not a pre-correction raw value, and
+  `export_to_excel` uses `(raw)` for the actual pre-correction figure.
+- `_write_transition_matrices` in `export_to_excel` only reflects interval 0
+  of a time-varying model; documented the limitation and removed a dead
+  import.
+
 ### DES consistency fixes
 
 - `run()` and `run_psa()` accept `np.integer` for `n_patients`/`n_sim`,

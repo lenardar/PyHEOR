@@ -133,10 +133,11 @@ def _build_markov_excel(model, filepath, params, py_results):
 
     # --- Per-strategy sheets ---
     summary_refs = {}
+    used_sheet_names = set()
 
     for s_idx, strategy in enumerate(model.strategy_names):
         label = model.strategy_labels[strategy]
-        sname = _safe_sheet(f"Calc_{label}")
+        sname = _safe_sheet(f"Calc_{label}", used_sheet_names)
         matrices = [
             model._get_transition_matrix(strategy, params, interval)
             for interval in range(n_cycles)
@@ -345,12 +346,14 @@ def _build_markov_excel(model, filepath, params, py_results):
             (COL_DFC, "DF(cost)"),
             (COL_DFQ, "DF(qaly)"), (COL_HCC, "HCC"),
         ]
+        # "(occ)" is the half-cycle-corrected occupancy times the reward,
+        # not a pre-correction raw value; the HCC column shows the formula.
         for cat in cost_cats:
-            hdrs += [(craw[cat], f"{cat}(raw)"), (cdisc[cat], f"{cat}(disc)")]
+            hdrs += [(craw[cat], f"{cat}(occ)"), (cdisc[cat], f"{cat}(disc)")]
         hdrs += [
             (COL_TC, "TotalCost(disc)"),
-            (COL_QR, "QALY(raw)"), (COL_QD, "QALY(disc)"),
-            (COL_LR, "LY(raw)"), (COL_LD, "LY(disc)"),
+            (COL_QR, "QALY(occ)"), (COL_QD, "QALY(disc)"),
+            (COL_LR, "LY(occ)"), (COL_LD, "LY(disc)"),
         ]
         for col, txt in hdrs:
             ws.cell(HDR, col, txt).font = _HEADER_FONT
@@ -566,10 +569,11 @@ def _build_psm_excel(model, filepath, params, py_results):
     n_cats = len(cost_cats)
 
     summary_refs = {}
+    used_sheet_names = set()
 
     for s_idx, strategy in enumerate(model.strategy_names):
         label = model.strategy_labels[strategy]
-        sname = _safe_sheet(f"Calc_{label}")
+        sname = _safe_sheet(f"Calc_{label}", used_sheet_names)
 
         if s_idx == 0:
             ws = wb.active
@@ -693,11 +697,11 @@ def _build_psm_excel(model, filepath, params, py_results):
             (COL_DFQ, "DF(qaly)"), (COL_HCC, "HCC"),
         ]
         for cat in cost_cats:
-            headers += [(craw[cat], f"{cat}(raw)"), (cdisc[cat], f"{cat}(disc)")]
+            headers += [(craw[cat], f"{cat}(occ)"), (cdisc[cat], f"{cat}(disc)")]
         headers += [
             (COL_TC, "TotalCost(disc)"),
-            (COL_QR, "QALY(raw)"), (COL_QD, "QALY(disc)"),
-            (COL_LR, "LY(raw)"), (COL_LD, "LY(disc)"),
+            (COL_QR, "QALY(occ)"), (COL_QD, "QALY(disc)"),
+            (COL_LR, "LY(occ)"), (COL_LD, "LY(disc)"),
         ]
         for col, txt in headers:
             ws.cell(HDR, col, txt).font = _HEADER_FONT
@@ -1047,20 +1051,23 @@ def _write_survival_curve_inputs(ws, row, endpoint, curve):
 
     prefix = endpoint
     if isinstance(curve, ProportionalHazards):
-        hr_ref = write_param(f"{prefix} / PH hazard ratio", curve.hr)
+        # Resolve the baseline first: writing the HR cell before knowing
+        # whether the baseline is representable would otherwise leave an
+        # editable cell that no formula ever references.
         base, row = _write_survival_curve_inputs(
             ws, row, f"{prefix} / baseline", curve.baseline,
         )
         if base is None:
             return None, row
+        hr_ref = write_param(f"{prefix} / PH hazard ratio", curve.hr)
         return {"type": "ph", "baseline": base, "hr": hr_ref}, row
     if isinstance(curve, AcceleratedFailureTime):
-        af_ref = write_param(f"{prefix} / AFT acceleration factor", curve.af)
         base, row = _write_survival_curve_inputs(
             ws, row, f"{prefix} / baseline", curve.baseline,
         )
         if base is None:
             return None, row
+        af_ref = write_param(f"{prefix} / AFT acceleration factor", curve.af)
         return {"type": "aft", "baseline": base, "af": af_ref}, row
     if isinstance(curve, Exponential):
         return {
@@ -1270,6 +1277,20 @@ def _write_setting(ws, row, label, value) -> int:
     return row
 
 
-def _safe_sheet(name: str) -> str:
-    """Truncate sheet name to 31 chars (Excel limit)."""
-    return name[:31]
+def _safe_sheet(name: str, used=None) -> str:
+    """Truncate to Excel's 31-character sheet-name limit without colliding.
+
+    Two strategy labels agreeing on their first ~25 characters would
+    otherwise truncate to the same name and silently overwrite each other.
+    """
+    truncated = name[:31]
+    if used is None:
+        return truncated
+    candidate = truncated
+    suffix = 2
+    while candidate in used:
+        tail = f"_{suffix}"
+        candidate = truncated[:31 - len(tail)] + tail
+        suffix += 1
+    used.add(candidate)
+    return candidate

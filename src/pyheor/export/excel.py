@@ -15,6 +15,24 @@ from typing import Any, Dict, List, Optional, Union
 from ..utils import discount_factor
 
 
+def _unique_sheet_name(base: str, used: set) -> str:
+    """Truncate to Excel's 31-character sheet-name limit without colliding.
+
+    Two strategy labels that agree on their first ~25 characters would
+    otherwise truncate to the same name; pandas silently overwrites the
+    first sheet's data when that happens.
+    """
+    truncated = base[:31]
+    name = truncated
+    suffix = 2
+    while name in used:
+        tail = f"_{suffix}"
+        name = truncated[:31 - len(tail)] + tail
+        suffix += 1
+    used.add(name)
+    return name
+
+
 def export_to_excel(
     result,
     filepath: str,
@@ -113,10 +131,11 @@ def _export_markov_base(result, filepath: str):
                          startrow=len(summary) + 3, index=False)
 
         # === Per-strategy sheets ===
+        used_sheet_names = {'Parameters', 'Settings', 'Summary'}
         for strategy in model.strategy_names:
             sr = r[strategy]
             label = model.strategy_labels[strategy]
-            sheet_name = f'Trace_{label}'[:31]  # Excel sheet name limit
+            sheet_name = _unique_sheet_name(f'Trace_{label}', used_sheet_names)
 
             # --- Markov Trace ---
             trace_df = pd.DataFrame(
@@ -133,7 +152,7 @@ def _export_markov_base(result, filepath: str):
             trace_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
             # --- Costs sheet ---
-            costs_sheet = f'Costs_{label}'[:31]
+            costs_sheet = _unique_sheet_name(f'Costs_{label}', used_sheet_names)
             cycles = np.arange(model.n_cycles)
             interval_times = (cycles + 0.5) * model.cycle_length
             df_c = discount_factor(
@@ -172,7 +191,7 @@ def _export_markov_base(result, filepath: str):
             costs_df.to_excel(writer, sheet_name=costs_sheet, index=False)
 
             # --- QALYs sheet ---
-            qaly_sheet = f'QALYs_{label}'[:31]
+            qaly_sheet = _unique_sheet_name(f'QALYs_{label}', used_sheet_names)
             df_q = discount_factor(
                 cycles + 0.5, model.dr_qaly, model.cycle_length,
                 model.discount_convention,
@@ -180,7 +199,7 @@ def _export_markov_base(result, filepath: str):
 
             qaly_data = {
                 'Cycle': cycles,
-                'Time (yrs)': cycles * model.cycle_length,
+                'Time (yrs)': interval_times,
                 'Discount Factor': df_q,
                 'Occupancy Method': model.half_cycle_correction or 'start-of-interval',
                 'QALYs (raw)': sr['qalys_by_cycle'],
@@ -272,6 +291,7 @@ def _export_psm_base(result, filepath: str):
                          startrow=len(summary) + 3, index=False)
 
         # === Per-strategy sheets ===
+        used_sheet_names = {'Parameters', 'Settings', 'Summary'}
         for strategy in model.strategy_names:
             sr = r[strategy]
             label = model.strategy_labels[strategy]
@@ -279,7 +299,7 @@ def _export_psm_base(result, filepath: str):
             trace_cycles = np.arange(model.n_cycles + 1)
 
             # --- Survival Curves ---
-            surv_sheet = f'Surv_{label}'[:31]
+            surv_sheet = _unique_sheet_name(f'Surv_{label}', used_sheet_names)
             surv_data = {'Cycle': trace_cycles, 'Time (yrs)': times}
             for endpoint in model.survival_endpoints:
                 surv_data[f'S({endpoint})'] = sr['survival_curves'][endpoint]
@@ -287,7 +307,7 @@ def _export_psm_base(result, filepath: str):
             surv_df.to_excel(writer, sheet_name=surv_sheet, index=False)
 
             # --- State Probabilities ---
-            trace_sheet = f'States_{label}'[:31]
+            trace_sheet = _unique_sheet_name(f'States_{label}', used_sheet_names)
             trace_df = pd.DataFrame(sr['trace'], columns=model.states)
             trace_df.insert(0, 'Cycle', trace_cycles)
             trace_df.insert(1, 'Time (yrs)', times)
@@ -301,7 +321,7 @@ def _export_psm_base(result, filepath: str):
             trace_df.to_excel(writer, sheet_name=trace_sheet, index=False)
 
             # --- Costs ---
-            costs_sheet = f'Costs_{label}'[:31]
+            costs_sheet = _unique_sheet_name(f'Costs_{label}', used_sheet_names)
             cycles = np.arange(model.n_cycles)
             interval_times = (cycles + 0.5) * model.cycle_length
             df_c = discount_factor(
@@ -336,7 +356,7 @@ def _export_psm_base(result, filepath: str):
             costs_df.to_excel(writer, sheet_name=costs_sheet, index=False)
 
             # --- QALYs ---
-            qaly_sheet = f'QALYs_{label}'[:31]
+            qaly_sheet = _unique_sheet_name(f'QALYs_{label}', used_sheet_names)
             df_q = discount_factor(
                 cycles + 0.5, model.dr_qaly, model.cycle_length,
                 model.discount_convention,

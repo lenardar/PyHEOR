@@ -84,7 +84,7 @@ def test_markov_audit_workbook_uses_formulas_and_recalculates(tmp_path):
     assert calculation.cell(final_trace_row, 3).data_type == "f"
     # The final trace point is observable but does not accrue another reward.
     qaly_column = next(
-        cell.column for cell in header_row if cell.value == "QALY(raw)"
+        cell.column for cell in header_row if cell.value == "QALY(occ)"
     )
     assert calculation.cell(final_trace_row, qaly_column).value is None
 
@@ -190,3 +190,78 @@ def test_psm_library_survival_types_use_excel_formulas(
     calculation = load_workbook(path, data_only=False)["Calc_S1"]
     formulas = _formula_cells(calculation)
     assert any(formula_token in formula for formula in formulas)
+
+
+class _UnsupportedCurve:
+    """A survival curve export_excel_model cannot translate to a formula."""
+
+    def survival(self, t):
+        import numpy as np
+        return np.exp(-0.1 * np.asarray(t, dtype=float))
+
+    def hazard(self, t):
+        return 0.1
+
+
+def test_ph_wrapping_an_unsupported_baseline_leaves_no_orphan_input(tmp_path):
+    from pyheor.survival import ProportionalHazards
+
+    model = PSMModel(
+        states=["Alive", "Dead"], survival_endpoints=["OS"],
+        strategies=["S1"], n_cycles=2,
+    )
+    model.set_survival("S1", "OS", ProportionalHazards(_UnsupportedCurve(), hr=0.8))
+    path = tmp_path / "ph-unsupported.xlsx"
+    export_excel_model(model, path)
+
+    calculation = load_workbook(path, data_only=False)["Calc_S1"]
+    labels = [
+        cell.value for row in calculation.iter_rows() for cell in row
+        if isinstance(cell.value, str)
+    ]
+    # The baseline could not be represented, so the PH wrapper falls back to
+    # an external input too; no hazard-ratio cell should have been written.
+    assert not any("hazard ratio" in label for label in labels)
+
+
+def test_colliding_sheet_names_do_not_overwrite_each_other(tmp_path):
+    long_prefix = "Adjuvant chemotherapy plus targeted maintenance therapy"
+    model = MarkovModel(
+        states=["Alive", "Dead"],
+        strategies={
+            "A": f"{long_prefix} A",
+            "B": f"{long_prefix} B",
+        },
+        n_cycles=2,
+    )
+    for strategy in ("A", "B"):
+        model.set_transitions(strategy, [[1, 0], [0, 1]])
+    result = model.run_base_case()
+
+    path = tmp_path / "collision.xlsx"
+    export_to_excel(result, path)
+
+    sheet_names = load_workbook(path).sheetnames
+    trace_sheets = [name for name in sheet_names if name.startswith("Trace_")]
+    assert len(trace_sheets) == len(set(trace_sheets)) == 2
+
+
+def test_colliding_calc_sheet_names_in_excel_model(tmp_path):
+    long_prefix = "Adjuvant chemotherapy plus targeted maintenance therapy"
+    model = MarkovModel(
+        states=["Alive", "Dead"],
+        strategies={
+            "A": f"{long_prefix} A",
+            "B": f"{long_prefix} B",
+        },
+        n_cycles=2,
+    )
+    for strategy in ("A", "B"):
+        model.set_transitions(strategy, [[1, 0], [0, 1]])
+
+    path = tmp_path / "collision-model.xlsx"
+    export_excel_model(model, path)
+
+    sheet_names = load_workbook(path).sheetnames
+    calc_sheets = [name for name in sheet_names if name.startswith("Calc_")]
+    assert len(calc_sheets) == len(set(calc_sheets)) == 2
