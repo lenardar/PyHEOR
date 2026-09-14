@@ -70,6 +70,10 @@ def resolve_complement(matrix_data) -> np.ndarray:
         If more than one C per row, or if complement would be negative.
     """
     n = len(matrix_data)
+    if any(len(row) != n for row in matrix_data):
+        raise ValueError(
+            f"Transition matrix must be square, got {n} row(s) with unequal lengths"
+        )
     result = np.zeros((n, n))
     
     for i in range(n):

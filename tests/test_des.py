@@ -16,6 +16,13 @@ class TestDESConstruction:
         )
         assert model is not None
 
+    def test_state_index_properties_are_immutable(self):
+        model = DESModel(
+            states=["Alive", "Dead"], strategies=["S1"], time_horizon=20,
+        )
+        assert model.alive_state_indices == (0,)
+        assert model.absorbing_state_indices == (1,)
+
     def test_clock_is_explicit(self):
         assert DESModel(states=["Alive", "Dead"], strategies=["S1"], clock="forward").clock == "forward"
         with pytest.raises(ValueError, match="clock"):

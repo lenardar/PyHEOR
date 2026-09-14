@@ -100,6 +100,17 @@ class TestTransitionMatrices:
         with pytest.raises(ValueError, match="Negative probabilities"):
             model.run_base_case(seed=1, verbose=False)
 
+    def test_transition_shape_must_match_the_model_states(self):
+        model = MicroSimModel(
+            states=["Alive", "Sick", "Dead"], strategies=["S1"],
+            n_cycles=1, n_patients=1,
+        )
+        model.set_transitions("S1", [[C, 0.1, 0.2, 0.7], [0, 1, 0, 0], [0, 0, 1, 0]])
+        model.set_utility({"Alive": 1.0, "Sick": 0.5, "Dead": 0.0})
+
+        with pytest.raises(ValueError, match=r"shape \(3, 3\)"):
+            model.run_base_case(seed=1, verbose=False)
+
     def test_callbacks_receive_zero_based_interval_indices(self):
         seen = []
         model = MicroSimModel(
@@ -262,6 +273,15 @@ class TestMicroSimRun:
         outcomes = result.patient_outcomes
         assert "Years Alive" in outcomes.columns
         assert (outcomes["Years Alive"] <= micro_model.n_cycles).all()
+
+    def test_owsa_runs_with_shared_patient_draws(self, micro_model):
+        result = micro_model.run_owsa(
+            params=["p_death"], n_patients=20, seed=3, verbose=False
+        )
+        summary = result.summary()
+
+        assert list(summary["param_name"]) == ["p_death"]
+        assert set(result.base_result) == {"SOC", "TRT"}
 
     def test_heterogeneous_population_runs(self):
         model = MicroSimModel(

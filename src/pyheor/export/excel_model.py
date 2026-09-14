@@ -296,7 +296,7 @@ def _build_markov_excel(model, filepath, params, py_results):
 
         # -- Alive mask --
         ws.cell(r, 1, "Alive")
-        alive = [1.0 if i in model._alive_states else 0.0 for i in range(n)]
+        alive = [1.0 if i in model.alive_state_indices else 0.0 for i in range(n)]
         for j in range(n):
             c = ws.cell(r, 2 + j, alive[j])
             c.fill = _INPUT_FILL
@@ -641,7 +641,7 @@ def _build_psm_excel(model, filepath, params, py_results):
         UTIL_ROW = r; r += 1
 
         ws.cell(r, 1, "Alive")
-        alive = [1.0 if i in model._alive_states else 0.0 for i in range(n)]
+        alive = [1.0 if i in model.alive_state_indices else 0.0 for i in range(n)]
         for j in range(n):
             c = ws.cell(r, 2 + j, alive[j])
             c.fill = _INPUT_FILL

@@ -505,6 +505,14 @@ class IndividualStateTransitionModel(StateMappingModel):
         if isinstance(matrix_data, np.ndarray):
             P = matrix_data.copy().astype(float)
         else:
+            if (
+                len(matrix_data) != self.n_states
+                or any(len(row) != self.n_states for row in matrix_data)
+            ):
+                raise ValueError(
+                    "Transition matrix must have shape "
+                    f"({self.n_states}, {self.n_states})."
+                )
             resolved = []
             for row in matrix_data:
                 resolved_row = []
@@ -517,6 +525,12 @@ class IndividualStateTransitionModel(StateMappingModel):
                         resolved_row.append(float(val))
                 resolved.append(resolved_row)
             P = resolve_complement(resolved)
+
+        if P.shape != (self.n_states, self.n_states):
+            raise ValueError(
+                "Transition matrix must have shape "
+                f"({self.n_states}, {self.n_states}), got {P.shape}."
+            )
 
         # Repairing an invalid matrix would quietly turn a typo into a
         # different model, so reject it the way the cohort engine does.
@@ -955,16 +969,19 @@ class IndividualStateTransitionModel(StateMappingModel):
 
         base_params = self._get_base_params()
 
-        # Base case
-        rng = np.random.default_rng(s)
-        base_result = {}
-        for strat in self.strategy_names:
-            sim = self._simulate_patients(strat, base_params, prof, rng)
-            base_result[strat] = {
+        uniforms = np.random.default_rng(s).random((prof.n_patients, self.n_cycles))
+
+        def aggregate(sim):
+            return {
                 'total_costs': {'total': sim['mean_cost']},
                 'total_qalys': sim['mean_qalys'],
                 'total_lys': sim['mean_lys'],
             }
+
+        base_result = {}
+        for strat in self.strategy_names:
+            sim = self._simulate_patients(strat, base_params, prof, uniforms)
+            base_result[strat] = aggregate(sim)
 
         owsa_data = []
         for param_name in params:
@@ -983,17 +1000,12 @@ class IndividualStateTransitionModel(StateMappingModel):
                     else nullcontext()
                 )
                 with override:
-                    rng = np.random.default_rng(s)
                     result = {}
                     for strat in self.strategy_names:
                         sim = self._simulate_patients(
-                            strat, test_params, prof, rng
+                            strat, test_params, prof, uniforms
                         )
-                        result[strat] = {
-                            'total_costs': {'total': sim['mean_cost']},
-                            'total_qalys': sim['mean_qalys'],
-                            'total_lys': sim['mean_lys'],
-                        }
+                        result[strat] = aggregate(sim)
 
                 owsa_data.append({
                     'param': param_name,

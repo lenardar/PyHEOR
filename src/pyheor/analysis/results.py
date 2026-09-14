@@ -832,7 +832,7 @@ class MicroSimResult(StrategyOutcomeResult):
         for strat in strategies:
             trace = self.results[strat]['trace']
             # Sum alive state columns
-            alive_cols = [i for i in self.model._alive_states]
+            alive_cols = self.model.alive_state_indices
             surv = trace[:, alive_cols].sum(axis=1)
             for t in range(len(surv)):
                 rows.append({
@@ -1173,7 +1173,7 @@ class DESResult(StrategyOutcomeResult):
         """
         strategies = [strategy] if strategy else self.model.strategy_names
         time_grid = np.linspace(0, self.model.time_horizon, n_points)
-        absorbing = self.model._absorbing
+        absorbing = self.model.absorbing_state_indices
 
         rows = []
         for strat in strategies:

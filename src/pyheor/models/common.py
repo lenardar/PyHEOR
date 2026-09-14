@@ -190,6 +190,11 @@ class StateMappingModel(ParameterisedModel):
     strategy_names: List[str]
     n_states: int
 
+    @property
+    def alive_state_indices(self) -> tuple[int, ...]:
+        """Indices of states considered alive by the model."""
+        return tuple(sorted(self._alive_states))
+
     @staticmethod
     def _callable_needs_attrs(fn) -> bool:
         """Whether a user callback accepts the patient-attributes argument."""

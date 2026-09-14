@@ -137,6 +137,15 @@ exactly.
   before it was eliminated from the frontier, which read as a valid
   sequential ICER.
 
+### MicroSim sensitivity and transition validation
+
+- `MicroSimModel.run_owsa()` now creates one patient-level uniform draw matrix
+  and reuses it for the base, low, and high runs. It previously passed a random
+  generator where the simulation requires that matrix, so the first transition
+  attempt failed instead of producing an OWSA result.
+- Transition matrices must match the model's state count before complement
+  resolution. A non-square input can no longer silently discard extra columns.
+
 ### Shared parameter handling
 
 - `add_param`, `add_params`, discount-rate registration, the attribute

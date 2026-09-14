@@ -65,6 +65,10 @@ class TestResolveComplement:
         with pytest.raises(ValueError, match="only one C"):
             resolve_complement([[C, C], [0, 1]])
 
+    def test_non_square_matrix_is_rejected(self):
+        with pytest.raises(ValueError, match="square"):
+            resolve_complement([[C, 0.2, 0.8], [0.1, C, 0.7]])
+
     def test_negative_complement_raises(self):
         with pytest.raises(ValueError, match="negative"):
             resolve_complement([[C, 0.6, 0.5], [0, 0, 1], [0, 0, 1]])

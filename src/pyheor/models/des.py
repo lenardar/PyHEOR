@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import brentq
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -258,6 +259,16 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         # Event handlers
         self._on_enter: Dict[str, List[Callable]] = {}
         self._on_event: Dict[Tuple[str, str], List[Callable]] = {}
+
+    @property
+    def alive_state_indices(self) -> tuple[int, ...]:
+        """Indices of states considered alive by the model."""
+        return tuple(sorted(self._alive_states))
+
+    @property
+    def absorbing_state_indices(self) -> tuple[int, ...]:
+        """Indices of absorbing states."""
+        return tuple(sorted(self._absorbing))
 
     # =====================================================================
     # Parameters
@@ -756,8 +767,6 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         self, dist: SurvivalDistribution, current_time: float, rng=None,
     ) -> float:
         """Sample a residual TTE under a clock-forward cumulative hazard."""
-        from scipy.optimize import brentq
-
         u = (rng if rng is not None else np.random).uniform()
         if not 0 < u < 1:
             return float("inf")
