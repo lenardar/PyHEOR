@@ -331,3 +331,26 @@ class TestDESResults:
         result = model.run(n_patients=3, progress=False)
         curve = result.survival_curve(n_points=2)
         assert curve.iloc[-1]["Survival"] == pytest.approx(1.0)
+
+    def test_large_time_horizon_only_treats_the_final_grid_point_as_censored(
+        self, monkeypatch,
+    ):
+        # np.isclose's default relative tolerance would cover several
+        # trailing grid points once time_horizon is large enough (its
+        # absolute width scales with the horizon); a death shortly before
+        # the horizon must still show as dead well before the final point.
+        model = DESModel(
+            states=["Alive", "Dead"], strategies=["S1"], time_horizon=1e6,
+        )
+        model.set_event("S1", "Alive", "Dead", Exponential(rate=1))
+        # A genuine death recorded well before the horizon (not censored).
+        monkeypatch.setattr(model, "_sample_tte", lambda dist, rng=None: 1e6 - 50)
+        result = model.run(n_patients=1, progress=False)
+
+        # Fine enough that the second-to-last grid point (10 units before
+        # the horizon) falls after the death at horizon-50; the old
+        # np.isclose(rtol=1e-5) tolerance of ~10 at this horizon would have
+        # covered it, incorrectly counting the dead patient as at risk.
+        curve = result.survival_curve(n_points=100001)
+        assert curve.iloc[-2]["Survival"] == pytest.approx(0.0)
+        assert curve.iloc[-1]["Survival"] == pytest.approx(0.0)

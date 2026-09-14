@@ -1192,9 +1192,11 @@ class DESResult(StrategyOutcomeResult):
 
             for t in time_grid:
                 # Patients censored at the horizon remain in the risk set at
-                # the endpoint. Keep the existing right-continuous event
-                # handling for earlier grid points.
-                if np.isclose(t, self.model.time_horizon):
+                # the endpoint. Compare against the grid's own last value
+                # (exactly time_horizon by construction) rather than
+                # np.isclose, whose default relative tolerance would cover
+                # several trailing grid points for a large time_horizon.
+                if t == time_grid[-1]:
                     surv = (absorb_times >= t).mean()
                 else:
                     surv = (absorb_times > t).mean()

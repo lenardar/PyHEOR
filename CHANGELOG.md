@@ -37,6 +37,16 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### DES survival curve at large time horizons
+
+- `DESResult.survival_curve` compared each grid point to `time_horizon` with
+  `np.isclose`, whose default relative tolerance scales with the horizon's
+  magnitude. At `time_horizon=1e6` that tolerance covered roughly the last
+  10 units of follow-up, so a death shortly before the horizon could still
+  read as at risk over several trailing grid points instead of only the
+  final one. Compare against the grid's own last value instead, which is
+  exactly `time_horizon` by construction.
+
 ### Excel export fixes
 
 - Sheet names no longer collide after Excel's 31-character truncation.
