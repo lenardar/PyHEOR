@@ -195,6 +195,16 @@ class TestDESRun:
         mean_lys = result.summary()["Mean LYs"].iloc[0]
         np.testing.assert_allclose(mean_lys, 10.0, rtol=0.20)
 
+    def test_nan_time_to_event_is_rejected(self):
+        model = DESModel(states=["Alive", "Dead"], strategies=["S1"])
+
+        class NaNDistribution:
+            def quantile(self, u):
+                return np.nan
+
+        with pytest.raises(ValueError, match="non-finite TTE"):
+            model._sample_tte(NaNDistribution(), rng=np.random.default_rng(1))
+
     def test_forward_clock_conditions_on_absolute_time(self, monkeypatch):
         model = DESModel(
             states=["Alive", "Dead"], strategies=["S1"],

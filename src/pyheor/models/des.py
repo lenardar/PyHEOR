@@ -757,7 +757,7 @@ class DiscreteEventSimulationModel(ParameterisedModel):
         """Sample a relative time-to-event from a survival distribution."""
         u = (rng if rng is not None else np.random).uniform()
         tte = dist.quantile(u)
-        if not np.isfinite(tte) and not np.isinf(tte):
+        if np.isnan(tte):
             raise ValueError(f"Event distribution returned non-finite TTE: {tte!r}")
         if tte < 0:
             raise ValueError(f"Event distribution returned negative TTE: {tte!r}")
