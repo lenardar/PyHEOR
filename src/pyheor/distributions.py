@@ -380,16 +380,26 @@ class Dirichlet(Distribution):
 
 class Fixed(Distribution):
     """Fixed (degenerate) distribution — always returns the same value.
-    
+
     Parameters
     ----------
     value : float
         The fixed value.
+
+    Notes
+    -----
+    ``sample`` does not draw from ``rng``, so it does not advance the shared
+    generator a PSA run uses across parameters. Because PSA samples
+    parameters in the order ``model.params`` iterates them, adding or
+    removing an unrelated parameter shifts the draw stream for every
+    parameter that samples after it — whether or not that parameter is
+    ``Fixed``. Do not rely on drawn values staying the same across such a
+    change, even with the same seed.
     """
-    
+
     def __init__(self, value: float):
         self.value = float(value)
-    
+
     def sample(self, n: int = 1, rng=None) -> np.ndarray:
         return np.full(n, self.value)
     
