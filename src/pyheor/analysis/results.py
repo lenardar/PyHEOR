@@ -312,8 +312,10 @@ class OWSAResult:
             }
 
             if outcome == "icer":
-                # Rank by ICER range (absolute difference)
-                if float('inf') in (abs(low_icer), abs(high_icer)):
+                # A dominant or dominated bound has no ratio, so its range is
+                # not a finite number. Rank it first: such a parameter can flip
+                # the conclusion, unlike one with a merely wide range.
+                if np.isnan(low_icer) or np.isnan(high_icer):
                     row['Range'] = float('inf')
                 else:
                     row['Range'] = abs(high_icer - low_icer)
