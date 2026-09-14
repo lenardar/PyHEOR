@@ -70,22 +70,32 @@ def generate_report(
     from ..models.microsim import IndividualStateTransitionModel
 
     out = Path(filepath).resolve()
-    img_dir = out.parent / f"{out.stem}_files"
-    img_dir.mkdir(parents=True, exist_ok=True)
     rel_img = f"{out.stem}_files"  # relative path for markdown refs
 
     is_des = isinstance(model, DESModel)
     model_type = type(model).__name__
     has_dist = any(p.dist is not None for p in model.params.values())
     do_psa = has_dist if run_psa is None else run_psa
+    # A parameter is worth a tornado bar only once the user has expressed an
+    # uncertainty range for it. Markov/PSM auto-register dr_cost/dr_qaly, so
+    # `model.params` is never empty even when the user added nothing;
+    # without this check the discount rate would appear in every tornado.
+    has_sensitivity_range = any(
+        p.dist is not None or p._explicit_bounds for p in model.params.values()
+    )
 
-    # ── Run analyses ────────────────────────────────────────────────
-    print(f"[report] Running base case...")
+    # ── Run analyses ─────────────────────────────────────
+    print("[report] Running base case...")
     base_result = model.run() if is_des else model.run_base_case()
 
+    if model.n_strategies < 2:
+        raise ValueError(
+            "generate_report requires at least two strategies to compare"
+        )
+
     owsa_result = None
-    if not is_des and model.params:
-        print(f"[report] Running OWSA...")
+    if not is_des and has_sensitivity_range:
+        print("[report] Running OWSA...")
         owsa_result = model.run_owsa(wtp=wtp)
 
     psa_result = None
@@ -96,7 +106,11 @@ def generate_report(
         else:
             psa_result = model.run_psa(n_sim=n_sim, seed=psa_seed)
 
-    # ── Build sections ──────────────────────────────────────────────
+    img_dir = out.parent / f"{out.stem}_files"
+    if owsa_result is not None or psa_result is not None:
+        img_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Build sections ─────────────────────────────────────
     sections = []
     sections.append(f"# 卫生经济学分析报告\n")
     sections.append(

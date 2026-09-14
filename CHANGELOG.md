@@ -37,6 +37,18 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### Report generation guards
+
+- `generate_report` raises a clear error for a single-strategy model instead
+  of failing inside `plot_tornado` partway through report generation.
+- The OWSA section only runs when at least one parameter has a distribution
+  or explicit bounds. `dr_cost`/`dr_qaly` are auto-registered even when the
+  caller adds no parameters, so checking `model.params` alone ran OWSA (and
+  surfaced the discount rate in the tornado) whether or not the caller
+  intended any sensitivity analysis.
+- The `_files` image directory is only created when a figure will actually
+  be written to it.
+
 ### DES survival curve at large time horizons
 
 - `DESResult.survival_curve` compared each grid point to `time_horizon` with
