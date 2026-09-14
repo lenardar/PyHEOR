@@ -31,15 +31,28 @@ def sample_distribution(distribution, n: int, rng) -> np.ndarray:
         accepts_rng = False
 
     if accepts_rng:
-        return distribution.sample(n, rng=rng)
+        return _as_scalar_draws(distribution, distribution.sample(n, rng=rng))
 
     caller_state = np.random.get_state()
     legacy_seed = int(rng.integers(0, 2**32, dtype=np.uint32))
     try:
         np.random.seed(legacy_seed)
-        return distribution.sample(n)
+        return _as_scalar_draws(distribution, distribution.sample(n))
     finally:
         np.random.set_state(caller_state)
+
+
+def _as_scalar_draws(distribution, draws) -> np.ndarray:
+    """Reject vector-valued draws, which cannot fill a scalar parameter."""
+    values = np.asarray(draws)
+    if values.ndim > 1:
+        raise TypeError(
+            f"{type(distribution).__name__} draws vectors of shape "
+            f"{values.shape[1:]}, which cannot be assigned to a scalar "
+            "parameter. Sample it directly and add each component as its own "
+            "parameter."
+        )
+    return values
 
 
 class Distribution(ABC):
@@ -176,6 +189,13 @@ class Normal(Distribution):
     """
     
     def __init__(self, mean: float = 0, sd: float = 1):
+        if not np.isfinite(mean):
+            raise ValueError("Normal mean must be finite")
+        if not np.isfinite(sd) or sd <= 0:
+            raise ValueError(
+                "Normal sd must be finite and positive; "
+                "use Fixed(mean) for zero uncertainty"
+            )
         self.mean_val = float(mean)
         self.sd = float(sd)
     
@@ -213,9 +233,25 @@ class LogNormal(Distribution):
     def __init__(self, meanlog: Optional[float] = None, sdlog: Optional[float] = None,
                  mean: Optional[float] = None, sd: Optional[float] = None):
         if meanlog is not None and sdlog is not None:
+            if not np.isfinite(meanlog):
+                raise ValueError("LogNormal meanlog must be finite")
+            if not np.isfinite(sdlog) or sdlog <= 0:
+                raise ValueError(
+                    "LogNormal sdlog must be finite and positive; "
+                    "use Fixed(...) for zero uncertainty"
+                )
             self.meanlog = float(meanlog)
             self.sdlog = float(sdlog)
         elif mean is not None and sd is not None:
+            # The moment match squares the mean, so a non-positive value would
+            # silently produce a distribution centred on its magnitude.
+            if not np.isfinite(mean) or mean <= 0:
+                raise ValueError("LogNormal mean must be finite and positive")
+            if not np.isfinite(sd) or sd <= 0:
+                raise ValueError(
+                    "LogNormal sd must be finite and positive; "
+                    "use Fixed(mean) for zero uncertainty"
+                )
             var = sd ** 2
             self.meanlog = np.log(mean ** 2 / np.sqrt(var + mean ** 2))
             self.sdlog = np.sqrt(np.log(1 + var / mean ** 2))
@@ -246,6 +282,12 @@ class Uniform(Distribution):
     """
     
     def __init__(self, low: float = 0, high: float = 1):
+        if not np.isfinite(low) or not np.isfinite(high):
+            raise ValueError("Uniform bounds must be finite")
+        if low >= high:
+            raise ValueError(
+                f"Uniform low must be less than high, got low={low}, high={high}"
+            )
         self.low = float(low)
         self.high = float(high)
     
@@ -275,6 +317,16 @@ class Triangular(Distribution):
     """
     
     def __init__(self, low: float, mode: float, high: float):
+        if not np.all(np.isfinite([low, mode, high])):
+            raise ValueError("Triangular bounds must be finite")
+        if low >= high:
+            raise ValueError(
+                f"Triangular low must be less than high, got low={low}, high={high}"
+            )
+        if not low <= mode <= high:
+            raise ValueError(
+                f"Triangular mode must lie within [low, high], got mode={mode}"
+            )
         self.low = float(low)
         self.mode = float(mode)
         self.high = float(high)
@@ -307,6 +359,12 @@ class Dirichlet(Distribution):
     
     def __init__(self, alpha):
         self.alpha = np.asarray(alpha, dtype=float)
+        if self.alpha.ndim != 1 or self.alpha.size == 0:
+            raise ValueError(
+                "Dirichlet alpha must be a non-empty one-dimensional array"
+            )
+        if not np.all(np.isfinite(self.alpha)) or np.any(self.alpha <= 0):
+            raise ValueError("Dirichlet alpha entries must be finite and positive")
     
     def sample(self, n: int = 1, rng=None) -> np.ndarray:
         generator = rng if rng is not None else np.random
