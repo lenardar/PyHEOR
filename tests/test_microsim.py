@@ -54,9 +54,9 @@ class TestMicroSimSetters:
         )
 
     def test_unknown_state_key_is_rejected(self, model):
-        with pytest.raises(ValueError, match="unknown keys"):
+        with pytest.raises(ValueError, match="unknown state or strategy"):
             model.set_state_cost("care", {"Typo": 100})
-        with pytest.raises(ValueError, match="unknown keys"):
+        with pytest.raises(ValueError, match="unknown state or strategy"):
             model.set_utility({"Typo": 0.5})
 
     def test_unknown_handler_state_is_rejected(self, model):

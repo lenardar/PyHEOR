@@ -45,7 +45,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from .common import Param as _Param, ParameterisedModel, _CostDef
+from .common import Param as _Param, StateMappingModel, _CostDef
 from ..distributions import sample_distribution
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
@@ -101,7 +101,7 @@ class PatientProfile:
 # Microsimulation Model
 # =============================================================================
 
-class IndividualStateTransitionModel(ParameterisedModel):
+class IndividualStateTransitionModel(StateMappingModel):
     """Individual-level state transition microsimulation model.
 
     Each patient is independently simulated through health states.
@@ -524,72 +524,7 @@ class IndividualStateTransitionModel(ParameterisedModel):
         validate_transition_matrix(P)
         return P
 
-    def _validate_state_mapping(self, values, label: str) -> bool:
-        """Check mapping keys, returning True for a strategy-level mapping.
 
-        An unknown key is an error rather than a silent zero, so a misspelled
-        state cannot quietly drop a cost.
-        """
-        if not isinstance(values, dict) or not values:
-            return False
-
-        keys = list(values)
-        strategy_keys = [k for k in keys if k in self.strategy_names]
-        nested = [k for k in keys if isinstance(values[k], dict)]
-        if strategy_keys and len(strategy_keys) == len(keys) and nested:
-            if len(nested) != len(keys):
-                raise ValueError(
-                    f"{label} mixes strategy-level and state-level entries: "
-                    f"{keys!r}"
-                )
-            for strategy, inner in values.items():
-                unknown = set(inner) - set(self.states)
-                if unknown:
-                    raise ValueError(
-                        f"{label} for strategy {strategy!r} contains unknown "
-                        f"states: {sorted(unknown)!r}"
-                    )
-            return True
-
-        unknown = set(keys) - set(self.states)
-        if unknown:
-            raise ValueError(
-                f"{label} contains unknown keys: {sorted(unknown)!r}. "
-                f"Expected state names {self.states!r} or strategy names "
-                f"{self.strategy_names!r}."
-            )
-        return False
-
-    def _resolve_state_values(self, values, strategy: str, params: dict,
-                              t: int, attrs: dict = None) -> np.ndarray:
-        """Resolve state-level values. Supports (params,t) and (params,t,attrs)."""
-        if callable(values):
-            import inspect
-            sig = inspect.signature(values)
-            n_args = len(sig.parameters)
-            if n_args >= 3 and attrs is not None:
-                values = values(params, t, attrs)
-            else:
-                values = values(params, t)
-
-        result = np.zeros(self.n_states)
-        if not values:
-            return result
-
-        by_strategy = self._validate_state_mapping(values, "state values")
-        if by_strategy:
-            if strategy not in values:
-                return result
-            state_vals = values[strategy]
-            for state_name, val in state_vals.items():
-                idx = self.states.index(state_name)
-                result[idx] = resolve_value(val, params, t)
-        else:
-            for state_name, val in values.items():
-                idx = self.states.index(state_name)
-                result[idx] = resolve_value(val, params, t)
-
-        return result
 
     def _get_state_costs(self, category: str, strategy: str, params: dict,
                          t: int, attrs: dict = None) -> np.ndarray:
@@ -615,16 +550,6 @@ class IndividualStateTransitionModel(ParameterisedModel):
     # Core Simulation Engine
     # =========================================================================
 
-    @staticmethod
-    def _callable_needs_attrs(fn) -> bool:
-        """Whether a user callback accepts the patient-attributes argument."""
-        if not callable(fn):
-            return False
-        import inspect
-        try:
-            return len(inspect.signature(fn).parameters) >= 3
-        except (ValueError, TypeError):
-            return False
 
     def _draw_next_state(self, row: np.ndarray, draws: np.ndarray) -> np.ndarray:
         """Inverse-transform sample destinations from one transition row.

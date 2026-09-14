@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
 from ..distributions import Distribution
-from ..utils import discount_factor
+from ..utils import discount_factor, resolve_value
 
 
 @dataclass
@@ -179,7 +179,111 @@ class ParameterisedModel:
                 setattr(self, name, original)
 
 
-class CohortSweepModel(ParameterisedModel):
+class StateMappingModel(ParameterisedModel):
+    """Resolution of per-state values shared by the state-based engines.
+
+    Costs and utilities may be given as ``{state: value}``, as
+    ``{strategy: {state: value}}``, or as a callable returning either.
+    """
+
+    states: List[str]
+    strategy_names: List[str]
+    n_states: int
+
+    @staticmethod
+    def _callable_needs_attrs(fn) -> bool:
+        """Whether a user callback accepts the patient-attributes argument."""
+        if not callable(fn):
+            return False
+        import inspect
+        try:
+            return len(inspect.signature(fn).parameters) >= 3
+        except (ValueError, TypeError):
+            return False
+
+    def _validate_state_mapping(self, values: Any, label: str) -> None:
+        """Validate state/strategy keys while allowing omitted known states.
+
+        An unknown key is an error rather than a silent zero, so a misspelled
+        state cannot quietly drop a cost.
+        """
+        if not isinstance(values, dict):
+            raise TypeError(
+                f"{label} values must be a mapping or callable, "
+                f"got {type(values).__name__}."
+            )
+        if not values:
+            return
+
+        keys = set(values)
+        state_names = set(self.states)
+        strategy_names = set(self.strategy_names)
+
+        if keys <= strategy_names and all(
+            isinstance(value, dict) for value in values.values()
+        ):
+            for strategy, state_values in values.items():
+                unknown = set(state_values) - state_names
+                if unknown:
+                    raise ValueError(
+                        f"{label} for strategy {strategy!r} contains unknown "
+                        f"states: {sorted(unknown)!r}."
+                    )
+            return
+
+        if keys <= state_names:
+            return
+
+        unknown = keys - state_names - strategy_names
+        if unknown:
+            raise ValueError(
+                f"{label} contains unknown state or strategy names: "
+                f"{sorted(unknown)!r}."
+            )
+        raise ValueError(
+            f"{label} mixes state-level and strategy-level keys; "
+            "use either {state: value} or {strategy: {state: value}}."
+        )
+
+    def _resolve_state_values(self, values: Any, strategy: str,
+                              params: Dict[str, float], t: int,
+                              attrs: Optional[dict] = None):
+        """Resolve per-state values into an array indexed by state."""
+        import numpy as np
+
+        if callable(values):
+            if attrs is not None and self._callable_needs_attrs(values):
+                values = values(params, t, attrs)
+            else:
+                values = values(params, t)
+        self._validate_state_mapping(values, "Resolved state value")
+
+        result = np.zeros(self.n_states)
+        if not values:
+            return result
+
+        by_strategy = set(values) <= set(self.strategy_names) and all(
+            isinstance(value, dict) for value in values.values()
+        )
+        if by_strategy:
+            state_values = values.get(strategy, {})
+        else:
+            state_values = values
+
+        for state_name, value in state_values.items():
+            result[self.states.index(state_name)] = resolve_value(
+                value, params, t
+            )
+
+        if not np.all(np.isfinite(result)):
+            raise ValueError(
+                f"Non-finite state cost or utility for strategy {strategy!r}, "
+                f"interval {t}"
+            )
+        return result
+
+
+class CohortSweepModel(StateMappingModel):
     """One-way sensitivity analysis for engines with ``_simulate_single``."""
 
     def run_owsa(self, params: Optional[List[str]] = None,
