@@ -19,12 +19,13 @@ def sample_distribution(distribution, n: int, rng) -> np.ndarray:
     seed is drawn from the model-local generator and NumPy's caller state is
     restored immediately after sampling.
     """
+    # Only an explicit ``rng`` parameter counts. A ``**kwargs`` catch-all may
+    # silently discard it, which would leave the draw unseeded while skipping
+    # the compatibility path below.
     try:
         parameters = inspect.signature(distribution.sample).parameters.values()
         accepts_rng = any(
-            parameter.name == "rng"
-            or parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters
+            parameter.name == "rng" for parameter in parameters
         )
     except (TypeError, ValueError):
         accepts_rng = False

@@ -16,10 +16,16 @@ from pyheor import (
     MicroSimModel,
     PSMModel,
 )
+from pyheor.distributions import sample_distribution
+from pyheor.distributions import sample_distribution
 from pyheor.survival import Exponential, Weibull
 
 
-# =============================================================================
+class KwargsSwallowingDistribution:
+    """A third-party distribution whose ``sample`` absorbs unknown keywords."""
+
+    def sample(self, n=1, **kwargs):
+        return np.random.norm# =============================================================================
 # Model factories
 # =============================================================================
 
@@ -146,11 +152,6 @@ class TestSeededPsaIsReproducible:
             params_matrix(second.sampled_params),
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="microsim.py:887 samples parameters with param.dist.sample(1), "
-               "bypassing the seeded rng built at microsim.py:874",
-    )
     def test_microsim(self):
         first = run_psa(microsim_model(), seed=7)
         second = run_psa(microsim_model(), seed=7)
@@ -246,6 +247,35 @@ class TestCommonRandomNumbers:
 
 
 # =============================================================================
+# The sampling shim
+# =============================================================================
+
+class KwargsSwallowingDistribution:
+    """A third-party distribution whose sample absorbs unknown keywords."""
+
+    def sample(self, n=1, **kwargs):
+        return np.random.normal(size=n)
+
+
+class TestSampleDistributionShim:
+    """A **kwargs signature must not be mistaken for rng support."""
+
+    def test_draws_are_reproducible(self):
+        distribution = KwargsSwallowingDistribution()
+        first = sample_distribution(distribution, 3, np.random.default_rng(5))
+        second = sample_distribution(distribution, 3, np.random.default_rng(5))
+        np.testing.assert_array_equal(first, second)
+
+    def test_caller_global_state_is_restored(self):
+        np.random.seed(0)
+        before = global_rng_state()
+        sample_distribution(
+            KwargsSwallowingDistribution(), 3, np.random.default_rng(5)
+        )
+        assert_same_global_rng_state(before, global_rng_state())
+
+
+# =============================================================================
 # Seeded runs must not disturb the caller's global RNG
 # =============================================================================
 
@@ -263,30 +293,18 @@ class TestGlobalRngIsNotDisturbed:
         microsim_model().run_base_case(seed=3, verbose=False)
         assert_same_global_rng_state(before, global_rng_state())
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="microsim.py:887 draws from the global numpy RNG",
-    )
     def test_microsim_psa(self):
         np.random.seed(0)
         before = global_rng_state()
         run_psa(microsim_model(), seed=3)
         assert_same_global_rng_state(before, global_rng_state())
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="des.py:1069 calls np.random.seed(seed)",
-    )
     def test_des_run(self):
         np.random.seed(0)
         before = global_rng_state()
         des_model().run(n_patients=20, seed=3, progress=False)
         assert_same_global_rng_state(before, global_rng_state())
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="des.py:1182 calls np.random.seed(seed)",
-    )
     def test_des_psa(self):
         np.random.seed(0)
         before = global_rng_state()
