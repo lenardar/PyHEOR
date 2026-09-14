@@ -3,5 +3,6 @@ __pycache__/
 *.egg-info/
 reproduce/
 docs/model-semantics.md
+docs/fix-plan.md
 .venv/
 .python-version
