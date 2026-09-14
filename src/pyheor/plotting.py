@@ -842,7 +842,7 @@ def plot_owsa_param(
     if title is None:
         title = f'One-Way Sensitivity: {param_label}'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, )
+    _outside_legend(ax)
     
     fig.tight_layout()
     return fig
@@ -937,7 +937,7 @@ def plot_scatter(
     if title is None:
         title = f'Cost-Effectiveness Plane — vs {psa_result.model.strategy_labels[comparator]}'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, loc='upper left', fontsize=10)
+    _outside_legend(ax, fontsize=10)
     
     fig.tight_layout()
     return fig
@@ -1001,7 +1001,7 @@ def plot_ceac(
     if title is None:
         title = 'Cost-Effectiveness Acceptability Curve'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, loc='best', fontsize=11)
+    _outside_legend(ax, fontsize=11)
     
     fig.tight_layout()
     return fig
@@ -1071,7 +1071,7 @@ def plot_convergence(
     if title is None:
         title = f'PSA Convergence (WTP = {currency}{wtp:,.0f}/QALY)'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, )
+    _outside_legend(ax)
     
     fig.tight_layout()
     return fig
@@ -1123,7 +1123,7 @@ def plot_survival_curves(
     ax.set_title(title, fontsize=14, fontweight='bold')
 
     if show_legend:
-        _outside_legend(ax, loc='best', fontsize=9)
+        _outside_legend(ax, fontsize=9)
 
     fig.tight_layout()
     return fig
@@ -1181,7 +1181,7 @@ def plot_state_area(
         title = f'Partitioned Survival — {model.strategy_labels[strategy]}'
     ax.set_title(title, fontsize=14, fontweight='bold')
 
-    _outside_legend(ax, loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=10)
+    _outside_legend(ax, fontsize=10)
 
     fig.tight_layout()
     return fig
@@ -1282,7 +1282,7 @@ def plot_psm_comparison(
         title = f'{endpoint} Survival Comparison'
     ax.set_title(title, fontsize=14, fontweight='bold')
 
-    _outside_legend(ax, loc='best')
+    _outside_legend(ax)
     fig.tight_layout()
     return fig
 
@@ -1393,7 +1393,7 @@ def plot_microsim_survival(
         source = "DES" if type(result).__name__.startswith("DES") else "Microsimulation"
         title = f'{source} — Survival Curves'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, loc='best')
+    _outside_legend(ax)
     fig.tight_layout()
     return fig
 
@@ -1457,7 +1457,7 @@ def plot_microsim_outcomes(
     if title is None:
         title = f'Microsimulation — Distribution of {data_label}'
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, loc='best', fontsize=10)
+    _outside_legend(ax, fontsize=10)
     fig.tight_layout()
     return fig
 
@@ -1558,7 +1558,7 @@ def plot_ce_frontier(cea, figsize=(10, 8), title=None, show_labels=True,
     if title is None:
         title = "Cost-Effectiveness Plane — Efficiency Frontier"
     ax.set_title(title, fontsize=14, fontweight="bold")
-    _outside_legend(ax, loc="best", fontsize=10)
+    _outside_legend(ax, fontsize=10)
     fig.tight_layout()
     return fig
 
@@ -1610,7 +1610,7 @@ def plot_nmb_curve(cea, wtp_range=(0, 150000), n_wtp=301,
     if title is None:
         title = "Net Monetary Benefit by WTP Threshold"
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, loc='best', fontsize=10)
+    _outside_legend(ax, fontsize=10)
     fig.tight_layout()
     return fig
 
@@ -1678,7 +1678,7 @@ def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
     if title is None:
         title = "Cost-Effectiveness Acceptability Frontier (CEAF)"
     ax.set_title(title, fontsize=14, fontweight='bold')
-    _outside_legend(ax, loc='best', fontsize=10)
+    _outside_legend(ax, fontsize=10)
     fig.tight_layout()
     return fig
 
@@ -1732,9 +1732,9 @@ def plot_evpi(cea, wtp_range=(0, 150000), n_wtp=301,
         # Combine legends
         h1, l1 = ax1.get_legend_handles_labels()
         h2, l2 = ax2.get_legend_handles_labels()
-        _outside_legend(ax1, h1 + h2, l1 + l2, loc='best', fontsize=10)
+        _outside_legend(ax1, h1 + h2, l1 + l2, fontsize=10)
     else:
-        _outside_legend(ax1, loc='best', fontsize=10)
+        _outside_legend(ax1, fontsize=10)
 
     if title is None:
         title = "Expected Value of Perfect Information (EVPI)"

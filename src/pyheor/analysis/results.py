@@ -756,7 +756,6 @@ class MicroSimResult(StrategyOutcomeResult):
 
     def summary(self) -> pd.DataFrame:
         """Summary table with mean costs, QALYs, and confidence intervals."""
-        from scipy import stats as sp_stats
         rows = []
         for strategy in self.model.strategy_names:
             r = self.results[strategy]
@@ -764,9 +763,6 @@ class MicroSimResult(StrategyOutcomeResult):
             qalys = r['total_qalys']
             lys = r['total_lys']
             n = len(costs)
-
-            # 95% CI via t-distribution
-            ci_mult = sp_stats.t.ppf(0.975, n - 1)
 
             row = {
                 'Strategy': self.model.strategy_labels[strategy],
