@@ -1098,6 +1098,8 @@ class DiscreteEventSimulationModel(ParameterisedModel):
 
         return DESResult(model=self, results=results, params=params)
 
+    run_base_case = run
+
     def run_psa(
         self,
         n_sim: int = 200,

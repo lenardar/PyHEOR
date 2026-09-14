@@ -86,7 +86,7 @@ def generate_report(
 
     # ── Run analyses ─────────────────────────────────────
     print("[report] Running base case...")
-    base_result = model.run() if is_des else model.run_base_case()
+    base_result = model.run_base_case()
 
     if model.n_strategies < 2:
         raise ValueError(

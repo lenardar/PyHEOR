@@ -77,6 +77,12 @@ class TestDESConstruction:
         with pytest.raises(KeyError, match='missing_cost'):
             model.run(n_patients=1, progress=False)
 
+    def test_run_base_case_is_an_alias_for_run(self):
+        model = DESModel(states=['Alive', 'Dead'], strategies=['S1'], time_horizon=5)
+        model.set_event('S1', 'Alive', 'Dead', Exponential(rate=0.1))
+        result = model.run_base_case(n_patients=3, seed=1, progress=False)
+        assert result.results['S1']['total_qalys'].shape == (3,)
+
     def test_n_patients_and_n_sim_accept_numpy_integers(self):
         model = DESModel(states=['Alive', 'Dead'], strategies=['S1'], time_horizon=1)
         model.set_event('S1', 'Alive', 'Dead', Exponential(rate=0.1))
