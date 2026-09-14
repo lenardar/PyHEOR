@@ -9,9 +9,13 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def seed_rng():
-    """Seed numpy RNG before every test for reproducibility."""
+    """Seed the global numpy RNG.
+
+    Not autouse: seeding before every test would hide run methods that leak
+    into the global RNG instead of honouring their own ``seed`` argument.
+    """
     np.random.seed(42)
 
 
