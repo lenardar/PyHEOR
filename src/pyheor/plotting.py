@@ -939,18 +939,20 @@ def plot_scatter(
 
 @_with_plot_style
 def plot_ceac(
-    psa_result, comparator=None,
+    psa_result,
     wtp_range: tuple = (0, 100000), n_wtp: int = 200,
     figsize: tuple = (10, 6), title: Optional[str] = None, currency: str = "$",
 ):
     """Plot cost-effectiveness acceptability curve (CEAC).
-    
+
+    The curve reports each strategy's probability of having the highest net
+    monetary benefit, so it is defined across all strategies at once and
+    takes no comparator.
+
     Parameters
     ----------
     psa_result : PSAResult
         PSA result object.
-    comparator : str, optional
-        Comparator strategy.
     wtp_range : tuple
         (min, max) WTP range.
     n_wtp : int
@@ -961,7 +963,7 @@ def plot_ceac(
         Custom title.
     """
     
-    ceac = psa_result.ceac_data(comparator=comparator, wtp_range=wtp_range, n_wtp=n_wtp)
+    ceac = psa_result.ceac_data(wtp_range=wtp_range, n_wtp=n_wtp)
     
     fig, ax = plt.subplots(figsize=figsize)
     

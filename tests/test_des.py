@@ -241,7 +241,7 @@ class TestDESResults:
     )
     def test_icer_classifies_incremental_quadrant(self, cost, qaly, expected):
         row = self._result(cost, qaly).icer().iloc[0]
-        assert row["ICER"] == expected
+        assert row["ICER Classification"] == expected
         assert row["ICER Classification"] == expected
 
     def test_psa_icer_classifies_incremental_quadrant(self):

@@ -568,5 +568,5 @@ class TestGoldenCalculations:
         }, method="starting")
 
         row = model.run_base_case().icer().iloc[0]
-        assert row["ICER"] == "Dominated"
-        assert np.isnan(row["ICER ($/QALY)"])
+        assert row["ICER Classification"] == "Dominated"
+        assert np.isnan(row["ICER"])

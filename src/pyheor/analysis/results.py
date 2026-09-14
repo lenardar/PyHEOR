@@ -33,7 +33,86 @@ def classify_incremental(
     return value, f"{value:,.0f} (less effective, less costly)"
 
 
-class BaseResult:
+class StrategyOutcomeResult:
+    """Shared incremental analysis for deterministic result objects.
+
+    Subclasses provide per-strategy totals through :meth:`_totals` and name
+    the columns their tables use, so ICER and NMB are derived in one place
+    for every engine.
+    """
+
+    #: Column labels for the effect and cost totals reported by ``nmb``.
+    _EFFECT_LABEL = "QALYs"
+    _COST_LABEL = "Total Cost"
+
+    def _totals(self, strategy: str):
+        """Return ``(cost, qalys, lys)`` for one strategy."""
+        raise NotImplementedError
+
+    def _resolve_comparator(self, comparator: Optional[str]) -> str:
+        if comparator is None:
+            return self.model.strategy_names[0]
+        if comparator not in self.model.strategy_names:
+            raise ValueError(
+                f"Unknown comparator {comparator!r}; available strategies "
+                f"are {self.model.strategy_names!r}"
+            )
+        return comparator
+
+    def icer(self, comparator: Optional[str] = None) -> pd.DataFrame:
+        """Pairwise ICERs against a comparator, classified before dividing.
+
+        ``ICER`` is numeric and is NaN whenever the quadrant admits no ratio;
+        ``ICER Classification`` always carries the readable verdict.
+        """
+        comparator = self._resolve_comparator(comparator)
+        base_cost, base_qaly, base_ly = self._totals(comparator)
+
+        rows = []
+        for strategy in self.model.strategy_names:
+            if strategy == comparator:
+                continue
+            cost, qaly, ly = self._totals(strategy)
+            inc_cost = cost - base_cost
+            inc_qaly = qaly - base_qaly
+            value, classification = classify_incremental(inc_cost, inc_qaly)
+            rows.append({
+                'Strategy': self.model.strategy_labels[strategy],
+                'vs': self.model.strategy_labels[comparator],
+                'Incremental Cost': inc_cost,
+                'Incremental QALYs': inc_qaly,
+                'Incremental LYs': ly - base_ly,
+                'ICER': value,
+                'ICER Classification': classification,
+            })
+
+        return pd.DataFrame(rows)
+
+    def nmb(self, wtp: float = 50000,
+            comparator: Optional[str] = None) -> pd.DataFrame:
+        """Net monetary benefit at a willingness-to-pay threshold."""
+        comparator = self._resolve_comparator(comparator)
+        base_cost, base_qaly, _ = self._totals(comparator)
+
+        rows = []
+        for strategy in self.model.strategy_names:
+            cost, qaly, _ = self._totals(strategy)
+            incremental = (
+                0.0 if strategy == comparator
+                else (qaly - base_qaly) * wtp - (cost - base_cost)
+            )
+            rows.append({
+                'Strategy': self.model.strategy_labels[strategy],
+                self._EFFECT_LABEL: qaly,
+                self._COST_LABEL: cost,
+                'NMB': qaly * wtp - cost,
+                'Incremental NMB': incremental,
+            })
+
+        return pd.DataFrame(rows)
+
+
+class BaseResult(StrategyOutcomeResult):
     """Results from a deterministic base case analysis.
     
     Attributes
@@ -76,97 +155,12 @@ class BaseResult:
         
         return pd.DataFrame(rows)
     
-    def icer(self, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute incremental cost-effectiveness ratio (ICER).
-        
-        Parameters
-        ----------
-        comparator : str, optional
-            Comparator strategy (default: first strategy).
-        
-        Returns
-        -------
-        pd.DataFrame
-            ICER table with incremental costs, QALYs, and ICER.
-        """
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-        
-        comp = self.results[comparator]
-        comp_cost = sum(comp['total_costs'].values())
-        comp_qaly = comp['total_qalys']
-        comp_ly = comp['total_lys']
-        
-        rows = []
-        for strategy in self.model.strategy_names:
-            if strategy == comparator:
-                continue
-            r = self.results[strategy]
-            total_cost = sum(r['total_costs'].values())
-            inc_cost = total_cost - comp_cost
-            inc_qaly = r['total_qalys'] - comp_qaly
-            inc_ly = r['total_lys'] - comp_ly
-            
-            icer_val, icer_str = classify_incremental(inc_cost, inc_qaly)
-            
-            rows.append({
-                'Strategy': self.model.strategy_labels[strategy],
-                'vs': self.model.strategy_labels[comparator],
-                'Incremental Cost': inc_cost,
-                'Incremental QALYs': inc_qaly,
-                'Incremental LYs': inc_ly,
-                'ICER ($/QALY)': icer_val,
-                'ICER': icer_str,
-            })
-        
-        return pd.DataFrame(rows)
-    
-    def nmb(self, wtp: float = 50000, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute net monetary benefit (NMB).
-        
-        Parameters
-        ----------
-        wtp : float
-            Willingness-to-pay per QALY.
-        comparator : str, optional
-            Comparator strategy.
-        
-        Returns
-        -------
-        pd.DataFrame
-            NMB table.
-        """
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-        
-        comp = self.results[comparator]
-        comp_cost = sum(comp['total_costs'].values())
-        comp_qaly = comp['total_qalys']
-        
-        rows = []
-        for strategy in self.model.strategy_names:
-            r = self.results[strategy]
-            total_cost = sum(r['total_costs'].values())
-            nmb_val = r['total_qalys'] * wtp - total_cost
-            
-            row = {
-                'Strategy': self.model.strategy_labels[strategy],
-                'QALYs': r['total_qalys'],
-                'Total Cost': total_cost,
-                'NMB': nmb_val,
-            }
-            
-            if strategy != comparator:
-                inc_qaly = r['total_qalys'] - comp_qaly
-                inc_cost = total_cost - comp_cost
-                row['Incremental NMB'] = inc_qaly * wtp - inc_cost
-            else:
-                row['Incremental NMB'] = 0.0
-            
-            rows.append(row)
-        
-        return pd.DataFrame(rows)
-    
+    def _totals(self, strategy: str):
+        r = self.results[strategy]
+        return (
+            sum(r['total_costs'].values()), r['total_qalys'], r['total_lys']
+        )
+
     @property
     def markov_trace(self) -> pd.DataFrame:
         """Get Markov trace (state occupancy over time) as DataFrame."""
@@ -389,14 +383,9 @@ class PSAResult:
         self._ce_table = pd.DataFrame(rows)
         return self._ce_table
     
-    def summary(self, comparator: Optional[str] = None) -> pd.DataFrame:
+    def summary(self) -> pd.DataFrame:
         """Summarize PSA results with mean, SD, and credible intervals.
-        
-        Parameters
-        ----------
-        comparator : str, optional
-            Comparator strategy for incremental analysis.
-        
+
         Returns
         -------
         pd.DataFrame
@@ -470,15 +459,12 @@ class PSAResult:
         
         return pd.DataFrame(rows)
     
-    def ceac_data(self, comparator: Optional[str] = None,
-                  wtp_range: tuple = (0, 100000),
+    def ceac_data(self, wtp_range: tuple = (0, 100000),
                   n_wtp: int = 200) -> pd.DataFrame:
         """Compute CEAC (cost-effectiveness acceptability curve) data.
         
         Parameters
         ----------
-        comparator : str, optional
-            Comparator strategy.
         wtp_range : tuple
             (min, max) WTP values.
         n_wtp : int
@@ -489,9 +475,6 @@ class PSAResult:
         pd.DataFrame
             DataFrame with WTP values and probability cost-effective per strategy.
         """
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-        
         wtp_values = np.linspace(wtp_range[0], wtp_range[1], n_wtp)
         ce = self.ce_table
         
@@ -527,10 +510,10 @@ class PSAResult:
     
     # --- Plotting Shortcuts ---
     
-    def plot_ceac(self, comparator=None, wtp_range=(0, 100000), **kwargs):
+    def plot_ceac(self, wtp_range=(0, 100000), **kwargs):
         """Plot cost-effectiveness acceptability curve."""
         from ..plotting import plot_ceac
-        return plot_ceac(self, comparator=comparator, wtp_range=wtp_range, **kwargs)
+        return plot_ceac(self, wtp_range=wtp_range, **kwargs)
     
     def plot_scatter(self, comparator=None, wtp=None, **kwargs):
         """Plot CE scatter (incremental cost-effectiveness plane)."""
@@ -547,7 +530,7 @@ class PSAResult:
 # PSM Base Case Result
 # =============================================================================
 
-class PSMBaseResult:
+class PSMBaseResult(StrategyOutcomeResult):
     """Results from a PSM deterministic base case analysis.
 
     Extends BaseResult with PSM-specific features:
@@ -588,68 +571,11 @@ class PSMBaseResult:
             rows.append(row)
         return pd.DataFrame(rows)
 
-    def icer(self, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute ICER."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
-        comp = self.results[comparator]
-        comp_cost = sum(comp['total_costs'].values())
-        comp_qaly = comp['total_qalys']
-        comp_ly = comp['total_lys']
-
-        rows = []
-        for strategy in self.model.strategy_names:
-            if strategy == comparator:
-                continue
-            r = self.results[strategy]
-            total_cost = sum(r['total_costs'].values())
-            inc_cost = total_cost - comp_cost
-            inc_qaly = r['total_qalys'] - comp_qaly
-            inc_ly = r['total_lys'] - comp_ly
-
-            icer_val, icer_str = classify_incremental(inc_cost, inc_qaly)
-
-            rows.append({
-                'Strategy': self.model.strategy_labels[strategy],
-                'vs': self.model.strategy_labels[comparator],
-                'Incremental Cost': inc_cost,
-                'Incremental QALYs': inc_qaly,
-                'Incremental LYs': inc_ly,
-                'ICER ($/QALY)': icer_val,
-                'ICER': icer_str,
-            })
-        return pd.DataFrame(rows)
-
-    def nmb(self, wtp: float = 50000, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute net monetary benefit."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
-        comp = self.results[comparator]
-        comp_cost = sum(comp['total_costs'].values())
-        comp_qaly = comp['total_qalys']
-
-        rows = []
-        for strategy in self.model.strategy_names:
-            r = self.results[strategy]
-            total_cost = sum(r['total_costs'].values())
-            nmb_val = r['total_qalys'] * wtp - total_cost
-
-            row = {
-                'Strategy': self.model.strategy_labels[strategy],
-                'QALYs': r['total_qalys'],
-                'Total Cost': total_cost,
-                'NMB': nmb_val,
-            }
-            if strategy != comparator:
-                inc_qaly = r['total_qalys'] - comp_qaly
-                inc_cost = total_cost - comp_cost
-                row['Incremental NMB'] = inc_qaly * wtp - inc_cost
-            else:
-                row['Incremental NMB'] = 0.0
-            rows.append(row)
-        return pd.DataFrame(rows)
+    def _totals(self, strategy: str):
+        r = self.results[strategy]
+        return (
+            sum(r['total_costs'].values()), r['total_qalys'], r['total_lys']
+        )
 
     @property
     def state_trace(self) -> pd.DataFrame:
@@ -707,7 +633,7 @@ class PSMBaseResult:
 # Microsimulation Results
 # =============================================================================
 
-class MicroSimResult:
+class MicroSimResult(StrategyOutcomeResult):
     """Results from a microsimulation base case analysis.
 
     Stores per-patient outcomes and provides summary statistics,
@@ -722,6 +648,9 @@ class MicroSimResult:
     params : dict
         Parameter values used.
     """
+
+    _EFFECT_LABEL = "Mean QALYs"
+    _COST_LABEL = "Mean Cost"
 
     def __init__(self, model, results: dict, params: dict):
         self.model = model
@@ -759,63 +688,9 @@ class MicroSimResult:
 
         return pd.DataFrame(rows)
 
-    def icer(self, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute ICER from mean patient-level outcomes."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
-        comp = self.results[comparator]
-        comp_cost = comp['mean_cost']
-        comp_qaly = comp['mean_qalys']
-        comp_ly = comp['mean_lys']
-
-        rows = []
-        for strategy in self.model.strategy_names:
-            if strategy == comparator:
-                continue
-            r = self.results[strategy]
-            inc_cost = r['mean_cost'] - comp_cost
-            inc_qaly = r['mean_qalys'] - comp_qaly
-            inc_ly = r['mean_lys'] - comp_ly
-
-            icer_val, icer_str = classify_incremental(inc_cost, inc_qaly)
-
-            rows.append({
-                'Strategy': self.model.strategy_labels[strategy],
-                'vs': self.model.strategy_labels[comparator],
-                'Incremental Cost': inc_cost,
-                'Incremental QALYs': inc_qaly,
-                'Incremental LYs': inc_ly,
-                'ICER ($/QALY)': icer_val,
-                'ICER': icer_str,
-            })
-
-        return pd.DataFrame(rows)
-
-    def nmb(self, wtp: float = 50000, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute net monetary benefit."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
-        comp = self.results[comparator]
-        rows = []
-        for strategy in self.model.strategy_names:
-            r = self.results[strategy]
-            nmb_val = r['mean_qalys'] * wtp - r['mean_cost']
-            row = {
-                'Strategy': self.model.strategy_labels[strategy],
-                'Mean QALYs': r['mean_qalys'],
-                'Mean Cost': r['mean_cost'],
-                'NMB': nmb_val,
-            }
-            if strategy != comparator:
-                inc_q = r['mean_qalys'] - comp['mean_qalys']
-                inc_c = r['mean_cost'] - comp['mean_cost']
-                row['INMB'] = inc_q * wtp - inc_c
-            else:
-                row['INMB'] = 0.0
-            rows.append(row)
-        return pd.DataFrame(rows)
+    def _totals(self, strategy: str):
+        r = self.results[strategy]
+        return r['mean_cost'], r['mean_qalys'], r['mean_lys']
 
     @property
     def patient_outcomes(self) -> pd.DataFrame:
@@ -933,7 +808,7 @@ class MicroSimPSAResult:
         self._ce_table = pd.DataFrame(rows)
         return self._ce_table
 
-    def summary(self, comparator: Optional[str] = None) -> pd.DataFrame:
+    def summary(self) -> pd.DataFrame:
         """Summary statistics across PSA iterations."""
         ce = self.ce_table
         rows = []
@@ -987,13 +862,9 @@ class MicroSimPSAResult:
             })
         return pd.DataFrame(rows)
 
-    def ceac_data(self, comparator: Optional[str] = None,
-                  wtp_range: tuple = (0, 100000),
+    def ceac_data(self, wtp_range: tuple = (0, 100000),
                   n_wtp: int = 200) -> pd.DataFrame:
         """Compute CEAC data."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
         wtp_values = np.linspace(wtp_range[0], wtp_range[1], n_wtp)
         ce = self.ce_table
         strategies = self.model.strategy_names
@@ -1022,10 +893,10 @@ class MicroSimPSAResult:
 
     # --- Plotting Shortcuts ---
 
-    def plot_ceac(self, comparator=None, wtp_range=(0, 100000), **kwargs):
+    def plot_ceac(self, wtp_range=(0, 100000), **kwargs):
         """Plot CEAC."""
         from ..plotting import plot_ceac
-        return plot_ceac(self, comparator=comparator, wtp_range=wtp_range, **kwargs)
+        return plot_ceac(self, wtp_range=wtp_range, **kwargs)
 
     def plot_scatter(self, comparator=None, wtp=None, **kwargs):
         """Plot CE scatter."""
@@ -1037,7 +908,7 @@ class MicroSimPSAResult:
 # DES Results
 # =============================================================================
 
-class DESResult:
+class DESResult(StrategyOutcomeResult):
     """Results from a DES base case analysis.
 
     Stores per-patient outcomes and provides summary statistics,
@@ -1052,6 +923,9 @@ class DESResult:
     params : dict
         Parameter values used.
     """
+
+    _EFFECT_LABEL = "Mean QALYs"
+    _COST_LABEL = "Mean Cost"
 
     def __init__(self, model, results: dict, params: dict):
         self.model = model
@@ -1086,66 +960,9 @@ class DESResult:
 
         return pd.DataFrame(rows)
 
-    def icer(self, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute ICER from mean patient-level outcomes."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
-        comp = self.results[comparator]
-        comp_cost = comp['mean_cost']
-        comp_qaly = comp['mean_qalys']
-        comp_ly = comp['mean_lys']
-
-        rows = []
-        for strategy in self.model.strategy_names:
-            if strategy == comparator:
-                continue
-            r = self.results[strategy]
-            inc_cost = r['mean_cost'] - comp_cost
-            inc_qaly = r['mean_qalys'] - comp_qaly
-            inc_ly = r['mean_lys'] - comp_ly
-
-            icer_val, classification = classify_incremental(inc_cost, inc_qaly)
-
-            rows.append({
-                'Strategy': self.model.strategy_labels[strategy],
-                'vs': self.model.strategy_labels[comparator],
-                'Incremental Cost': inc_cost,
-                'Incremental QALYs': inc_qaly,
-                'Incremental LYs': inc_ly,
-                'ICER ($/QALY)': icer_val,
-                # Keep the historical string column while exposing an
-                # explicit classification for consistent downstream use.
-                'ICER': classification,
-                'ICER Classification': classification,
-            })
-
-        return pd.DataFrame(rows)
-
-    def nmb(self, wtp: float = 50000, comparator: Optional[str] = None) -> pd.DataFrame:
-        """Compute net monetary benefit."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
-        comp = self.results[comparator]
-        rows = []
-        for strategy in self.model.strategy_names:
-            r = self.results[strategy]
-            nmb_val = r['mean_qalys'] * wtp - r['mean_cost']
-            row = {
-                'Strategy': self.model.strategy_labels[strategy],
-                'Mean QALYs': r['mean_qalys'],
-                'Mean Cost': r['mean_cost'],
-                'NMB': nmb_val,
-            }
-            if strategy != comparator:
-                inc_q = r['mean_qalys'] - comp['mean_qalys']
-                inc_c = r['mean_cost'] - comp['mean_cost']
-                row['INMB'] = inc_q * wtp - inc_c
-            else:
-                row['INMB'] = 0.0
-            rows.append(row)
-        return pd.DataFrame(rows)
+    def _totals(self, strategy: str):
+        r = self.results[strategy]
+        return r['mean_cost'], r['mean_qalys'], r['mean_lys']
 
     @property
     def patient_outcomes(self) -> pd.DataFrame:
@@ -1330,7 +1147,7 @@ class DESPSAResult:
         self._ce_table = pd.DataFrame(rows)
         return self._ce_table
 
-    def summary(self, comparator: Optional[str] = None) -> pd.DataFrame:
+    def summary(self) -> pd.DataFrame:
         """Summary statistics across PSA iterations."""
         ce = self.ce_table
         rows = []
@@ -1384,13 +1201,9 @@ class DESPSAResult:
             })
         return pd.DataFrame(rows)
 
-    def ceac_data(self, comparator: Optional[str] = None,
-                  wtp_range: tuple = (0, 100000),
+    def ceac_data(self, wtp_range: tuple = (0, 100000),
                   n_wtp: int = 200) -> pd.DataFrame:
         """Compute CEAC data."""
-        if comparator is None:
-            comparator = self.model.strategy_names[0]
-
         wtp_values = np.linspace(wtp_range[0], wtp_range[1], n_wtp)
         ce = self.ce_table
         strategies = self.model.strategy_names
@@ -1419,10 +1232,10 @@ class DESPSAResult:
 
     # --- Plotting Shortcuts ---
 
-    def plot_ceac(self, comparator=None, wtp_range=(0, 100000), **kwargs):
+    def plot_ceac(self, wtp_range=(0, 100000), **kwargs):
         """Plot CEAC."""
         from ..plotting import plot_ceac
-        return plot_ceac(self, comparator=comparator, wtp_range=wtp_range, **kwargs)
+        return plot_ceac(self, wtp_range=wtp_range, **kwargs)
 
     def plot_scatter(self, comparator=None, wtp=None, **kwargs):
         """Plot CE scatter."""

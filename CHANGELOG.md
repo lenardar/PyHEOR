@@ -37,6 +37,27 @@ exactly.
   footing as the life-year accrual; the patient outcome column is now
   `Years Alive`.
 
+### Result table consistency
+
+- `icer()` returns the same columns for every engine. `ICER` is numeric and is
+  NaN whenever the quadrant admits no ratio; `ICER Classification` carries the
+  readable verdict. Previously `ICER` held a formatted string on base-case
+  results but a float on PSA results, and only some classes offered the
+  classification column.
+- `nmb()` reports `Incremental NMB` everywhere; MicroSim and DES called it
+  `INMB`. The absolute columns stay engine-specific (`QALYs`/`Total Cost` for
+  cohort models, `Mean QALYs`/`Mean Cost` for individual-level ones) because
+  the distinction is meaningful.
+- An unknown `comparator` raises instead of failing with a `KeyError` deeper
+  in the call.
+- `summary()`, `ceac_data()` and `plot_ceac()` on the PSA result classes no
+  longer accept a `comparator`. It was parsed and discarded: a CEAC reports
+  each strategy's probability of having the highest net benefit, so it is
+  defined across all strategies at once.
+- The four base-case result classes share one implementation of `icer()` and
+  `nmb()` instead of four near-identical copies, which is what allowed the
+  MicroSim variants to drift in the first place.
+
 ### Incremental analysis
 
 - MicroSim base-case and PSA ICERs classify the incremental quadrant before

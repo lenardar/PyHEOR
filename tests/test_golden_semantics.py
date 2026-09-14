@@ -298,10 +298,7 @@ class TestDiscountingConventions:
 # =============================================================================
 
 def dominance_label(frame):
-    row = frame.iloc[0]
-    if "ICER Classification" in frame.columns:
-        return row["ICER Classification"]
-    return row["ICER"]
+    return frame.iloc[0]["ICER Classification"]
 
 
 class TestCostlierAndLessEffectiveIsDominated:
