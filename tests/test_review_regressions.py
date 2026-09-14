@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 from openpyxl import load_workbook
-from pyheor import MarkovModel, PSMModel, Exponential, Beta, Gamma, export_excel_model
+from pyheor import (
+    MarkovModel, MicroSimModel, PSMModel, Exponential, Beta, Gamma,
+    export_excel_model,
+)
 
 
 def make_model(kind):
@@ -71,3 +74,20 @@ def test_dominated_classification_agrees_across_analyses():
     for case in ['Low', 'High', 'Base']:
         assert np.isnan(owsa[f'ICER ({case})'])
         assert owsa[f'ICER Classification ({case})'] == 'Dominated'
+
+
+def test_dominated_classification_agrees_across_microsim_analyses():
+    model = MicroSimModel(
+        states=['Alive', 'Dead'], strategies=['SOC', 'Bad'],
+        n_cycles=1, n_patients=20,
+    )
+    model.set_transitions('SOC', [[1, 0], [0, 1]])
+    model.set_transitions('Bad', [[0, 1], [0, 1]])
+    model.add_param('cost', 100, low=80, high=120)
+    model.set_state_cost('init', {'Bad': {'Alive': 'cost'}}, method='starting')
+    base = model.run_base_case(seed=1, verbose=False).icer().iloc[0]
+    assert base['ICER'] == 'Dominated'
+    assert np.isnan(base['ICER ($/QALY)'])
+    psa = model.run_psa(n_outer=2, seed=1, verbose=False).icer().iloc[0]
+    assert np.isnan(psa['ICER'])
+    assert psa['ICER Classification'] == 'Dominated'

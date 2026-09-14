@@ -349,11 +349,6 @@ class TestCostlierAndLessEffectiveIsDominated:
         result = model.run(n_patients=1, seed=1, progress=False)
         assert dominance_label(result.icer()) == "Dominated"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="results.py:779-787 divides instead of classifying the quadrant, "
-               "reporting a negative ICER for a dominated strategy",
-    )
     def test_microsim(self):
         model = MicroSimModel(
             states=["Alive", "Dead"], strategies=["SOC", "TRT"],

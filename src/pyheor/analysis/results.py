@@ -778,15 +778,7 @@ class MicroSimResult:
             inc_qaly = r['mean_qalys'] - comp_qaly
             inc_ly = r['mean_lys'] - comp_ly
 
-            if abs(inc_qaly) < 1e-10:
-                icer_val = float('inf') if inc_cost > 0 else float('-inf')
-                icer_str = "Dominated" if inc_cost > 0 else "Dominant"
-            elif inc_cost < 0 and inc_qaly > 0:
-                icer_val = inc_cost / inc_qaly
-                icer_str = "Dominant"
-            else:
-                icer_val = inc_cost / inc_qaly
-                icer_str = f"{icer_val:,.0f}"
+            icer_val, icer_str = classify_incremental(inc_cost, inc_qaly)
 
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -979,7 +971,7 @@ class MicroSimPSAResult:
 
             mean_ic = inc_cost.mean()
             mean_iq = inc_qaly.mean()
-            icer_val = mean_ic / mean_iq if abs(mean_iq) > 1e-10 else float('inf')
+            icer_val, classification = classify_incremental(mean_ic, mean_iq)
 
             rows.append({
                 'Strategy': self.model.strategy_labels[strategy],
@@ -991,6 +983,7 @@ class MicroSimPSAResult:
                 'Inc. QALYs (2.5%)': np.percentile(inc_qaly, 2.5),
                 'Inc. QALYs (97.5%)': np.percentile(inc_qaly, 97.5),
                 'ICER': icer_val,
+                'ICER Classification': classification,
             })
         return pd.DataFrame(rows)
 
