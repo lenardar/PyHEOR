@@ -5,13 +5,24 @@ Generates a self-contained analysis report with parameter tables,
 base case results, OWSA tornado diagrams, and PSA summary.
 """
 
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend for file saving
 import matplotlib.pyplot as plt
+
+
+@contextmanager
+def _file_rendering_backend():
+    """Render figures to file without retargeting the caller's plots."""
+    previous = matplotlib.get_backend()
+    matplotlib.use("Agg")
+    try:
+        yield
+    finally:
+        matplotlib.use(previous)
 
 
 def generate_report(
@@ -98,14 +109,16 @@ def generate_report(
     sections.append(_build_base_case(base_result))
 
     if owsa_result is not None:
-        sections.append(
-            _build_owsa(owsa_result, img_dir, rel_img, max_params, dpi)
-        )
+        with _file_rendering_backend():
+            sections.append(
+                _build_owsa(owsa_result, img_dir, rel_img, max_params, dpi)
+            )
 
     if psa_result is not None:
-        sections.append(
-            _build_psa(psa_result, img_dir, rel_img, wtp, dpi)
-        )
+        with _file_rendering_backend():
+            sections.append(
+                _build_psa(psa_result, img_dir, rel_img, wtp, dpi)
+            )
 
     # ── Write ───────────────────────────────────────────────────────
     report = "\n".join(sections)

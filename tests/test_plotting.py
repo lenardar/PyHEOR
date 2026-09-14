@@ -25,9 +25,14 @@ class DenseOWSA:
         ])
 
 
+def style_snapshot():
+    """rcParams without ``backend``, which matplotlib resolves on first draw."""
+    return {key: value for key, value in plt.rcParams.items() if key != 'backend'}
+
+
 @pytest.mark.parametrize('show_values', [False, True])
 def test_dense_tornado_labels_do_not_overlap(show_values):
-    before = plt.rcParams.copy()
+    before = style_snapshot()
     fig = plot_tornado(DenseOWSA(), max_params=20, show_values=show_values)
     try:
         fig.canvas.draw()
@@ -39,7 +44,7 @@ def test_dense_tornado_labels_do_not_overlap(show_values):
             assert box.x0 >= 0
             assert box.y0 >= 0
         assert len(fig.axes[0].patches) == 20
-        assert dict(plt.rcParams) == dict(before)
+        assert style_snapshot() == before
     finally:
         plt.close(fig)
 
