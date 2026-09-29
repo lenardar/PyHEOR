@@ -49,7 +49,7 @@ model = ph.MarkovModel(
         "Combo": "Combination (ZDV+LAM)",
     },
     n_cycles=20,
-    cycle_length=1.0,  # 1 year per cycle
+    cycle_length="1 year",  # 1 year per cycle
     dr_cost=0.06,  # 6% for costs
     dr_qaly=0.0,   # 0% for QALYs
     half_cycle_correction=False,  # 与原始文献保持一致（使用周期初状态占比）

@@ -18,6 +18,7 @@ from .common import Param as _Param, CohortSweepModel, _CostDef
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
     normalize_hcc, interval_occupancy, validate_transition_matrix,
+    Cycle, resolve_cycle,
 )
 
 
@@ -43,8 +44,14 @@ class CohortStateTransitionModel(CohortSweepModel):
     n_cycles : int
         Number of model intervals to simulate. The state trace contains
         ``n_cycles + 1`` observation points, including time zero.
-    cycle_length : float
-        Length of each cycle in years (default: 1.0).
+    cycle_length : float, str or Cycle
+        Length of one cycle. Give it explicitly with its unit, for example
+        ``"1 month"``, ``ph.Cycle(4, "weeks")`` or ``cycle_length=1,
+        time_unit="month"``. A bare number is read in ``time_unit``, or in
+        years when ``time_unit`` is omitted. Omitting ``cycle_length``
+        assumes one year and raises a ``FutureWarning``. Discount rates are
+        annual and are converted internally, and state costs and utilities
+        are rates per year regardless of the cycle unit.
     dr_cost : float or Param
         Annual discount rate for costs. Default: 0 (no discounting).
         Pass a ``Param`` object to enable sensitivity analysis on this rate.
@@ -67,6 +74,9 @@ class CohortStateTransitionModel(CohortSweepModel):
     discount_convention : str
         ``"discrete"`` uses ``(1 + rate) ** -time``; ``"continuous"`` uses
         ``exp(-rate * time)``. Default: ``"discrete"``.
+    time_unit : str, optional
+        Unit of a numeric ``cycle_length``: ``"day"``, ``"week"``,
+        ``"month"`` or ``"year"``.
     
     Examples
     --------
@@ -85,13 +95,14 @@ class CohortStateTransitionModel(CohortSweepModel):
         states: List[str],
         strategies: Union[List[str], Dict[str, str]],
         n_cycles: int,
-        cycle_length: float = 1.0,
+        cycle_length: Union[float, str, Cycle, None] = None,
         dr_cost: Union[float, "_Param"] = 0.0,
         dr_qaly: Union[float, "_Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
         initial_state: Union[str, int] = 0,
         state_type: Optional[Dict[str, str]] = None,
         discount_convention: str = "discrete",
+        time_unit: Optional[str] = None,
     ):
         # States
         self.states = list(states)
@@ -121,17 +132,16 @@ class CohortStateTransitionModel(CohortSweepModel):
             raise TypeError(f"n_cycles must be an integer, got {type(n_cycles).__name__}")
         if n_cycles <= 0:
             raise ValueError(f"n_cycles must be positive, got {n_cycles!r}")
-        if not np.isfinite(cycle_length) or cycle_length <= 0:
-            raise ValueError(
-                f"cycle_length must be a positive finite number, got {cycle_length!r}"
-            )
+        cycle = resolve_cycle(cycle_length, time_unit)
         if discount_convention not in {"discrete", "continuous"}:
             raise ValueError(
                 f"Unknown discount_convention {discount_convention!r}; "
                 "expected 'discrete' or 'continuous'."
             )
         self.n_cycles = int(n_cycles)
-        self.cycle_length = float(cycle_length)
+        self.cycle = cycle
+        self.time_unit = cycle.unit
+        self.cycle_length = cycle.years
         self.discount_convention = discount_convention
         self._hcc_method = normalize_hcc(half_cycle_correction)
 
@@ -996,7 +1006,7 @@ class CohortStateTransitionModel(CohortSweepModel):
             f"CohortStateTransitionModel",
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
-            f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
+            f"  Cycles: {self.n_cycles} × {self.cycle}",
             f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
             f"  Discount convention: {self.discount_convention}",
             f"  Half-cycle correction: {self._hcc_method or 'None'}",

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Explicit cycle length and time unit
+
+The Markov, PSM and MicroSim engines silently assumed one-year cycles when
+`cycle_length` was left out. A monthly model that forgot the argument was
+discounted as if each cycle were a year, and its per-year costs were counted
+once per cycle, with no error to show for it.
+
+- `cycle_length` now accepts `"1 month"`, `"4 weeks"`, a `ph.Cycle`, or a
+  number combined with the new `time_unit` argument (`"day"`, `"week"`,
+  `"month"` or `"year"`). A bare number still means years, so existing
+  explicit calls behave as before.
+- Omitting `cycle_length` still assumes one year but raises a
+  `FutureWarning`; the default will be removed in a future release.
+- `model.cycle` and `model.time_unit` keep the specification you gave.
+  `model.cycle_length` is unchanged and remains the length in years that
+  discounting and per-year rewards use. Days and weeks are converted with a
+  365.25-day year and a month is one twelfth of a year.
+- `info()` reports the cycle in its own unit, for example `120 × 1 month`.
+- State costs and utilities remain rates per year whatever the cycle unit.
+  This is now stated in the docstrings and README.
+
 ### MicroSim calculation semantics
 
 This release aligns the individual-level engine with the conventions the

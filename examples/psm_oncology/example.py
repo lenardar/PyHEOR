@@ -9,7 +9,7 @@ The model uses:
 - An exponential OS curve with PFS defined through an excess hazard
 - Treatment effects that preserve PFS <= OS for every PSA draw
 - 3 states: PFS, Progressed, Dead
-- Monthly cycle (cycle_length = 1/12 year) over 20 years
+- Monthly cycle (cycle_length = "1 month") over 20 years
 """
 
 from pathlib import Path
@@ -47,7 +47,7 @@ model = ph.PSMModel(
     survival_endpoints=["PFS", "OS"],
     strategies={"SOC": "Chemotherapy", "TRT": "Immuno + Chemo"},
     n_cycles=240,             # 240 months = 20 years
-    cycle_length=1/12,        # Monthly cycles
+    cycle_length="1 month",   # Monthly cycles
     dr_cost=0.03,
     dr_qaly=0.03,
     half_cycle_correction=True,

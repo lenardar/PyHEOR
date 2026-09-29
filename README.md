@@ -55,7 +55,7 @@ model = ph.MarkovModel(
     states=["Healthy", "Sick", "Dead"],
     strategies=["SOC", "Treatment"],
     n_cycles=40,
-    cycle_length=1,
+    cycle_length="1 year",
     dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="Cost discount rate"),
     dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="Utility discount rate"),
     half_cycle_correction=True,
@@ -139,7 +139,7 @@ psm = ph.PSMModel(
     survival_endpoints=["PFS", "OS"],
     strategies=["SOC", "New Drug"],
     n_cycles=120,
-    cycle_length=1/12,
+    cycle_length="1 month",
     dr_cost=0.03,
     dr_qaly=0.03,
 )
@@ -183,7 +183,7 @@ model = ph.MicroSimModel(
     strategies=["SOC", "Treatment"],
     n_cycles=30,
     n_patients=5000,
-    cycle_length=1.0,
+    cycle_length="1 year",
     dr_cost=0.03,
     dr_qaly=0.03,
     seed=42,
@@ -334,6 +334,18 @@ model.add_param("p_progression",
     label="Disease progression probability",  # For chart display
 )
 ```
+
+#### Cycle Length and Time Unit
+
+State each cycle's length together with its unit. `cycle_length` accepts a string such as `"1 month"` or `"4 weeks"`, a `ph.Cycle`, or a number combined with `time_unit` (`"day"`, `"week"`, `"month"` or `"year"`). A bare number is read in years, and omitting `cycle_length` still assumes one year but now raises a `FutureWarning`, because forgetting it silently changes both discounting and the size of per-year costs.
+
+```python
+model = ph.MarkovModel(..., n_cycles=120, cycle_length="1 month")
+model = ph.MarkovModel(..., n_cycles=52, cycle_length=1, time_unit="week")
+model = ph.MarkovModel(..., n_cycles=30, cycle_length=ph.Cycle(4, "weeks"))
+```
+
+Discount rates are always annual and are converted through the cycle length internally. State costs and utilities are rates per year whatever the cycle unit, and the model multiplies them by the cycle length in years (`model.cycle_length`). `model.cycle` and `model.time_unit` keep the original specification.
 
 #### Discount Rates
 

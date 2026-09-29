@@ -5,8 +5,11 @@ Includes the C (complement) sentinel, matrix resolution, discounting,
 and value resolution helpers.
 """
 
+import warnings
+from dataclasses import dataclass
+
 import numpy as np
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 
 
 # =============================================================================
@@ -206,6 +209,162 @@ def discount_factor(t: Union[int, float, np.ndarray], rate: float,
     if np.ndim(factors) == 0:
         return float(factors)
     return factors
+
+
+# =============================================================================
+# Cycle Length and Time Unit
+# =============================================================================
+
+#: Length of each supported time unit in years. Days and weeks use the mean
+#: Gregorian year (365.25 days); a month is exactly one twelfth of a year.
+TIME_UNIT_YEARS: Dict[str, float] = {
+    "day": 1.0 / 365.25,
+    "week": 7.0 / 365.25,
+    "month": 1.0 / 12.0,
+    "year": 1.0,
+}
+
+_TIME_UNIT_ALIASES = {
+    "d": "day", "day": "day", "days": "day",
+    "w": "week", "wk": "week", "week": "week", "weeks": "week",
+    "m": "month", "mo": "month", "month": "month", "months": "month",
+    "y": "year", "yr": "year", "year": "year", "years": "year",
+}
+
+
+def normalize_time_unit(unit: str) -> str:
+    """Return the canonical singular name of a time unit.
+
+    Accepts ``"day"``, ``"week"``, ``"month"`` and ``"year"`` together with
+    plurals and short forms such as ``"d"``, ``"wk"``, ``"mo"`` and ``"yr"``.
+    """
+    if not isinstance(unit, str):
+        raise TypeError(f"time_unit must be a string, got {type(unit).__name__}")
+    canonical = _TIME_UNIT_ALIASES.get(unit.strip().lower())
+    if canonical is None:
+        raise ValueError(
+            f"Unknown time unit {unit!r}; expected one of "
+            f"{sorted(TIME_UNIT_YEARS)!r}."
+        )
+    return canonical
+
+
+@dataclass(frozen=True)
+class Cycle:
+    """Length of one model cycle together with its time unit.
+
+    Parameters
+    ----------
+    length : float
+        Number of ``unit`` in one cycle.
+    unit : str
+        ``"day"``, ``"week"``, ``"month"`` or ``"year"`` (plurals and short
+        forms are accepted).
+
+    Examples
+    --------
+    >>> Cycle(1, "month").years
+    0.08333333333333333
+    >>> str(Cycle(4, "weeks"))
+    '4 weeks'
+    """
+
+    length: float
+    unit: str = "year"
+
+    def __post_init__(self):
+        if isinstance(self.length, bool) or not isinstance(
+            self.length, (int, float, np.integer, np.floating)
+        ):
+            raise TypeError(
+                f"cycle_length must be a number, got {type(self.length).__name__}"
+            )
+        if not np.isfinite(self.length) or self.length <= 0:
+            raise ValueError(
+                f"cycle_length must be a positive finite number, got {self.length!r}"
+            )
+        object.__setattr__(self, "length", float(self.length))
+        object.__setattr__(self, "unit", normalize_time_unit(self.unit))
+
+    @property
+    def years(self) -> float:
+        """Cycle length expressed in years, the unit discount rates use."""
+        return self.length * TIME_UNIT_YEARS[self.unit]
+
+    @classmethod
+    def parse(cls, text: str) -> "Cycle":
+        """Parse ``"1 month"``, ``"3 months"`` or a bare unit such as ``"week"``."""
+        parts = text.strip().split()
+        if len(parts) == 1:
+            return cls(1.0, parts[0])
+        if len(parts) == 2:
+            try:
+                length = float(parts[0])
+            except ValueError:
+                raise ValueError(
+                    f"Cannot parse cycle length {text!r}; expected forms like "
+                    "'1 month' or 'week'."
+                ) from None
+            return cls(length, parts[1])
+        raise ValueError(
+            f"Cannot parse cycle length {text!r}; expected forms like "
+            "'1 month' or 'week'."
+        )
+
+    def __str__(self) -> str:
+        length = int(self.length) if self.length == int(self.length) else self.length
+        unit = self.unit if length == 1 else f"{self.unit}s"
+        return f"{length} {unit}"
+
+
+def resolve_cycle(cycle_length=None, time_unit: Optional[str] = None) -> Cycle:
+    """Resolve the ``cycle_length`` and ``time_unit`` arguments of a model.
+
+    Parameters
+    ----------
+    cycle_length : float, str, Cycle or None
+        - number: length in ``time_unit``, or in years when ``time_unit`` is
+          omitted (the historical meaning).
+        - str: ``"1 month"``, ``"3 months"`` or ``"week"``.
+        - :class:`Cycle`: used as given.
+        - None: not specified. A ``FutureWarning`` is raised and one year is
+          assumed unless ``time_unit`` is given, which then means one such
+          unit.
+    time_unit : str, optional
+        Unit of a numeric ``cycle_length``. Cannot be combined with a string
+        or :class:`Cycle` ``cycle_length``, which carry their own unit.
+
+    Returns
+    -------
+    Cycle
+    """
+    if isinstance(cycle_length, Cycle):
+        if time_unit is not None:
+            raise ValueError(
+                "time_unit cannot be combined with a Cycle; the Cycle "
+                "already carries its unit."
+            )
+        return cycle_length
+    if isinstance(cycle_length, str):
+        if time_unit is not None:
+            raise ValueError(
+                "time_unit cannot be combined with a string cycle_length; "
+                f"write the unit inside it, e.g. '1 {time_unit}'."
+            )
+        return Cycle.parse(cycle_length)
+    if cycle_length is None:
+        if time_unit is None:
+            warnings.warn(
+                "cycle_length was not specified and defaults to 1 year. "
+                "Pass cycle_length explicitly, for example "
+                "cycle_length='1 month' or cycle_length=1, time_unit='year', "
+                "because the default will be removed in a future release.",
+                FutureWarning,
+                stacklevel=3,
+            )
+            return Cycle(1.0, "year")
+        return Cycle(1.0, time_unit)
+    return Cycle(cycle_length, "year" if time_unit is None else time_unit)
 
 
 # =============================================================================

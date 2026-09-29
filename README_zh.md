@@ -55,7 +55,7 @@ model = ph.MarkovModel(
     states=["Healthy", "Sick", "Dead"],
     strategies=["SOC", "Treatment"],
     n_cycles=40,
-    cycle_length=1,
+    cycle_length="1 year",
     dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="费用贴现率"),
     dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="效用贴现率"),
     half_cycle_correction=True,
@@ -139,7 +139,7 @@ psm = ph.PSMModel(
     survival_endpoints=["PFS", "OS"],
     strategies=["SOC", "New Drug"],
     n_cycles=120,
-    cycle_length=1/12,
+    cycle_length="1 month",
     dr_cost=0.03,
     dr_qaly=0.03,
 )
@@ -183,7 +183,7 @@ model = ph.MicroSimModel(
     strategies=["SOC", "Treatment"],
     n_cycles=30,
     n_patients=5000,
-    cycle_length=1.0,
+    cycle_length="1 year",
     dr_cost=0.03,
     dr_qaly=0.03,
     seed=42,
@@ -332,6 +332,18 @@ model.add_param("p_progression",
     label="疾病进展概率",  # 用于图表显示
 )
 ```
+
+#### 周期长度与时间单位
+
+请同时写明周期长度及其单位。`cycle_length` 可以是 `"1 month"`、`"4 weeks"` 这样的字符串,也可以是 `ph.Cycle`,或者数字加 `time_unit`(`"day"`、`"week"`、`"month"`、`"year"`)。单独一个数字仍按年解释;完全不传 `cycle_length` 时仍假定为 1 年,但现在会触发 `FutureWarning`,因为漏写会悄悄改变贴现和按年计价的成本大小。
+
+```python
+model = ph.MarkovModel(..., n_cycles=120, cycle_length="1 month")
+model = ph.MarkovModel(..., n_cycles=52, cycle_length=1, time_unit="week")
+model = ph.MarkovModel(..., n_cycles=30, cycle_length=ph.Cycle(4, "weeks"))
+```
+
+贴现率始终是年率,内部会按周期长度换算。无论周期单位是什么,状态成本和效用都是每年的速率,模型再乘以以年计的周期长度(`model.cycle_length`)。`model.cycle` 和 `model.time_unit` 保留原始设置。
 
 #### 贴现率
 

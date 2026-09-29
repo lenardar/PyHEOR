@@ -35,7 +35,7 @@ __version__ = "0.1.0"
 __author__ = "PyHEOR Team"
 
 # Core sentinel
-from .utils import C
+from .utils import C, Cycle
 
 # Distributions
 from .distributions import (
@@ -96,6 +96,7 @@ from .analysis.comparison import CEAnalysis, calculate_icers
 __all__ = [
     # Sentinel
     "C",
+    "Cycle",
     # Distributions
     "Distribution",
     "Beta",

@@ -36,6 +36,11 @@ dev = ["pytest", "jupyter", "seaborn"]
 testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "-v --tb=short"
+filterwarnings = [
+    # Most fixtures build throwaway models without caring about the cycle unit;
+    # tests/test_cycle.py asserts the warning explicitly.
+    "ignore:cycle_length was not specified:FutureWarning",
+]
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]

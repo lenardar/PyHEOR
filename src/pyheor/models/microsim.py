@@ -48,7 +48,7 @@ from .common import Param as _Param, StateMappingModel, _CostDef
 from ..distributions import sample_distribution
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
-    normalize_hcc, validate_transition_matrix,
+    normalize_hcc, validate_transition_matrix, Cycle, resolve_cycle,
 )
 
 
@@ -118,8 +118,14 @@ class IndividualStateTransitionModel(StateMappingModel):
     n_patients : int
         Number of patients to simulate per run. Can be overridden
         by providing a PatientProfile.
-    cycle_length : float
-        Cycle length in years (default: 1.0).
+    cycle_length : float, str or Cycle
+        Length of one cycle. Give it explicitly with its unit, for example
+        ``"1 month"``, ``ph.Cycle(4, "weeks")`` or ``cycle_length=1,
+        time_unit="month"``. A bare number is read in ``time_unit``, or in
+        years when ``time_unit`` is omitted. Omitting ``cycle_length``
+        assumes one year and raises a ``FutureWarning``. Discount rates are
+        annual and are converted internally, and state costs and utilities
+        are rates per year regardless of the cycle unit.
     dr_cost : float or Param
         Annual discount rate for costs. Default: 0 (no discounting).
         Pass a ``Param`` to enable sensitivity analysis.
@@ -139,6 +145,9 @@ class IndividualStateTransitionModel(StateMappingModel):
         Map state names to "alive" or "dead".
     seed : int, optional
         Random seed for reproducibility of base case.
+    time_unit : str, optional
+        Unit of a numeric ``cycle_length``: ``"day"``, ``"week"``,
+        ``"month"`` or ``"year"``.
 
     Notes
     -----
@@ -153,7 +162,7 @@ class IndividualStateTransitionModel(StateMappingModel):
         strategies: Union[List[str], Dict[str, str]],
         n_cycles: int,
         n_patients: int = 1000,
-        cycle_length: float = 1.0,
+        cycle_length: Union[float, str, Cycle, None] = None,
         dr_cost: Union[float, "_Param"] = 0.0,
         dr_qaly: Union[float, "_Param"] = 0.0,
         half_cycle_correction: Union[bool, str, None] = True,
@@ -161,6 +170,7 @@ class IndividualStateTransitionModel(StateMappingModel):
         state_type: Optional[Dict[str, str]] = None,
         seed: Optional[int] = None,
         discount_convention: str = "discrete",
+        time_unit: Optional[str] = None,
     ):
         # States
         self.states = list(states)
@@ -198,10 +208,7 @@ class IndividualStateTransitionModel(StateMappingModel):
             )
         if n_patients <= 0:
             raise ValueError(f"n_patients must be positive, got {n_patients!r}")
-        if not np.isfinite(cycle_length) or cycle_length <= 0:
-            raise ValueError(
-                f"cycle_length must be a positive finite number, got {cycle_length!r}"
-            )
+        cycle = resolve_cycle(cycle_length, time_unit)
         if discount_convention not in {"discrete", "continuous"}:
             raise ValueError(
                 f"Unknown discount_convention {discount_convention!r}; "
@@ -209,7 +216,9 @@ class IndividualStateTransitionModel(StateMappingModel):
             )
         self.n_cycles = int(n_cycles)
         self.n_patients = int(n_patients)
-        self.cycle_length = float(cycle_length)
+        self.cycle = cycle
+        self.time_unit = cycle.unit
+        self.cycle_length = cycle.years
         self.discount_convention = discount_convention
         self._hcc_method = normalize_hcc(half_cycle_correction)
         self.seed = seed
@@ -1037,7 +1046,7 @@ class IndividualStateTransitionModel(StateMappingModel):
             f"IndividualStateTransitionModel (Individual-Level Simulation)",
             f"  States ({self.n_states}): {self.states}",
             f"  Strategies ({self.n_strategies}): {self.strategy_names}",
-            f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
+            f"  Cycles: {self.n_cycles} × {self.cycle}",
             f"  Patients: {self.n_patients}",
             f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
             f"  Half-cycle correction: {self._hcc_method or 'None'}",
