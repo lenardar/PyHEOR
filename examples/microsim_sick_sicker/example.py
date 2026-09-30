@@ -48,10 +48,10 @@ model = ph.MicroSimModel(
     strategies=["Standard of Care", "New Treatment"],
     n_cycles=30,
     n_patients=5000,
-    cycle_length=1.0,        # Annual cycles
+    cycle=ph.Cycle(1.0, 'year'),        # Annual cycles
     dr_cost=0.03,
     dr_qaly=0.03,
-    half_cycle_correction=True,
+    method='life-table',
     seed=42,
 )
 
@@ -111,15 +111,10 @@ model.set_state_cost("treatment", {
 })
 
 # One-time cost when entering Sicker state (hospitalization)
-model.on_state_enter("Sicker", lambda idx, t, attrs: {"cost": 15000})
+model.set_entry_cost("sicker_entry", "Sicker", 15000)
 
 # Utilities
-model.set_utility({
-    "Healthy": "u_healthy",
-    "Sick": "u_sick",
-    "Sicker": "u_sicker",
-    "Dead": 0.0,
-})
+model.set_state_qaly("health", {"Healthy": lambda p, t: ph.qaly(p['u_healthy'], model.cycle), "Sick": lambda p, t: ph.qaly(p['u_sick'], model.cycle), "Sicker": lambda p, t: ph.qaly(p['u_sicker'], model.cycle), "Dead": ph.qaly(0.0, model.cycle)})
 
 # Print model info
 print(model.info())
@@ -147,8 +142,9 @@ print("\n--- Generating Plots ---")
 fig1 = result.plot_trace(figsize=(14, 5))
 save_figure(fig1, "state_trace.png")
 
-# Survival curves
-fig2 = result.plot_survival(figsize=(10, 7))
+# Monotone display interpolation through the original cycle survival points.
+# Use style="step" to show the cycle steps instead.
+fig2 = result.plot_survival(figsize=(10, 7), style="smooth")
 save_figure(fig2, "survival.png")
 
 # QALY distribution
@@ -166,10 +162,10 @@ cohort = ph.MarkovModel(
     states=["Healthy", "Sick", "Sicker", "Dead"],
     strategies=["Standard of Care", "New Treatment"],
     n_cycles=30,
-    cycle_length=1.0,
+    cycle=ph.Cycle(1.0, 'year'),
     dr_cost=0.03,
     dr_qaly=0.03,
-    half_cycle_correction=True,
+    method='life-table',
 )
 
 # Same parameters
@@ -197,9 +193,7 @@ cohort.set_state_cost("treatment", {
     "Standard of Care": {"Healthy": 0, "Sick": 0, "Sicker": 0, "Dead": 0},
     "New Treatment": {"Healthy": "c_trt", "Sick": "c_trt", "Sicker": "c_trt", "Dead": 0},
 })
-cohort.set_utility({
-    "Healthy": "u_healthy", "Sick": "u_sick", "Sicker": "u_sicker", "Dead": 0.0,
-})
+cohort.set_state_qaly("health", {"Healthy": lambda p, t: ph.qaly(p['u_healthy'], cohort.cycle), "Sick": lambda p, t: ph.qaly(p['u_sick'], cohort.cycle), "Sicker": lambda p, t: ph.qaly(p['u_sicker'], cohort.cycle), "Dead": ph.qaly(0.0, cohort.cycle)})
 
 cohort_result = cohort.run_base_case()
 
@@ -224,7 +218,7 @@ hetero_model = ph.MicroSimModel(
     strategies=["SOC", "Treatment"],
     n_cycles=30,
     n_patients=5000,
-    cycle_length=1.0,
+    cycle=ph.Cycle(1.0, 'year'),
     dr_cost=0.03,
     dr_qaly=0.03,
     seed=42,
@@ -265,7 +259,7 @@ hetero_model.set_state_cost("drug", {
     "SOC": {"Healthy": 0, "Sick": 0},
     "Treatment": {"Healthy": 3000, "Sick": 3000},
 })
-hetero_model.set_utility({"Healthy": 0.95, "Sick": 0.65, "Dead": 0.0})
+hetero_model.set_state_qaly("health", {"Healthy": ph.qaly(0.95, hetero_model.cycle), "Sick": ph.qaly(0.65, hetero_model.cycle), "Dead": ph.qaly(0.0, hetero_model.cycle)})
 
 print("\nRunning heterogeneous microsimulation...")
 hetero_result = hetero_model.run_base_case(verbose=True)
@@ -289,12 +283,12 @@ print(age_summary.to_string())
 # 6. PSA (Outer × Inner)
 # =============================================================================
 print("\n" + "=" * 70)
-print("Part 4: PSA — 100 outer × 2000 inner")
+print("Part 4: PSA — 300 outer × 1000 inner")
 print("=" * 70)
 
 psa_result = model.run_psa(
-    n_outer=100,
-    n_inner=2000,
+    n_outer=300,
+    n_inner=1000,
     seed=42,
     verbose=True,
 )
@@ -304,8 +298,13 @@ print(psa_result.summary().to_string(index=False))
 print("\nPSA ICER:")
 print(psa_result.icer().to_string(index=False))
 
+
+# PSA incremental cost-effectiveness scatter
+fig_scatter = psa_result.plot_scatter(wtp=50000)
+save_figure(fig_scatter, "ce_scatter.png")
+
 # CEAC
-fig5 = psa_result.plot_ceac(wtp_range=(0, 150000))
+fig5 = psa_result.plot_ceac(wtp_range=(0, 150000), smooth=True)
 save_figure(fig5, "ceac.png")
 
 print("\n✅ Microsimulation demo complete!")

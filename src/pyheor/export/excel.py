@@ -71,18 +71,55 @@ def export_to_excel(
         )
 
     # Detect result type
-    from ..analysis.results import BaseResult, OWSAResult, PSAResult, PSMBaseResult
+    from ..analysis.results import (BaseResult, OWSAResult, PSAResult, PSMBaseResult,
+                                    MicroSimResult, DESResult, MicroSimPSAResult, DESPSAResult)
 
-    if isinstance(result, PSAResult):
+    if isinstance(result, (PSAResult, MicroSimPSAResult, DESPSAResult)):
         _export_psa(result, filepath, include_psa)
     elif isinstance(result, OWSAResult):
         _export_owsa(result, filepath)
     elif isinstance(result, PSMBaseResult):
         _export_psm_base(result, filepath)
+    elif isinstance(result, (MicroSimResult, DESResult)):
+        _export_individual_base(result, filepath)
     elif isinstance(result, BaseResult):
         _export_markov_base(result, filepath)
     else:
         raise TypeError(f"Unsupported result type: {type(result)}")
+
+
+def _write_reward_tables(result, writer):
+    pd.DataFrame([{'Setting': k,'Value': v} for k,v in result.metadata.items()]).to_excel(
+        writer, sheet_name='Calculation Metadata', index=False)
+    result.reward_components.to_excel(writer, sheet_name='Reward Components', index=False)
+    if hasattr(result.model, 'cycle'):
+        result.cycle_rewards.to_excel(writer, sheet_name='Cycle Rewards', index=False)
+        result.state_occupancy.to_excel(writer, sheet_name='State Occupancy', index=False)
+
+
+def _export_individual_base(result, filepath):
+    """Per-patient means and component detail for MicroSim/DES."""
+    with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        result.summary().to_excel(writer, sheet_name='Summary', index=False)
+        result.icer().to_excel(writer, sheet_name='ICER', index=False)
+        pd.DataFrame([{'Parameter': name, 'Value': value} for name,value in result.params.items()]).to_excel(
+            writer, sheet_name='Parameters', index=False)
+        _write_reward_tables(result, writer)
+        result.patient_outcomes.to_excel(writer, sheet_name='Patient Outcomes', index=False)
+        if hasattr(result.model, 'time_horizon'):
+            result.event_log.to_excel(writer, sheet_name='Event Log', index=False)
+            result.time_in_state.to_excel(writer, sheet_name='Time in State', index=False)
+        settings = {'Model': type(result.model).__name__, 'Basis': 'Per patient; means for population results',
+                    'QALY Unit': 'QALY', 'LY Unit': 'year'}
+        if hasattr(result.model, 'cycle'):
+            settings.update({'Cycle length': result.model.cycle.length,'Cycle unit': result.model.cycle.unit,
+                             'Occupancy method': result.model.method,'Detail time unit': 'year'})
+        else:
+            settings.update({'Time unit': result.model.time_unit,'Horizon': result.model.time_horizon})
+        settings.update({'Cost discount rate': result.model._discount_rate('dr_cost', result.params),
+                         'QALY discount rate': result.model._discount_rate('dr_qaly', result.params)})
+        pd.DataFrame([{'Setting': k,'Value': v} for k,v in settings.items()]).to_excel(
+            writer, sheet_name='Settings', index=False)
 
 
 def _export_markov_base(result, filepath: str):
@@ -92,6 +129,7 @@ def _export_markov_base(result, filepath: str):
     r = result.results
 
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        _write_reward_tables(result, writer)
         # === Sheet 1: Parameters ===
         param_rows = []
         for name, val in params.items():
@@ -113,10 +151,10 @@ def _export_markov_base(result, filepath: str):
             {'Setting': 'Strategies', 'Value': ', '.join(model.strategy_names)},
             {'Setting': 'Number of Cycles', 'Value': model.n_cycles},
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
-            {'Setting': 'Discount Rate (costs)', 'Value': model.dr_cost},
-            {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qaly},
+            {'Setting': 'Discount Rate (costs, per cycle)', 'Value': model._discount_rate('dr_cost', params)},
+            {'Setting': 'Discount Rate (QALYs, per cycle)', 'Value': model._discount_rate('dr_qaly', params)},
             {'Setting': 'Discount Convention', 'Value': model.discount_convention},
-            {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
+            {'Setting': 'Occupancy method', 'Value': model.method or 'None'},
             {'Setting': 'Initial State', 'Value': model.states[model.initial_state_idx]},
         ])
         settings.to_excel(writer, sheet_name='Settings', index=False)
@@ -131,7 +169,7 @@ def _export_markov_base(result, filepath: str):
                          startrow=len(summary) + 3, index=False)
 
         # === Per-strategy sheets ===
-        used_sheet_names = {'Parameters', 'Settings', 'Summary'}
+        used_sheet_names = {'Parameters', 'Settings', 'Summary', 'Reward Components', 'Cycle Rewards', 'State Occupancy', 'Calculation Metadata'}
         for strategy in model.strategy_names:
             sr = r[strategy]
             label = model.strategy_labels[strategy]
@@ -154,17 +192,17 @@ def _export_markov_base(result, filepath: str):
             # --- Costs sheet ---
             costs_sheet = _unique_sheet_name(f'Costs_{label}', used_sheet_names)
             cycles = np.arange(model.n_cycles)
-            interval_times = (cycles + 0.5) * model.cycle_length
+            interval_times = cycles * model.cycle_length
             df_c = discount_factor(
-                cycles + 0.5, model.dr_cost, model.cycle_length,
+                cycles, model._discount_rate('dr_cost', params), 1.0,
                 model.discount_convention,
             )
 
-            costs_data = {'Cycle': cycles}
+            costs_data = {'Cycle': cycles + 1}
             costs_data['Time (yrs)'] = interval_times
             costs_data['Discount Factor'] = df_c
             costs_data['Occupancy Method'] = (
-                model.half_cycle_correction or 'start-of-interval'
+                model.method or 'start-of-interval'
             )
 
             total_discounted = np.zeros(model.n_cycles)
@@ -193,15 +231,15 @@ def _export_markov_base(result, filepath: str):
             # --- QALYs sheet ---
             qaly_sheet = _unique_sheet_name(f'QALYs_{label}', used_sheet_names)
             df_q = discount_factor(
-                cycles + 0.5, model.dr_qaly, model.cycle_length,
+                cycles, model._discount_rate('dr_qaly', params), 1.0,
                 model.discount_convention,
             )
 
             qaly_data = {
-                'Cycle': cycles,
+                'Cycle': cycles + 1,
                 'Time (yrs)': interval_times,
                 'Discount Factor': df_q,
-                'Occupancy Method': model.half_cycle_correction or 'start-of-interval',
+                'Occupancy Method': model.method or 'start-of-interval',
                 'QALYs (raw)': sr['qalys_by_cycle'],
                 'QALYs (HCC)': sr['qalys_hcc'],
                 'QALYs (discounted)': sr['discounted_qalys'],
@@ -256,6 +294,7 @@ def _export_psm_base(result, filepath: str):
     r = result.results
 
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        _write_reward_tables(result, writer)
         # === Parameters ===
         param_rows = []
         for name, val in params.items():
@@ -276,10 +315,10 @@ def _export_psm_base(result, filepath: str):
             {'Setting': 'Strategies', 'Value': ', '.join(model.strategy_names)},
             {'Setting': 'Number of Cycles', 'Value': model.n_cycles},
             {'Setting': 'Cycle Length (years)', 'Value': model.cycle_length},
-            {'Setting': 'Discount Rate (costs)', 'Value': model.dr_cost},
-            {'Setting': 'Discount Rate (QALYs)', 'Value': model.dr_qaly},
+            {'Setting': 'Discount Rate (costs, per cycle)', 'Value': model._discount_rate('dr_cost', params)},
+            {'Setting': 'Discount Rate (QALYs, per cycle)', 'Value': model._discount_rate('dr_qaly', params)},
             {'Setting': 'Discount Convention', 'Value': model.discount_convention},
-            {'Setting': 'Half-cycle Correction', 'Value': model.half_cycle_correction or 'None'},
+            {'Setting': 'Occupancy method', 'Value': model.method or 'None'},
         ])
         settings.to_excel(writer, sheet_name='Settings', index=False)
 
@@ -291,7 +330,7 @@ def _export_psm_base(result, filepath: str):
                          startrow=len(summary) + 3, index=False)
 
         # === Per-strategy sheets ===
-        used_sheet_names = {'Parameters', 'Settings', 'Summary'}
+        used_sheet_names = {'Parameters', 'Settings', 'Summary', 'Reward Components', 'Cycle Rewards', 'State Occupancy', 'Calculation Metadata'}
         for strategy in model.strategy_names:
             sr = r[strategy]
             label = model.strategy_labels[strategy]
@@ -323,17 +362,17 @@ def _export_psm_base(result, filepath: str):
             # --- Costs ---
             costs_sheet = _unique_sheet_name(f'Costs_{label}', used_sheet_names)
             cycles = np.arange(model.n_cycles)
-            interval_times = (cycles + 0.5) * model.cycle_length
+            interval_times = cycles * model.cycle_length
             df_c = discount_factor(
-                cycles + 0.5, model.dr_cost, model.cycle_length,
+                cycles, model._discount_rate('dr_cost', params), 1.0,
                 model.discount_convention,
             )
 
             costs_data = {
-                'Cycle': cycles,
+                'Cycle': cycles + 1,
                 'Time (yrs)': interval_times,
                 'Discount Factor': df_c,
-                'Occupancy Method': model.half_cycle_correction or 'start-of-interval',
+                'Occupancy Method': model.method or 'start-of-interval',
             }
 
             total_discounted = np.zeros(model.n_cycles)
@@ -358,15 +397,15 @@ def _export_psm_base(result, filepath: str):
             # --- QALYs ---
             qaly_sheet = _unique_sheet_name(f'QALYs_{label}', used_sheet_names)
             df_q = discount_factor(
-                cycles + 0.5, model.dr_qaly, model.cycle_length,
+                cycles, model._discount_rate('dr_qaly', params), 1.0,
                 model.discount_convention,
             )
 
             qaly_data = {
-                'Cycle': cycles,
+                'Cycle': cycles + 1,
                 'Time (yrs)': interval_times,
                 'Discount Factor': df_q,
-                'Occupancy Method': model.half_cycle_correction or 'start-of-interval',
+                'Occupancy Method': model.method or 'start-of-interval',
                 'QALYs (raw)': sr['qalys_by_cycle'],
                 'QALYs (HCC)': sr['qalys_hcc'],
                 'QALYs (discounted)': sr['discounted_qalys'],

@@ -49,10 +49,10 @@ model = ph.MarkovModel(
         "Combo": "Combination (ZDV+LAM)",
     },
     n_cycles=20,
-    cycle_length=1.0,  # 1 year per cycle
+    cycle=ph.Cycle(1.0, 'year'),  # 1 year per cycle
     dr_cost=0.06,  # 6% for costs
     dr_qaly=0.0,   # 0% for QALYs
-    half_cycle_correction=False,  # 与原始文献保持一致（使用周期初状态占比）
+    method='beginning',  # 与原始文献保持一致（使用周期初状态占比）
 )
 
 print(model)
@@ -215,12 +215,7 @@ model.set_state_cost("community_medical", {
 # 本模型使用生命年（LYs）作为结果，所有存活状态效用为1
 
 # %%
-model.set_utility({
-    "State A": "u",
-    "State B": "u",
-    "State C": "u",
-    "Death": 0,
-})
+model.set_state_qaly("health", {"State A": lambda p, t: ph.qaly(p['u'], model.cycle), "State B": lambda p, t: ph.qaly(p['u'], model.cycle), "State C": lambda p, t: ph.qaly(p['u'], model.cycle), "Death": ph.qaly(0, model.cycle)})
 
 # %% [markdown]
 # ## 6. 运行基础分析
@@ -282,7 +277,12 @@ print(psa.icer().to_string(index=False))
 
 # %%
 # Cost-effectiveness acceptability curve
-fig = psa.plot_ceac(wtp_range=(0, 50000))
+
+# PSA incremental cost-effectiveness scatter
+fig_scatter = psa.plot_scatter(wtp=50000)
+save_figure(fig_scatter, "ce_scatter.png")
+
+fig = psa.plot_ceac(wtp_range=(0, 50000), smooth=True)
 save_figure(fig, "ceac.png")
 
 

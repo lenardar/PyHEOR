@@ -1,41 +1,13 @@
-"""
-PyHEOR - Python Health Economics and Outcome Research
-====================================================
+"""PyHEOR: health economic models with explicit time and reward units."""
 
-A Python framework for health economic modeling and cost-effectiveness analysis.
-Inspired by R's hesim package but with enhanced features:
-
-- **Base case analysis**: Deterministic analysis with point estimates
-- **One-way sensitivity analysis (OWSA)**: Tornado diagrams and parameter exploration
-- **Probabilistic sensitivity analysis (PSA)**: Full uncertainty quantification
-- **Flexible cost definitions**: First-cycle-only costs, time-dependent functions, 
-  one-time costs, and more
-- **Beautiful visualizations**: State transition diagrams, TreeAge-style model diagrams,
-  Markov traces, tornado plots, CE planes, and CEACs
-
-Quick Start
------------
->>> import pyheor as ph
->>> model = ph.MarkovModel(
-...     states=["Healthy", "Sick", "Dead"],
-...     strategies=["Standard", "New Treatment"],
-...     n_cycles=20,
-... )
->>> model.add_param("p_HS", base=0.15, dist=ph.Beta(mean=0.15, sd=0.03))
->>> model.set_transitions("Standard", lambda p, t: [
-...     [ph.C,  p["p_HS"], 0.02],
-...     [0,     ph.C,      0.10],
-...     [0,     0,         1   ],
-... ])
->>> result = model.run_base_case()
->>> result.summary()
-"""
-
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __author__ = "PyHEOR Team"
 
 # Core sentinel
 from .utils import C
+from .time import Cycle, qaly, rescale_discount_rate
+from .survival_tools import from_flexsurv, rescale_survival, ScaledSurvival
+from .models.rewards import RewardContext
 
 # Distributions
 from .distributions import (
@@ -94,6 +66,8 @@ from .export.report import generate_report
 from .analysis.comparison import CEAnalysis, calculate_icers
 
 __all__ = [
+    "Cycle", "qaly", "rescale_discount_rate", "from_flexsurv",
+    "rescale_survival", "ScaledSurvival", "RewardContext",
     # Sentinel
     "C",
     # Distributions

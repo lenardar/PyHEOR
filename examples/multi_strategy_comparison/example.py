@@ -46,10 +46,10 @@ model = ph.MarkovModel(
     states=["Stable", "Progressed", "Dead"],
     strategies=["SOC", "Drug A", "Drug B", "Drug C"],
     n_cycles=40,
-    cycle_length=1.0,
+    cycle=ph.Cycle(1.0, 'year'),
     dr_cost=0.03,
     dr_qaly=0.03,
-    half_cycle_correction=True,
+    method='life-table',
 )
 
 # Parameters
@@ -104,11 +104,7 @@ model.set_state_cost("treatment", {
 })
 
 # Utilities
-model.set_utility({
-    "Stable":     "u_stable",
-    "Progressed": "u_prog",
-    "Dead":       0.0,
-})
+model.set_state_qaly("health", {"Stable": lambda p, t: ph.qaly(p['u_stable'], model.cycle), "Progressed": lambda p, t: ph.qaly(p['u_prog'], model.cycle), "Dead": ph.qaly(0.0, model.cycle)})
 
 # =============================================================================
 # 2. Run Base Case & Efficiency Frontier
@@ -161,6 +157,11 @@ print("=" * 70)
 psa_result = model.run_psa(n_sim=2000, seed=42)
 
 # Create CEAnalysis from PSA data
+
+# PSA incremental cost-effectiveness scatter
+fig_scatter = psa_result.plot_scatter(wtp=100000)
+save_figure(fig_scatter, "ce_scatter.png")
+
 cea_psa = ph.CEAnalysis.from_psa(psa_result)
 print(cea_psa.info())
 

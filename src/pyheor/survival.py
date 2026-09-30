@@ -348,7 +348,7 @@ class Gompertz(SurvivalDistribution):
 # =============================================================================
 
 class GeneralizedGamma(SurvivalDistribution):
-    """Generalized Gamma survival distribution (Stacy parameterization).
+    """Generalized Gamma survival distribution (Prentice parameterization).
 
     Uses scipy's implementation via the gamma distribution.
 

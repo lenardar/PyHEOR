@@ -86,6 +86,113 @@ class StrategyOutcomeResult:
         """Return ``(cost, qalys, lys)`` for one strategy."""
         raise NotImplementedError
 
+    def _capture_settings(self):
+        self._result_cycle = getattr(self.model, 'cycle', None)
+        self._result_method = getattr(self.model, 'method', None)
+        self._result_time_unit = getattr(self.model, 'time_unit', 'year')
+        self._result_discount_rates = {kind: self.model._discount_rate('dr_'+kind, self.params)
+                                       for kind in ('cost', 'qaly')}
+
+    @property
+    def metadata(self):
+        """Calculation conventions captured when this result was created."""
+        data = dict(Model=type(self.model).__name__, Basis='per patient',
+                    QALYUnit='QALY', LYUnit='year', TimeUnit=self._result_time_unit,
+                    CostDiscountRate=self._result_discount_rates['cost'],
+                    QALYDiscountRate=self._result_discount_rates['qaly'])
+        if self._result_cycle is not None:
+            data.update(CycleLength=self._result_cycle.length, CycleUnit=self._result_cycle.unit,
+                        Method=self._result_method, FirstCycleDiscounted=False)
+        return data
+
+    def _reward_arrays(self, strategy, kind, *, discounted):
+        """Components are occupancy-corrected and per patient in every engine."""
+        result = self.results[strategy]
+        if not discounted:
+            return result['undiscounted_costs' if kind == 'cost' else 'undiscounted_qalys']
+        if kind == 'qaly':
+            return result['qaly_components']
+        return result.get('discounted_costs', result.get('costs_by_category', result.get('costs_by_cat', {})))
+
+    @property
+    def reward_components(self) -> pd.DataFrame:
+        """Costs/QALYs by category, before and after discounting, per patient.
+
+        Undiscounted values already include the selected occupancy correction.
+        Individual models report patient means, not cohort totals.
+        """
+        rows = []
+        individual = hasattr(self.model, 'n_patients') or hasattr(self.model, 'time_horizon')
+        continuous = hasattr(self.model, 'time_horizon')
+        def total(values):
+            values = np.asarray(values)
+            if individual:
+                return float(values.mean() if continuous else values.sum(axis=1).mean())
+            return float(values.sum())
+        for strategy in self.model.strategy_names:
+            for kind in ('cost', 'qaly'):
+                raw = self._reward_arrays(strategy, kind, discounted=False)
+                discounted = self._reward_arrays(strategy, kind, discounted=True)
+                for category in dict.fromkeys([*raw, *discounted]):
+                    rows.append(dict(Strategy=self.model.strategy_labels[strategy],
+                                     Reward=kind, Category=category,
+                                     Undiscounted=total(raw[category]),
+                                     Discounted=total(discounted[category]),
+                                     Unit='cost' if kind == 'cost' else 'QALY'))
+        table = pd.DataFrame(rows, columns=['Strategy','Reward','Category','Undiscounted','Discounted','Unit'])
+        table.attrs['basis'] = 'per patient (mean for individual simulations)'
+        return table
+
+    @property
+    def cycle_rewards(self) -> pd.DataFrame:
+        """Long per-cycle reward table; time zero amounts appear in cycle 1.
+
+        Times use years. Undiscounted values include occupancy correction.
+        DES has event times instead of fixed cycles and has no such table.
+        """
+        if not hasattr(self.model, 'cycle'):
+            raise ValueError('DES has continuous event times, not cycle rewards')
+        from ..utils import discount_factor
+        rows = []
+        individual = hasattr(self.model, 'n_patients')
+        for strategy in self.model.strategy_names:
+            for kind in ('cost','qaly'):
+                raw = self._reward_arrays(strategy, kind, discounted=False)
+                discounted = self._reward_arrays(strategy, kind, discounted=True)
+                rate = self._result_discount_rates[kind]
+                factors = discount_factor(np.arange(self.model.n_cycles), rate)
+                for category in raw:
+                    values = np.asarray(raw[category])
+                    amounts = np.asarray(discounted[category])
+                    if individual:
+                        values, amounts = values.mean(axis=0), amounts.mean(axis=0)
+                    for i, (value, amount) in enumerate(zip(values, amounts)):
+                        rows.append(dict(Strategy=self.model.strategy_labels[strategy], Cycle=i+1,
+                            Start=i*self._result_cycle.years, End=(i+1)*self._result_cycle.years,
+                            TimeUnit='year', Reward=kind, Category=category,
+                            Undiscounted=float(value), DiscountFactor=float(factors[i]),
+                            Discounted=float(amount), Unit='cost' if kind=='cost' else 'QALY'))
+        return pd.DataFrame(rows, columns=['Strategy','Cycle','Start','End','TimeUnit','Reward',
+                                         'Category','Undiscounted','DiscountFactor','Discounted','Unit'])
+
+    @property
+    def state_occupancy(self) -> pd.DataFrame:
+        """Beginning, end and reward occupancy by state and cycle."""
+        if not hasattr(self.model, 'cycle'):
+            raise ValueError('DES reports continuous time_in_state instead of cycle occupancy')
+        from ..utils import interval_occupancy
+        rows = []
+        for strategy in self.model.strategy_names:
+            trace = self.results[strategy]['trace']
+            occupancy = interval_occupancy(trace, self._result_method)
+            for i in range(self.model.n_cycles):
+                for j, state in enumerate(self.model.states):
+                    rows.append(dict(Strategy=self.model.strategy_labels[strategy],Cycle=i+1,
+                        Start=i*self._result_cycle.years,End=(i+1)*self._result_cycle.years,TimeUnit='year',
+                        State=state,Beginning=float(trace[i,j]),EndOccupancy=float(trace[i+1,j]),
+                        Occupancy=float(occupancy[i,j]),Method=self._result_method))
+        return pd.DataFrame(rows)
+
     def _resolve_comparator(self, comparator: Optional[str]) -> str:
         if comparator is None:
             return self.model.strategy_names[0]
@@ -169,7 +276,8 @@ class BaseResult(StrategyOutcomeResult):
     def __init__(self, model, results: dict, params: dict):
         self.model = model
         self.results = results
-        self.params = params
+        self.params = dict(params)
+        self._capture_settings()
     
     def summary(self) -> pd.DataFrame:
         """Summarize total costs and QALYs per strategy.
@@ -648,7 +756,8 @@ class PSMBaseResult(StrategyOutcomeResult):
     def __init__(self, model, results: dict, params: dict):
         self.model = model
         self.results = results
-        self.params = params
+        self.params = dict(params)
+        self._capture_settings()
 
     def summary(self) -> pd.DataFrame:
         """Summarize total costs and QALYs per strategy."""
@@ -708,6 +817,27 @@ class PSMBaseResult(StrategyOutcomeResult):
                     })
         return pd.DataFrame(rows)
 
+    def survival_at(self, times, *, unit='year') -> pd.DataFrame:
+        """Evaluate fitted curves at requested elapsed times; no interpolation."""
+        from ..time import Cycle
+        values = np.asarray(times, dtype=float)
+        if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0):
+            raise ValueError('times must be a finite, nonnegative one-dimensional array')
+        boundaries = values * Cycle(1, unit).years / self._result_cycle.years
+        rows = []
+        for strategy in self.model.strategy_names:
+            curves = self.results[strategy]['survival_distributions']
+            evaluated = np.column_stack([curves[e].survival(boundaries) for e in self.model.survival_endpoints])
+            if (not np.all(np.isfinite(evaluated)) or np.any(evaluated < -1e-10)
+                    or np.any(evaluated > 1+1e-10)):
+                raise ValueError('Invalid survival probabilities at requested times')
+            for j, endpoint in enumerate(self.model.survival_endpoints):
+                for time, boundary, probability in zip(values, boundaries, evaluated[:,j]):
+                    rows.append(dict(Time=float(time),TimeUnit=unit,Cycle=float(boundary),
+                        Strategy=self.model.strategy_labels[strategy],strategy=strategy,
+                        Endpoint=endpoint,Survival=float(probability)))
+        return pd.DataFrame(rows,columns=['Time','TimeUnit','Cycle','Strategy','strategy','Endpoint','Survival'])
+
     # --- Plotting Shortcuts ---
 
     def plot_survival(self, **kwargs):
@@ -752,7 +882,8 @@ class MicroSimResult(StrategyOutcomeResult):
     def __init__(self, model, results: dict, params: dict):
         self.model = model
         self.results = results
-        self.params = params
+        self.params = dict(params)
+        self._capture_settings()
 
     def summary(self) -> pd.DataFrame:
         """Summary table with mean costs, QALYs, and confidence intervals."""
@@ -1033,7 +1164,8 @@ class DESResult(StrategyOutcomeResult):
     def __init__(self, model, results: dict, params: dict):
         self.model = model
         self.results = results
-        self.params = params
+        self.params = dict(params)
+        self._capture_settings()
 
     def summary(self) -> pd.DataFrame:
         """Summary table with mean costs, QALYs, and confidence intervals."""
@@ -1102,11 +1234,12 @@ class DESResult(StrategyOutcomeResult):
                         'Patient': i + 1,
                         'Strategy': self.model.strategy_labels[strategy],
                         'Time': time,
+                        'TimeUnit': self._result_time_unit,
                         'From': from_s,
                         'To': to_s,
                     })
         return pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=['Patient', 'Strategy', 'Time', 'From', 'To'])
+            columns=['Patient', 'Strategy', 'Time', 'TimeUnit', 'From', 'To'])
 
     @property
     def time_in_state(self) -> pd.DataFrame:
@@ -1125,6 +1258,7 @@ class DESResult(StrategyOutcomeResult):
                 rows.append({
                     'Strategy': self.model.strategy_labels[strategy],
                     'State': state,
+                    'TimeUnit': self._result_time_unit,
                     'Mean Time': arr.mean(),
                     'Median Time': np.median(arr),
                     'SD Time': arr.std(ddof=1),
@@ -1148,7 +1282,7 @@ class DESResult(StrategyOutcomeResult):
             columns=['Strategy', 'Category', 'Mean Cost', 'SD Cost'])
 
     def survival_curve(
-        self, strategy: Optional[str] = None, n_points: int = 200,
+        self, strategy: Optional[str] = None, n_points: Optional[int] = None,
     ) -> pd.DataFrame:
         """Compute empirical (Kaplan-Meier-like) survival curve from event logs.
 
@@ -1159,8 +1293,8 @@ class DESResult(StrategyOutcomeResult):
         ----------
         strategy : str, optional
             Specific strategy. Default: all strategies.
-        n_points : int
-            Number of time grid points.
+        n_points : int, optional
+            Uniform grid size. Default uses exact absorbing-event times.
 
         Returns
         -------
@@ -1168,7 +1302,10 @@ class DESResult(StrategyOutcomeResult):
             Columns: Time, Strategy, Survival
         """
         strategies = [strategy] if strategy else self.model.strategy_names
-        time_grid = np.linspace(0, self.model.time_horizon, n_points)
+        if strategy is not None and strategy not in self.model.strategy_names:
+            raise ValueError(f'Unknown strategy {strategy!r}')
+        if n_points is not None and (isinstance(n_points, bool) or not isinstance(n_points, (int,np.integer)) or n_points < 2):
+            raise ValueError('n_points must be an integer of at least 2')
         absorbing = self.model.absorbing_state_indices
 
         rows = []
@@ -1179,7 +1316,7 @@ class DESResult(StrategyOutcomeResult):
             # For each patient, determine the time of entering an absorbing state
             absorb_times = []
             for pr in pr_list:
-                t_absorb = self.model.time_horizon  # censored
+                t_absorb = 0.0 if self.model.initial_state_idx in absorbing else self.model.time_horizon
                 for t_ev, from_s, to_s in pr['event_log']:
                     to_idx = self.model.states.index(to_s)
                     if to_idx in absorbing:
@@ -1187,7 +1324,9 @@ class DESResult(StrategyOutcomeResult):
                         break
                 absorb_times.append(t_absorb)
 
-            absorb_times = np.array(absorb_times)
+            absorb_times = np.sort(np.asarray(absorb_times))
+            time_grid = (np.unique(np.r_[0.0, absorb_times, self.model.time_horizon])
+                         if n_points is None else np.linspace(0,self.model.time_horizon,n_points))
 
             for t in time_grid:
                 # Patients censored at the horizon remain in the risk set at
@@ -1196,11 +1335,12 @@ class DESResult(StrategyOutcomeResult):
                 # np.isclose, whose default relative tolerance would cover
                 # several trailing grid points for a large time_horizon.
                 if t == time_grid[-1]:
-                    surv = (absorb_times >= t).mean()
+                    surv = (n - np.searchsorted(absorb_times, t, side='left')) / n
                 else:
-                    surv = (absorb_times > t).mean()
+                    surv = (n - np.searchsorted(absorb_times, t, side='right')) / n
                 rows.append({
                     'Time': t,
+                    'TimeUnit': self._result_time_unit,
                     'Strategy': self.model.strategy_labels[strat],
                     'Survival': surv,
                 })

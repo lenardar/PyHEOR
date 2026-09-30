@@ -535,6 +535,7 @@ def plot_model_diagram(model, figsize: tuple = (14, 7), title: Optional[str] = N
 def plot_trace(
     result, style: str = "area", figsize: tuple = (12, 5),
     title: Optional[str] = None, per_strategy: bool = True,
+    smooth: bool = True, n_points: int = 501,
 ):
     """Plot Markov trace (state occupancy over time).
     
@@ -550,6 +551,11 @@ def plot_trace(
         Custom title.
     per_strategy : bool
         If True, creates separate subplots per strategy.
+    smooth : bool
+        Interpolate cycle occupancy for display only (default True).
+        Original cycle points are retained and state probabilities sum to one.
+    n_points : int
+        Minimum display points when smoothing.
     """
     
     model = result.model
@@ -580,6 +586,7 @@ def plot_trace(
     for idx, (ax, strategy) in enumerate(zip(axes, strategies)):
         trace = result.results[strategy]['trace']
         cycles = np.arange(model.n_cycles + 1) * model.cycle_length
+        cycles, trace = _occupancy_display(cycles, trace, smooth=smooth, n_points=n_points)
         
         if style == "area":
             ax.stackplot(
@@ -602,7 +609,10 @@ def plot_trace(
         ax.set_xlabel('Time (years)')
         if idx == 0:
             ax.set_ylabel('State Occupancy')
-        ax.set_title(model.strategy_labels[strategy], fontsize=12)
+        label = model.strategy_labels[strategy]
+        if smooth:
+            label += ' (smoothed display)'
+        ax.set_title(label, fontsize=12)
         ax.set_xlim(0, cycles[-1])
         ax.set_ylim(0, 1.0)
     
@@ -947,11 +957,38 @@ def plot_scatter(
 # CEAC Plot
 # =============================================================================
 
+def _ceac_display(wtp, probabilities, *, smooth, bandwidth):
+    """Display-only smoothing with a shared positive kernel for all strategies.
+
+    A common kernel preserves probability sums; dense interpolation is
+    normalized to preserve that constraint between the original WTP points.
+    The raw CEAC data and analysis remain untouched.
+    """
+    if not isinstance(smooth, (bool, np.bool_)):
+        raise ValueError('smooth must be a boolean')
+    if bandwidth is not None and (not np.isfinite(bandwidth) or bandwidth <= 0):
+        raise ValueError('bandwidth must be positive and finite, in WTP units')
+    if not smooth:
+        return wtp, probabilities
+    if len(wtp) < 2 or not np.all(np.diff(wtp) > 0):
+        raise ValueError('Smooth CEAC plots require an increasing WTP range and at least two points')
+    from scipy.ndimage import gaussian_filter1d
+    from scipy.interpolate import PchipInterpolator
+    width = .01 * (wtp[-1] - wtp[0]) if bandwidth is None else bandwidth
+    smoothed = gaussian_filter1d(probabilities, sigma=width/(wtp[1]-wtp[0]),
+                                 axis=0, mode='nearest')
+    times = np.linspace(wtp[0], wtp[-1], max(2001, len(wtp)))
+    values = np.clip(PchipInterpolator(wtp, smoothed, axis=0)(times), 0, 1)
+    values /= values.sum(axis=1, keepdims=True)
+    return times, values
+
+
 @_with_plot_style
 def plot_ceac(
     psa_result,
-    wtp_range: tuple = (0, 100000), n_wtp: int = 200,
+    wtp_range: tuple = (0, 100000), n_wtp: int = 501,
     figsize: tuple = (10, 6), title: Optional[str] = None, currency: str = "$",
+    smooth: bool = True, bandwidth: Optional[float] = None,
 ):
     """Plot cost-effectiveness acceptability curve (CEAC).
 
@@ -967,6 +1004,12 @@ def plot_ceac(
         (min, max) WTP range.
     n_wtp : int
         Number of WTP points.
+    smooth : bool
+        Display-only smoothing (default True). False plots raw probabilities.
+        The title identifies the smoothed view; analysis/exports use raw data.
+    bandwidth : float, optional
+        Gaussian kernel standard deviation in WTP units. Defaults to 1% of
+        the displayed WTP range; shared across strategies.
     figsize : tuple
         Figure size.
     title : str, optional
@@ -981,11 +1024,16 @@ def plot_ceac(
     palette = dict(zip(psa_result.model.strategy_names,
                        _get_strategy_colors(psa_result.model.n_strategies)))
     
+    wtp = ceac[ceac['strategy'] == strategies[0]]['WTP'].to_numpy()
+    probabilities = np.column_stack([ceac[ceac['strategy'] == strategy]['Prob CE'].to_numpy()
+                                     for strategy in strategies])
+    display_wtp, display_probabilities = _ceac_display(wtp, probabilities,
+                                                      smooth=smooth, bandwidth=bandwidth)
     for idx, strategy in enumerate(strategies):
         df_s = ceac[ceac['strategy'] == strategy]
         label = df_s['Strategy'].iloc[0]
         ax.plot(
-            df_s['WTP'], df_s['Prob CE'],
+            display_wtp, display_probabilities[:, idx],
             color=palette[strategy], linewidth=2.5,
             label=label,
         )
@@ -1000,6 +1048,8 @@ def plot_ceac(
     
     if title is None:
         title = 'Cost-Effectiveness Acceptability Curve'
+    if smooth:
+        title += ' (smoothed display)'
     ax.set_title(title, fontsize=14, fontweight='bold')
     _outside_legend(ax, fontsize=11)
     
@@ -1081,11 +1131,117 @@ def plot_convergence(
 # PSM-Specific Plots
 # =============================================================================
 
+def _occupancy_display(times, trace, *, smooth, n_points):
+    """Interpolate stored cycle proportions without changing model results.
+
+    Cubic Hermite slopes are limited jointly across states. The resulting
+    Bezier controls stay within the adjacent probability vectors' bounds.
+    This preserves sums, cycle nodes and each state's direction within each
+    cycle, with continuous first derivatives across cycle boundaries.
+    No rewards or transitions are recomputed from display values.
+    """
+    if not isinstance(smooth, (bool, np.bool_)):
+        raise ValueError('smooth must be a boolean')
+    if isinstance(n_points, bool) or not isinstance(n_points, (int, np.integer)) or n_points < 2:
+        raise ValueError('n_points must be an integer of at least 2')
+    if not smooth or len(times) < 2:
+        return times, trace
+    display = np.union1d(times, np.linspace(times[0], times[-1], n_points))
+    intervals = np.diff(times)
+    secants = np.diff(trace, axis=0)/intervals[:,None]
+    from scipy.interpolate import PchipInterpolator
+    slopes = PchipInterpolator(times, trace, axis=0).derivative()(times)
+    # Bound each derivative using adjacent secants, then distribute any sum
+    # residual within those bounds. Flat/turning states do not flatten others.
+    for i in range(len(times)):
+        adjacent = secants[max(0,i-1):min(len(secants),i+1)]
+        lower = np.max(np.minimum(0,3*adjacent),axis=0)
+        upper = np.min(np.maximum(0,3*adjacent),axis=0)
+        slopes[i] = np.clip(slopes[i],lower,upper)
+        residual = slopes[i].sum()
+        capacity = slopes[i]-lower if residual>0 else upper-slopes[i]
+        if capacity.sum()>0:
+            slopes[i] -= residual*capacity/capacity.sum()
+    left = np.clip(np.searchsorted(times, display, side='right')-1, 0, len(times)-2)
+    fraction = (display-times[left])/(times[left+1]-times[left])
+    u = fraction[:,None]
+    h = intervals[left,None]
+    first = trace[left]+h*slopes[left]/3
+    second = trace[left+1]-h*slopes[left+1]/3
+    values = ((1-u)**3*trace[left] + 3*(1-u)**2*u*first
+              + 3*(1-u)*u**2*second + u**3*trace[left+1])
+    values[np.searchsorted(display, times)] = trace
+    return display, values
+
+
+def _survival_steps(curve):
+    """Return step locations in cycle units, including time-scale wrappers."""
+    from .survival import KaplanMeier, AcceleratedFailureTime
+    from .survival_tools import ScaledSurvival
+    if isinstance(curve, KaplanMeier):
+        return np.asarray(curve.times)
+    if hasattr(curve, 'baseline'):
+        steps = _survival_steps(curve.baseline)
+        if steps is not None and isinstance(curve, ScaledSurvival):
+            steps = steps / curve.factor
+        elif steps is not None and isinstance(curve, AcceleratedFailureTime):
+            steps = steps * curve.af
+        return steps
+    return None
+
+
+def _psm_plot_data(result, strategy, n_points):
+    if isinstance(n_points, bool) or not isinstance(n_points, (int, np.integer)) or n_points < 2:
+        raise ValueError('n_points must be an integer of at least 2')
+    model = result.model
+    boundaries = np.union1d(np.arange(model.n_cycles+1),
+                            np.linspace(0, model.n_cycles, n_points))
+    curves = result.results[strategy]['survival_distributions']
+    steps = [_survival_steps(curves[e]) for e in model.survival_endpoints]
+    all_steps = [_survival_steps(curve) for r in result.results.values()
+                 for curve in r['survival_distributions'].values()]
+    for locations in all_steps:
+        if locations is not None:
+            boundaries = np.union1d(boundaries, locations[(locations >= 0) & (locations <= model.n_cycles)])
+    times = boundaries * model.cycle.years
+    data = result.survival_at(times)
+    data = data[data['strategy'] == strategy]
+    values = {e: data[data.Endpoint == e].Survival.to_numpy() for e in model.survival_endpoints}
+    styles = {e: 'steps-post' if steps[j] is not None else 'default' for j,e in enumerate(model.survival_endpoints)}
+    return times, values, styles
+
+
+def _psm_occupancy_plot_data(result, strategy, n_points, smooth=True):
+    """Use fitted partitions, or interpolate stored terminal bookkeeping."""
+    model = result.model
+    r = result.results[strategy]
+    if not isinstance(smooth, (bool, np.bool_)):
+        raise ValueError('smooth must be a boolean')
+    if isinstance(n_points, bool) or not isinstance(n_points, (int, np.integer)) or n_points < 2:
+        raise ValueError('n_points must be an integer of at least 2')
+    if model.terminal_state is not None:
+        if any(_survival_steps(c) is not None for c in r['survival_distributions'].values()):
+            return r['times'], r['trace'], 'steps-post'
+        times, trace = _occupancy_display(r['times'], r['trace'], smooth=smooth, n_points=n_points)
+        return times, trace, 'default'
+    if not smooth:
+        step = any(_survival_steps(c) is not None for c in r['survival_distributions'].values())
+        return r['times'], r['trace'], 'steps-post' if step else 'default'
+    times, curves, styles = _psm_plot_data(result, strategy, n_points)
+    survival = np.column_stack([curves[e] for e in model.survival_endpoints])
+    trace = np.column_stack([survival[:,0], np.diff(survival,axis=1), 1-survival[:,-1]])
+    if np.any(trace < -1e-12):
+        raise ValueError('PSM curves cross between cycle boundaries on the plotting grid')
+    trace = np.clip(trace, 0, 1)
+    trace /= trace.sum(axis=1, keepdims=True)
+    return times, trace, 'steps-post' if 'steps-post' in styles.values() else 'default'
+
+
 @_with_plot_style
 def plot_survival_curves(
     psm_result, figsize: tuple = (10, 6), title: Optional[str] = None,
     endpoints: Optional[List[str]] = None,
-    show_legend: bool = True,
+    show_legend: bool = True, n_points: int = 501,
 ):
     """Plot survival curves from a PSM result.
 
@@ -1104,14 +1260,13 @@ def plot_survival_curves(
     fig, ax = plt.subplots(figsize=figsize)
 
     for s_idx, strategy in enumerate(model.strategy_names):
-        r = psm_result.results[strategy]
-        times = r['times']
+        times, curves, drawstyles = _psm_plot_data(psm_result, strategy, n_points)
         for e_idx, endpoint in enumerate(endpoints):
-            surv = r['survival_curves'][endpoint]
+            surv = curves[endpoint]
             ls = line_styles[e_idx % len(line_styles)]
             label = f"{model.strategy_labels[strategy]} — {endpoint}"
             ax.plot(times, surv, color=colors[s_idx], linestyle=ls,
-                    linewidth=2, label=label)
+                    linewidth=2, label=label, drawstyle=drawstyles[endpoint])
 
     ax.set_ylim(-0.02, 1.05)
     ax.set_xlim(left=0)
@@ -1133,20 +1288,23 @@ def plot_survival_curves(
 def plot_state_area(
     psm_result, strategy: Optional[str] = None,
     figsize: tuple = (10, 6), title: Optional[str] = None,
-    alpha: float = 0.7,
+    alpha: float = 0.7, n_points: int = 501, smooth: bool = True,
 ):
     """Plot area-between-curves (state occupancy as stacked area).
 
     Classic PSM visualization showing survival curve partitioning.
+    Fitted partitions use a dense grid by default. Terminal occupancy uses
+    display interpolation of stored cycle counts, preserving their meaning;
+    empirical terminal counts remain steps. ``smooth=False`` uses cycle nodes.
     """
 
     model = psm_result.model
     if strategy is None:
         strategy = model.strategy_names[0]
 
-    r = psm_result.results[strategy]
-    times = r['times']
-    trace = r['trace']
+    times, trace, drawstyle = _psm_occupancy_plot_data(psm_result, strategy, n_points, smooth)
+    area_step = 'post' if drawstyle == 'steps-post' else None
+    survival_times, curves, drawstyles = _psm_plot_data(psm_result, strategy, n_points)
 
     n_states = model.n_states
     fills, borders = _get_state_colors(n_states)
@@ -1160,17 +1318,17 @@ def plot_state_area(
         ax.fill_between(
             times, cumulative, cumulative + state_prob,
             color=fills[i], alpha=alpha, label=model.states[i],
-            edgecolor=borders[i], linewidth=0.5,
+            edgecolor=borders[i], linewidth=0.5, step=area_step,
         )
         cumulative = cumulative + state_prob
 
     # Overlay survival curves as lines
     surv_colors = ['#D32F2F', '#1565C0', '#2E7D32', '#FF6F00']
     for j, endpoint in enumerate(model.survival_endpoints):
-        surv = r['survival_curves'][endpoint]
+        surv = curves[endpoint]
         sc = surv_colors[j % len(surv_colors)]
-        ax.plot(times, surv, color=sc, linewidth=2.5, linestyle='-',
-                label=f'S({endpoint})', zorder=5)
+        ax.plot(survival_times, surv, color=sc, linewidth=2.5, linestyle='-',
+                label=f'S({endpoint})', zorder=5, drawstyle=drawstyles[endpoint])
 
     ax.set_ylim(0, 1.02)
     ax.set_xlim(left=0)
@@ -1179,6 +1337,8 @@ def plot_state_area(
 
     if title is None:
         title = f'Partitioned Survival — {model.strategy_labels[strategy]}'
+    if smooth and model.terminal_state is not None and drawstyle != 'steps-post':
+        title += ' (smoothed display)'
     ax.set_title(title, fontsize=14, fontweight='bold')
 
     _outside_legend(ax, fontsize=10)
@@ -1190,8 +1350,14 @@ def plot_state_area(
 @_with_plot_style
 def plot_psm_trace(
     psm_result, figsize: tuple = (10, 6), title: Optional[str] = None,
+    n_points: int = 501, smooth: bool = True,
 ):
-    """Plot PSM state occupancy as line chart (all strategies, panel per state)."""
+    """Plot PSM state occupancy (all strategies, panel per state).
+
+    Fitted partitions are evaluated densely; terminal bookkeeping is only
+    interpolated for display. Empirical curves retain steps. ``smooth=False``
+    plots the stored cycle points; ``n_points`` controls display density.
+    """
 
     model = psm_result.model
     n_strategies = model.n_strategies
@@ -1208,15 +1374,16 @@ def plot_psm_trace(
         ax.remove()
     axes = axes[:model.n_states]
 
+    display_data = {s: _psm_occupancy_plot_data(psm_result, s, n_points, smooth)
+                    for s in model.strategy_names}
     for s_idx, state in enumerate(model.states):
         ax = axes[s_idx]
         for st_idx, strategy in enumerate(model.strategy_names):
-            r = psm_result.results[strategy]
-            times = r['times']
-            state_prob = r['trace'][:, s_idx]
+            times, trace, drawstyle = display_data[strategy]
+            state_prob = trace[:, s_idx]
             ls = line_styles[st_idx % len(line_styles)]
             ax.plot(times, state_prob, color=colors[st_idx], linestyle=ls,
-                    linewidth=2, label=model.strategy_labels[strategy])
+                    linewidth=2, label=model.strategy_labels[strategy], drawstyle=drawstyle)
 
         ax.set_title(state, fontsize=12, fontweight='bold')
         ax.set_xlabel('Time (years)', fontsize=10)
@@ -1232,6 +1399,9 @@ def plot_psm_trace(
 
     if title is None:
         title = 'State Occupancy by Strategy'
+    if (smooth and model.terminal_state is not None
+            and all(d[2] != 'steps-post' for d in display_data.values())):
+        title += ' (smoothed display)'
     fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
 
     fig.tight_layout(rect=(0, .08, 1, .97))
@@ -1241,7 +1411,7 @@ def plot_psm_trace(
 @_with_plot_style
 def plot_psm_comparison(
     psm_result, endpoint: str, figsize: tuple = (10, 6),
-    title: Optional[str] = None,
+    title: Optional[str] = None, n_points: int = 501,
 ):
     """Compare a single survival endpoint across strategies with shaded area."""
 
@@ -1254,15 +1424,14 @@ def plot_psm_comparison(
     all_surv = {}
 
     for s_idx, strategy in enumerate(model.strategy_names):
-        r = psm_result.results[strategy]
-        times = r['times']
-        surv = r['survival_curves'][endpoint]
+        times, curves, drawstyles = _psm_plot_data(psm_result, strategy, n_points)
+        surv = curves[endpoint]
         all_surv[strategy] = surv
         if all_times is None:
             all_times = times
 
         ax.plot(times, surv, color=colors[s_idx], linewidth=2.5,
-                label=model.strategy_labels[strategy])
+                label=model.strategy_labels[strategy], drawstyle=drawstyles[endpoint])
 
     if model.n_strategies == 2:
         s1, s2 = model.strategy_names[:2]
@@ -1297,6 +1466,7 @@ def plot_microsim_trace(
     strategy: Optional[str] = None,
     figsize: tuple = (12, 6),
     title: Optional[str] = None,
+    smooth: bool = True, n_points: int = 501,
     **kwargs,
 ):
     """Plot mean state occupancy trace from microsimulation.
@@ -1307,6 +1477,11 @@ def plot_microsim_trace(
         Microsimulation result object.
     strategy : str, optional
         Plot a single strategy. Default: all strategies.
+    smooth : bool
+        Display-only interpolation through cycle occupancy (default True).
+        Preserves bounds and total occupancy; False uses original cycle points.
+    n_points : int
+        Minimum number of display points.
     """
     model = result.model
     strategies = [strategy] if strategy else model.strategy_names
@@ -1332,9 +1507,10 @@ def plot_microsim_trace(
     for s_idx, strat in enumerate(strategies):
         ax = axes[s_idx]
         trace = result.results[strat]['trace']
+        display_times, trace = _occupancy_display(cycles, trace, smooth=smooth, n_points=n_points)
 
         for j in range(model.n_states):
-            ax.plot(cycles, trace[:, j], color=state_borders[j],
+            ax.plot(display_times, trace[:, j], color=state_borders[j],
                     linewidth=2, label=model.states[j])
 
         ax.set_xlabel('Time (years)', fontsize=11)
@@ -1351,6 +1527,8 @@ def plot_microsim_trace(
 
     if title is None:
         title = 'Microsimulation — State Occupancy Trace'
+    if smooth:
+        title += ' (smoothed display)'
     fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
     fig.tight_layout(rect=(0, .08, 1, .97))
     return fig
@@ -1361,30 +1539,52 @@ def plot_microsim_survival(
     result,
     figsize: tuple = (10, 7),
     title: Optional[str] = None,
+    style: Optional[str] = None,
+    n_points: int = 501,
     **kwargs,
 ):
     """Plot empirical survival curves from microsimulation.
 
     Parameters
     ----------
-    result : MicroSimResult
-        Microsimulation result object.
+    result : MicroSimResult or DESResult
+        Individual simulation result.
+    style : {"smooth", "line", "step"}, optional
+        MicroSim defaults to smooth monotone interpolation through the
+        original cycle points. DES defaults to its empirical step curve.
+        This changes only the drawing, not the outcomes or survival data.
+    n_points : int
+        Minimum display points for smooth interpolation.
     """
     model = result.model
     colors = _get_strategy_colors(model.n_strategies)
+    if style is None:
+        style = 'step' if hasattr(model, 'time_horizon') else 'smooth'
+    if style not in {'smooth', 'line', 'step'}:
+        raise ValueError("style must be 'smooth', 'line', or 'step'")
+    if isinstance(n_points, bool) or not isinstance(n_points, (int, np.integer)) or n_points < 2:
+        raise ValueError('n_points must be an integer of at least 2')
 
     fig, ax = plt.subplots(figsize=figsize)
 
     surv_df = result.survival_curve()
     for s_idx, strat in enumerate(model.strategy_names):
         df_s = surv_df[surv_df['Strategy'] == model.strategy_labels[strat]]
-        ax.plot(df_s['Time'].values, df_s['Survival'].values,
+        times = df_s['Time'].to_numpy()
+        probabilities = df_s['Survival'].to_numpy()
+        if style == 'smooth' and len(times) >= 2:
+            from scipy.interpolate import PchipInterpolator
+            display_times = np.union1d(times, np.linspace(times[0], times[-1], n_points))
+            probabilities = PchipInterpolator(times, probabilities)(display_times)
+            times = display_times
+        ax.plot(times, probabilities,
                 color=colors[s_idx], linewidth=2.5,
-                label=model.strategy_labels[strat])
+                label=model.strategy_labels[strat],
+                drawstyle='steps-post' if style == 'step' else 'default')
 
     ax.set_ylim(-0.02, 1.05)
     ax.set_xlim(left=0)
-    ax.set_xlabel('Time (years)', fontsize=12)
+    ax.set_xlabel(f"Time ({getattr(model, 'time_unit', 'year')}s)", fontsize=12)
     ax.set_ylabel('Proportion Alive', fontsize=12)
 
     if title is None:
@@ -1392,6 +1592,8 @@ def plot_microsim_survival(
         # (Time, Strategy, Survival) shape from survival_curve().
         source = "DES" if type(result).__name__.startswith("DES") else "Microsimulation"
         title = f'{source} — Survival Curves'
+    if style == 'smooth':
+        title += ' (smoothed display)'
     ax.set_title(title, fontsize=14, fontweight='bold')
     _outside_legend(ax)
     fig.tight_layout()
@@ -1564,7 +1766,7 @@ def plot_ce_frontier(cea, figsize=(10, 8), title=None, show_labels=True,
 
 
 @_with_plot_style
-def plot_nmb_curve(cea, wtp_range=(0, 150000), n_wtp=301,
+def plot_nmb_curve(cea, wtp_range=(0, 150000), n_wtp=501,
                    figsize=(10, 7), title=None, currency: str = "$",
 ):
     """
@@ -1616,8 +1818,9 @@ def plot_nmb_curve(cea, wtp_range=(0, 150000), n_wtp=301,
 
 
 @_with_plot_style
-def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
+def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=501,
               show_ceac=True, figsize=(10, 7), title=None, currency: str = "$",
+              smooth: bool = True, bandwidth: Optional[float] = None,
 ):
     """
     Plot Cost-Effectiveness Acceptability Frontier (CEAF).
@@ -1633,6 +1836,11 @@ def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
     n_wtp : int
     show_ceac : bool
         Whether to show individual CEAC curves behind the CEAF.
+    smooth : bool
+        Display-only smoothing of strategy probabilities (default True).
+        Expected-NMB strategy switches are retained. False plots raw values.
+    bandwidth : float, optional
+        Gaussian standard deviation in WTP units; defaults to 1% of the range.
     figsize : tuple
     title : str, optional
     """
@@ -1641,20 +1849,30 @@ def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
     colors = _get_strategy_colors(cea.n_strategies)
     wtp_vals = ceaf_data["WTP"].values
 
+    probabilities = np.column_stack([ceaf_data[f'CEAC_{strat}'].to_numpy() for strat in cea.strategies])
+    display_wtp, display_probabilities = _ceac_display(wtp_vals, probabilities,
+                                                      smooth=smooth, bandwidth=bandwidth)
+    # Strategy choice uses expected NMB, independently of display smoothing.
+    mean_nmb = display_wtp[:,None] * cea.psa_qalys.mean(axis=0) - cea.psa_costs.mean(axis=0)
+    selected = mean_nmb.argmax(axis=1)
+    display_ceaf = display_probabilities[np.arange(len(display_wtp)), selected]
+    if not smooth:
+        selected = np.array([cea.strategies.index(s) for s in ceaf_data['Optimal_Strategy']])
+        display_ceaf = ceaf_data['CEAF'].to_numpy()
     # Individual CEAC curves
     if show_ceac:
         for j, strat in enumerate(cea.strategies):
             col = f"CEAC_{strat}"
-            ax.plot(wtp_vals, ceaf_data[col].values,
+            ax.plot(display_wtp, display_probabilities[:,j],
                     color=colors[j], linewidth=1, alpha=0.4, linestyle='--',
                     label=f'{strat} (CEAC)')
 
     # CEAF = bold envelope
-    ax.plot(wtp_vals, ceaf_data["CEAF"].values,
+    ax.plot(display_wtp, display_ceaf,
             color='black', linewidth=2.5, label='CEAF')
 
     # Shade regions by optimal strategy
-    optimal_strats = ceaf_data["Optimal_Strategy"].values
+    optimal_strats = np.asarray(cea.strategies)[selected]
     unique_regions = []
     i = 0
     while i < len(optimal_strats):
@@ -1667,7 +1885,7 @@ def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
     for start, end, strat in unique_regions:
         color_idx = cea.strategies.index(strat)
         ax.fill_between(
-            wtp_vals[start:end + 1], 0, ceaf_data["CEAF"].values[start:end + 1],
+            display_wtp[start:end + 1], 0, display_ceaf[start:end + 1],
             alpha=0.08, color=colors[color_idx],
         )
 
@@ -1677,6 +1895,8 @@ def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{currency}{x:,.0f}'))
     if title is None:
         title = "Cost-Effectiveness Acceptability Frontier (CEAF)"
+    if smooth:
+        title += ' (smoothed display)'
     ax.set_title(title, fontsize=14, fontweight='bold')
     _outside_legend(ax, fontsize=10)
     fig.tight_layout()
@@ -1684,7 +1904,7 @@ def plot_ceaf(cea, wtp_range=(0, 150000), n_wtp=301,
 
 
 @_with_plot_style
-def plot_evpi(cea, wtp_range=(0, 150000), n_wtp=301,
+def plot_evpi(cea, wtp_range=(0, 150000), n_wtp=501,
               figsize=(10, 7), title=None, population=None, currency: str = "$",
 ):
     """

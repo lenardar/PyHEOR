@@ -1,348 +1,244 @@
-"""Golden tests pinning the calculation semantics shared by all engines.
-
-Each class corresponds to one rule of the agreed calculation conventions:
-
-1. ``n_cycles=N`` means N reward intervals, not N+1.
-2. Half-cycle correction averages the two interval endpoints.
-3. Per-year state costs scale with ``cycle_length``.
-4. ``method="starting"`` costs are lump sums at time zero.
-5. Transition costs are events, unaffected by half-cycle correction.
-6. Discrete and continuous discounting are distinct, hand-checkable conventions.
-7. Seeded runs reproduce (covered in ``test_reproducibility.py``).
-8. Incremental quadrants are classified before dividing.
-"""
-
+"""Hand-calculated goldens for explicit cycles and heemod reward conventions."""
 import numpy as np
 import pytest
-
-from pyheor import (
-    C,
-    DESModel,
-    MarkovModel,
-    MicroSimModel,
-    PSMModel,
-)
-from pyheor.survival import Exponential, KaplanMeier
-
-ALIVE_FOREVER = [[1, 0], [0, 1]]
-DEAD_AFTER_ONE_INTERVAL = [[0, 1], [0, 1]]
-
-# Step curves let PSM reproduce the cohort scenarios exactly rather than
-# approximately: S(t)=1 never leaves the alive state, S(0)=1/S(1)=0 empties it
-# at the end of the first interval.
-NEVER_DIES = KaplanMeier(times=[0.0], survival_probs=[1.0])
-DIES_AT_ONE = KaplanMeier(times=[0.0, 1.0], survival_probs=[1.0, 0.0])
+import pyheor as ph
 
 
-# =============================================================================
-# Builders
-# =============================================================================
-
-def build_markov(transitions, n_cycles=10, cycle_length=1.0, hcc=False, **kw):
-    model = MarkovModel(
-        states=["Alive", "Dead"],
-        strategies=["S1"],
-        n_cycles=n_cycles,
-        cycle_length=cycle_length,
-        half_cycle_correction=hcc,
-        **kw,
-    )
-    model.set_transitions("S1", lambda p, t: transitions)
-    model.set_utility({"Alive": 1.0, "Dead": 0.0})
+def identity(kind='markov', *, method='life-table', cycle=None, n_cycles=3, **kwargs):
+    cycle = cycle or ph.Cycle(1, 'year')
+    shared = dict(states=['Alive', 'Dead'], strategies=['S'], n_cycles=n_cycles,
+                  cycle=cycle, method=method, **kwargs)
+    if kind == 'psm':
+        model = ph.PSMModel(**shared, survival_endpoints=['OS'])
+        model.set_survival('S', 'OS', ph.KaplanMeier([0], [1]))
+    else:
+        model = (ph.MarkovModel(**shared) if kind == 'markov'
+                 else ph.MicroSimModel(**shared, n_patients=4))
+        model.set_transitions('S', [[1, 0], [0, 1]])
     return model
 
 
-def build_psm(curve, n_cycles=10, cycle_length=1.0, hcc=False, **kw):
-    model = PSMModel(
-        states=["Alive", "Dead"],
-        survival_endpoints=["OS"],
-        strategies=["S1"],
-        n_cycles=n_cycles,
-        cycle_length=cycle_length,
-        half_cycle_correction=hcc,
-        **kw,
-    )
-    model.set_survival("S1", "OS", curve)
-    model.set_utility({"Alive": 1.0, "Dead": 0.0})
-    return model
+def totals(model):
+    if isinstance(model, ph.MicroSimModel):
+        r = model.run_base_case(seed=7, verbose=False).results['S']
+        return r['mean_cost'], r['mean_qalys'], r['mean_lys']
+    r = model.run_base_case().results['S']
+    return sum(r['total_costs'].values()), r['total_qalys'], r['total_lys']
 
 
-def build_microsim(transitions, n_cycles=10, cycle_length=1.0, hcc=False, **kw):
-    model = MicroSimModel(
-        states=["Alive", "Dead"],
-        strategies=["S1"],
-        n_cycles=n_cycles,
-        cycle_length=cycle_length,
-        n_patients=5,
-        half_cycle_correction=hcc,
-        **kw,
-    )
-    model.set_transitions("S1", lambda p, t: transitions)
-    model.set_utility({"Alive": 1.0, "Dead": 0.0})
-    return model
+@pytest.mark.parametrize('kind', ['markov', 'psm', 'micro'])
+@pytest.mark.parametrize('method', ['beginning', 'end', 'life-table'])
+def test_monthly_cycle_costs_are_not_scaled_again(kind, method):
+    m = identity(kind, cycle=ph.Cycle(1, 'month'), n_cycles=12, method=method)
+    m.set_state_cost('care', {'Alive': 100})
+    m.set_state_qaly('health', {'Alive': ph.qaly(.8, m.cycle)})
+    assert totals(m) == pytest.approx((1200, .8, 1))
 
 
-def total_lys(model):
-    if isinstance(model, MicroSimModel):
-        result = model.run_base_case(seed=1, verbose=False)
-        return float(np.mean(result.results["S1"]["total_lys"]))
-    return model.run_base_case().results["S1"]["total_lys"]
+@pytest.mark.parametrize('kind', ['markov', 'psm', 'micro'])
+def test_first_cycle_undiscounted_and_later_cycles_discounted(kind):
+    m = identity(kind, dr_cost=.1, dr_qaly=.2)
+    m.set_state_cost('care', {'Alive': 100})
+    m.set_state_qaly('health', {'Alive': 1})
+    assert totals(m) == pytest.approx((sum(100 / 1.1**i for i in range(3)),
+                                      sum(1 / 1.2**i for i in range(3)),
+                                      sum(1 / 1.2**i for i in range(3))))
 
 
-def total_cost(model, category="care"):
-    if isinstance(model, MicroSimModel):
-        result = model.run_base_case(seed=1, verbose=False)
-        return float(np.mean(result.results["S1"]["total_cost"]))
-    return model.run_base_case().results["S1"]["total_costs"][category]
+@pytest.mark.parametrize('kind', ['markov', 'psm', 'micro'])
+def test_starting_rewards_differ_from_first_cycle_state_rewards(kind):
+    m = identity(kind, n_cycles=1)
+    if kind == 'psm':
+        m.set_survival('S', 'OS', ph.KaplanMeier([0, 1], [1, 0]))
+    else:
+        m.set_transitions('S', [[0, 1], [0, 1]])
+    m.set_state_cost('care', {'Alive': 100}, cycles=1)
+    m.set_starting_cost('test', 100)
+    m.set_starting_qaly('ae', -.2)
+    m.set_state_qaly('baseline', {'Alive': 1})
+    assert totals(m) == pytest.approx((150, .3, .5))
 
 
-
-# =============================================================================
-# 1. N intervals, not N+1
-# =============================================================================
-
-class TestTenIntervalsGiveTenLifeYears:
-    """Ten one-year intervals alive accrue 10 LY, regardless of correction."""
-
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_markov(self, hcc):
-        assert total_lys(build_markov(ALIVE_FOREVER, hcc=hcc)) == pytest.approx(10.0)
-
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_psm(self, hcc):
-        assert total_lys(build_psm(NEVER_DIES, hcc=hcc)) == pytest.approx(10.0)
-
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_microsim(self, hcc):
-        assert total_lys(build_microsim(ALIVE_FOREVER, hcc=hcc)) == pytest.approx(10.0)
-
-    def test_des(self):
-        model = DESModel(
-            states=["Alive", "Dead"], strategies=["S1"], time_horizon=10.0
-        )
-        model.set_utility({"Alive": 1.0})
-        result = model.run(n_patients=1, seed=1, progress=False)
-        assert float(result.results["S1"]["total_lys"][0]) == pytest.approx(10.0)
+@pytest.mark.parametrize('method,expected', [('beginning', 1), ('end', 0), ('life-table', .5)])
+@pytest.mark.parametrize('kind', ['markov', 'psm', 'micro'])
+def test_death_after_first_interval(method, expected, kind):
+    m = identity(kind, method=method, n_cycles=1)
+    if kind == 'psm':
+        m.set_survival('S', 'OS', ph.KaplanMeier([0, 1], [1, 0]))
+    else:
+        m.set_transitions('S', [[0, 1], [0, 1]])
+    m.set_state_qaly('baseline', {'Alive': 1})
+    assert totals(m)[1:] == pytest.approx((expected, expected))
 
 
-# =============================================================================
-# 2. Half-cycle correction averages interval endpoints
-# =============================================================================
-
-class TestDeathAtFirstIntervalEnd:
-    """Without correction the interval yields 1 LY; trapezoidal yields 0.5."""
-
-    @pytest.mark.parametrize("hcc,expected", [(False, 1.0), (True, 0.5)])
-    def test_markov(self, hcc, expected):
-        model = build_markov(DEAD_AFTER_ONE_INTERVAL, hcc=hcc)
-        assert total_lys(model) == pytest.approx(expected)
-
-    @pytest.mark.parametrize("hcc,expected", [(False, 1.0), (True, 0.5)])
-    def test_psm(self, hcc, expected):
-        assert total_lys(build_psm(DIES_AT_ONE, hcc=hcc)) == pytest.approx(expected)
-
-    @pytest.mark.parametrize("hcc,expected", [(False, 1.0), (True, 0.5)])
-    def test_microsim(self, hcc, expected):
-        model = build_microsim(DEAD_AFTER_ONE_INTERVAL, hcc=hcc)
-        assert total_lys(model) == pytest.approx(expected)
+@pytest.mark.parametrize('kind', ['markov', 'micro'])
+@pytest.mark.parametrize('method,expected', [('beginning', 100/1.1), ('end', 100), ('life-table', 50+50/1.1)])
+def test_transition_rewards_follow_heemod_flow_correction(kind, method, expected):
+    m = identity(kind, method=method, n_cycles=2, dr_cost=.1, dr_qaly=.1)
+    m.set_transitions('S', [[0, 1], [0, 1]])
+    m.set_transition_cost('procedure', 'Alive', 'Dead', 100)
+    m.set_transition_qaly('procedure', 'Alive', 'Dead', -.1)
+    cost, health, _ = totals(m)
+    assert cost == pytest.approx(expected)
+    assert health == pytest.approx(-expected / 1000)
 
 
-# =============================================================================
-# 3. Per-year state costs scale with cycle length
-# =============================================================================
-
-class TestHalfYearCycleHalvesAnnualCost:
-    """A 100/year rate over one half-year interval costs 50."""
-
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_markov(self, hcc):
-        model = build_markov(ALIVE_FOREVER, n_cycles=1, cycle_length=0.5, hcc=hcc)
-        model.set_state_cost("care", {"Alive": 100, "Dead": 0})
-        assert total_cost(model) == pytest.approx(50.0)
-
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_psm(self, hcc):
-        model = build_psm(NEVER_DIES, n_cycles=1, cycle_length=0.5, hcc=hcc)
-        model.set_state_cost("care", {"Alive": 100, "Dead": 0})
-        assert total_cost(model) == pytest.approx(50.0)
-
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_microsim(self, hcc):
-        model = build_microsim(ALIVE_FOREVER, n_cycles=1, cycle_length=0.5, hcc=hcc)
-        model.set_state_cost("care", {"Alive": 100, "Dead": 0})
-        assert total_cost(model) == pytest.approx(50.0)
+@pytest.mark.parametrize('kind', ['markov', 'psm', 'micro'])
+def test_named_components_cycle_filters_and_dynamic_params(kind):
+    m = identity(kind, n_cycles=4)
+    m.add_param('cost', 10, low=5, high=20)
+    m.add_param('u', .8, low=.4, high=1)
+    m.set_state_cost('drug', lambda p, k: {'Alive': p['cost'] * k}, cycles=[1, 3])
+    m.set_state_qaly('health', lambda p, k: {'Alive': ph.qaly(p['u'], m.cycle)})
+    m.set_state_qaly('ae', {'Alive': -.1}, cycles=2)
+    assert totals(m)[:2] == pytest.approx((40, 3.1))
+    p = m._get_base_params(); p['cost'] = 5; p['u'] = .4
+    if kind != 'micro':
+        r = m._simulate_single(p)['S']
+        assert sum(r['total_costs'].values()) == pytest.approx(20)
+        assert r['total_qalys'] == pytest.approx(1.5)
 
 
-# =============================================================================
-# 4. Starting costs are lump sums
-# =============================================================================
-
-class TestStartingCostIsInvariant:
-    """A 100 starting cost stays 100 across cycle lengths and corrections."""
-
-    @pytest.mark.parametrize("cycle_length", [0.5, 1.0])
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_markov(self, cycle_length, hcc):
-        model = build_markov(
-            ALIVE_FOREVER, n_cycles=4, cycle_length=cycle_length, hcc=hcc
-        )
-        model.set_state_cost(
-            "care", {"Alive": 100, "Dead": 0}, method="starting"
-        )
-        assert total_cost(model) == pytest.approx(100.0)
-
-    @pytest.mark.parametrize("cycle_length", [0.5, 1.0])
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_psm(self, cycle_length, hcc):
-        model = build_psm(
-            NEVER_DIES, n_cycles=4, cycle_length=cycle_length, hcc=hcc
-        )
-        model.set_state_cost(
-            "care", {"Alive": 100, "Dead": 0}, method="starting"
-        )
-        assert total_cost(model) == pytest.approx(100.0)
-
-    @pytest.mark.parametrize("cycle_length", [0.5, 1.0])
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_microsim(self, cycle_length, hcc):
-        model = build_microsim(
-            ALIVE_FOREVER, n_cycles=4, cycle_length=cycle_length, hcc=hcc
-        )
-        model.set_state_cost(
-            "care", {"Alive": 100, "Dead": 0}, method="starting"
-        )
-        assert total_cost(model) == pytest.approx(100.0)
+@pytest.mark.parametrize('kind', ['markov', 'psm', 'micro'])
+def test_discount_conversion_expression_recomputed_for_draws(kind):
+    m = identity(kind, n_cycles=2,
+                 dr_cost=lambda p: ph.rescale_discount_rate(p['r'], 1, .5))
+    m.add_param('r', .21, low=0, high=.44)
+    m.set_state_cost('care', {'Alive': 100})
+    assert totals(m)[0] == pytest.approx(100 + 100/1.1)
+    if kind != 'micro':
+        r = m._simulate_single({'r': .44})['S']
+        assert sum(r['total_costs'].values()) == pytest.approx(100 + 100/1.2)
 
 
-# =============================================================================
-# 5. Transition costs are events
-# =============================================================================
-
-class TestTransitionCostIsAnEvent:
-    @pytest.mark.parametrize("hcc", [False, True])
-    def test_unaffected_by_half_cycle_correction(self, hcc):
-        model = build_markov(DEAD_AFTER_ONE_INTERVAL, n_cycles=1, hcc=hcc)
-        model.set_transition_cost("surgery", "Alive", "Dead", 100)
-        assert total_cost(model, "surgery") == pytest.approx(100.0)
-
-    @pytest.mark.parametrize("hcc,state_part", [(False, 100.0), (True, 50.0)])
-    def test_sharing_a_category_with_a_state_cost_keeps_both_timings(
-        self, hcc, state_part
-    ):
-        model = build_markov(DEAD_AFTER_ONE_INTERVAL, n_cycles=1, hcc=hcc)
-        model.set_state_cost("surgery", {"Alive": 100, "Dead": 0})
-        model.set_transition_cost("surgery", "Alive", "Dead", 100)
-        assert total_cost(model, "surgery") == pytest.approx(state_part + 100.0)
+def test_context_flows_and_probabilities_are_explicit_and_readonly():
+    m = identity(n_cycles=2)
+    m.set_transitions('S', [[.8, .2], [0, 1]])
+    seen = []
+    def cost(ctx):
+        seen.append(ctx.cycle_index)
+        assert ctx.transition_matrix[0, 1] == .2
+        with pytest.raises(ValueError):
+            ctx.state_prev[0] = 0
+        return ctx.flow('Alive', 'Dead') * 100
+    m.set_custom_cost('procedure', cost)
+    m.set_custom_qaly('loss', lambda ctx: -.1 * ctx.flow('Alive', 'Dead'))
+    assert totals(m)[:2] == pytest.approx((36, -.036))
+    assert seen == [1, 2]
 
 
-# =============================================================================
-# 6. Discrete vs continuous discounting
-# =============================================================================
-
-class TestDiscountingConventions:
-    """State flows discount at interval midpoints, events at interval ends."""
-
-    @pytest.mark.parametrize("convention,factor", [
-        ("discrete", 1.1 ** -0.5),
-        ("continuous", np.exp(-0.1 * 0.5)),
-    ])
-    def test_markov_state_cost_uses_interval_midpoint(self, convention, factor):
-        model = build_markov(
-            ALIVE_FOREVER, n_cycles=1, dr_cost=0.1,
-            discount_convention=convention,
-        )
-        model.set_state_cost("care", {"Alive": 100, "Dead": 0})
-        assert total_cost(model) == pytest.approx(100.0 * factor)
-
-    @pytest.mark.parametrize("convention,factor", [
-        ("discrete", 1.1 ** -1.0),
-        ("continuous", np.exp(-0.1)),
-    ])
-    def test_markov_transition_cost_uses_interval_end(self, convention, factor):
-        model = build_markov(
-            DEAD_AFTER_ONE_INTERVAL, n_cycles=1, dr_cost=0.1,
-            discount_convention=convention,
-        )
-        model.set_transition_cost("surgery", "Alive", "Dead", 100)
-        assert total_cost(model, "surgery") == pytest.approx(100.0 * factor)
-
-    @pytest.mark.parametrize("convention,factor", [
-        ("discrete", 1.1 ** -0.5),
-        ("continuous", np.exp(-0.1 * 0.5)),
-    ])
-    def test_psm_state_cost_uses_interval_midpoint(self, convention, factor):
-        model = build_psm(
-            NEVER_DIES, n_cycles=1, dr_cost=0.1,
-            discount_convention=convention,
-        )
-        model.set_state_cost("care", {"Alive": 100, "Dead": 0})
-        assert total_cost(model) == pytest.approx(100.0 * factor)
-
-    @pytest.mark.parametrize("convention,expected", [
-        ("discrete", 100.0 * (1 - 1.1 ** -1) / np.log(1.1)),
-        ("continuous", 100.0 * (1 - np.exp(-0.1)) / 0.1),
-    ])
-    def test_des_integrates_the_flow_over_real_time(self, convention, expected):
-        model = DESModel(
-            states=["Alive", "Dead"], strategies=["S1"], time_horizon=1.0,
-            dr_cost=0.1, discount_convention=convention,
-        )
-        model.set_state_cost("care", {"Alive": 100})
-        model.set_utility({"Alive": 1.0})
-        result = model.run(n_patients=1, seed=1, progress=False)
-        assert float(result.results["S1"]["total_cost"][0]) == pytest.approx(expected)
+def test_psm_does_not_invent_flows():
+    m = identity('psm')
+    with pytest.raises(ValueError, match='PSM'):
+        m.set_entry_cost('rescue', 'Dead', 100)
+    m.set_custom_cost('bad', lambda ctx: ctx.flow('Alive', 'Dead'))
+    with pytest.raises(ValueError, match='does not identify'):
+        m.run_base_case()
 
 
-# =============================================================================
-# 8. Quadrant before division
-# =============================================================================
-
-def dominance_label(frame):
-    return frame.iloc[0]["ICER Classification"]
+@pytest.mark.parametrize('cycles', [0, [0], [4], [True], [1, 1], [.5]])
+def test_invalid_cycles_rejected(cycles):
+    with pytest.raises((TypeError, ValueError)):
+        identity().set_state_cost('care', {'Alive': 1}, cycles=cycles)
 
 
-class TestCostlierAndLessEffectiveIsDominated:
-    """+100 cost and -0.5 QALY is Dominated, never a negative ratio."""
+def test_removed_interfaces_fail_explicitly():
+    m = identity()
+    assert not hasattr(m, 'set_utility')
+    with pytest.raises(TypeError):
+        m.set_state_cost('care', {'Alive': 100}, first_cycle_only=True)
+    with pytest.raises(TypeError):
+        m.set_transition_cost('care', 'Alive', 'Dead', [100, 20])
+    with pytest.raises(TypeError):
+        ph.MarkovModel(['Alive', 'Dead'], ['S'], 2, cycle_length=.5)
 
-    def test_markov(self):
-        model = MarkovModel(
-            states=["Alive", "Dead"], strategies=["SOC", "TRT"],
-            n_cycles=1, half_cycle_correction=False,
-        )
-        for strategy in ("SOC", "TRT"):
-            model.set_transitions(strategy, lambda p, t: ALIVE_FOREVER)
-        model.set_state_cost("care", {"SOC": {"Alive": 0}, "TRT": {"Alive": 100}})
-        model.set_utility({"SOC": {"Alive": 1.0}, "TRT": {"Alive": 0.5}})
-        assert dominance_label(model.run_base_case().icer()) == "Dominated"
 
-    def test_psm(self):
-        model = PSMModel(
-            states=["Alive", "Dead"], survival_endpoints=["OS"],
-            strategies=["SOC", "TRT"], n_cycles=1, half_cycle_correction=False,
-        )
-        for strategy in ("SOC", "TRT"):
-            model.set_survival(strategy, "OS", NEVER_DIES)
-        model.set_state_cost("care", {"SOC": {"Alive": 0}, "TRT": {"Alive": 100}})
-        model.set_utility({"SOC": {"Alive": 1.0}, "TRT": {"Alive": 0.5}})
-        assert dominance_label(model.run_base_case().icer()) == "Dominated"
+def test_des_continuous_rates_and_event_rewards_in_months(monkeypatch):
+    m = ph.DESModel(states=['Alive', 'Dead'], strategies=['S'], time_horizon=2,
+                    time_unit='month', dr_cost=.1)
+    m.set_event('S', 'Alive', 'Dead', ph.Exponential(1))
+    monkeypatch.setattr(m, '_sample_tte', lambda dist, rng=None: 1)
+    m.set_state_cost('drug', {'Alive': 100})
+    m.set_state_qaly('health', {'Alive': ph.qaly(.8, duration=1, unit='month')})
+    m.set_starting_cost('test', 10)
+    m.set_entry_cost('eol', 'Dead', 110)
+    m.set_transition_qaly('loss', 'Alive', 'Dead', -.01)
+    r = m.run(n_patients=2, progress=False).results['S']
+    assert r['total_cost'] == pytest.approx([10+100*(1-1/1.1)/np.log(1.1)+100]*2)
+    assert r['total_qalys'] == pytest.approx([.8/12-.01]*2)
+    assert r['total_lys'] == pytest.approx([1/12]*2)
 
-    def test_des(self):
-        model = DESModel(
-            states=["Alive", "Dead"], strategies=["SOC", "TRT"], time_horizon=1.0,
-        )
-        model.set_state_cost("care", {"SOC": {"Alive": 0}, "TRT": {"Alive": 100}})
-        model.set_utility({"SOC": {"Alive": 1.0}, "TRT": {"Alive": 0.5}})
-        result = model.run(n_patients=1, seed=1, progress=False)
-        assert dominance_label(result.icer()) == "Dominated"
 
-    def test_microsim(self):
-        model = MicroSimModel(
-            states=["Alive", "Dead"], strategies=["SOC", "TRT"],
-            n_cycles=1, n_patients=5, half_cycle_correction=False,
-        )
-        for strategy in ("SOC", "TRT"):
-            model.set_transitions(strategy, lambda p, t: ALIVE_FOREVER)
-        model.set_state_cost("care", {"SOC": {"Alive": 0}, "TRT": {"Alive": 100}})
-        model.set_utility({"SOC": {"Alive": 1.0}, "TRT": {"Alive": 0.5}})
-        result = model.run_base_case(seed=1, verbose=False)
-        assert dominance_label(result.icer()) == "Dominated"
+def test_des_time_varying_state_rewards_are_integrated():
+    m = ph.DESModel(states=['Alive','Dead'], strategies=['S'], time_horizon=2)
+    m.set_state_cost('care', lambda p, time: {'Alive': 100*time})
+    m.set_state_qaly('health', lambda p, time: {'Alive': .8-.1*time})
+    r = m.run(n_patients=2, progress=False).results['S']
+    assert r['total_cost'] == pytest.approx([200]*2)
+    assert r['total_qalys'] == pytest.approx([1.4]*2)
+
+
+def test_terminal_bookkeeping_with_synthetic_counts():
+    # Synthetic hand-calculated example; contains no research data.
+    cycle = ph.Cycle(1, 'month')
+    m = ph.PSMModel(states=['PFS','PD','Terminal','Dead'],
+                    survival_endpoints=['PFS','OS'],strategies=['SOC'],
+                    n_cycles=2,cycle=cycle,terminal_state='Terminal')
+    m.set_survival('SOC','PFS',ph.KaplanMeier([0,1,2],[1,.8,.6]))
+    m.set_survival('SOC','OS',ph.KaplanMeier([0,1,2],[1,.9,.7]))
+    m.set_state_cost('care',{'PFS':10,'PD':20,'Terminal':100})
+    m.set_starting_cost('initial',5)
+    m.set_state_qaly('health',{'PFS':ph.qaly(.6,cycle),'PD':ph.qaly(.3,cycle)})
+    m.set_starting_qaly('loss',-.01)
+    r=m.run_base_case().results['SOC']
+    np.testing.assert_allclose(r['trace'],[[1,0,0,0],[.8,.1,.1,0],[.6,.1,.2,.1]],atol=1e-15)
+    assert sum(r['total_costs'].values())==pytest.approx(44)
+    assert r['total_qalys']==pytest.approx(.07375)
+    assert r['total_lys']==pytest.approx(1.75/12)
+
+
+@pytest.mark.parametrize('kind', ['markov', 'psm', 'micro'])
+def test_psa_recomputes_qaly_survival_and_discount_conversions(kind):
+    cycle = ph.Cycle(1, 'month')
+    m = identity(kind, cycle=cycle, n_cycles=2,
+                 dr_cost=lambda p: ph.rescale_discount_rate(p['r'], 12, 1))
+    m.add_param('r', .03, dist=ph.Uniform(low=0,high=.1))
+    m.add_param('u', .8, dist=ph.Uniform(low=.5,high=.9))
+    m.set_state_cost('care', {'Alive': 100})
+    m.set_state_qaly('health', {'Alive': lambda p,k: ph.qaly(p['u'],cycle)})
+    if kind=='psm':
+        m.add_param('hazard', .1, dist=ph.Uniform(low=.05,high=.2))
+        m.set_survival('S','OS',lambda p: ph.rescale_survival(ph.Exponential(p['hazard']),from_unit='year',to_period=cycle))
+    psa=(m.run_psa(n_outer=3,n_inner=4,seed=19,verbose=False) if kind=='micro'
+         else m.run_psa(n_sim=3,seed=19,progress=False))
+    for params, results in zip(psa.sampled_params,psa.psa_results):
+        occupancy=np.ones(2)
+        if kind=='psm':
+            endpoints=np.exp(-params['hazard']*np.arange(3)/12)
+            occupancy=(endpoints[:-1]+endpoints[1:])/2
+        rate=(1+params['r'])**(1/12)-1
+        expected_cost=100*(occupancy[0]+occupancy[1]/(1+rate))
+        expected_qaly=params['u']/12*occupancy.sum()
+        result=results['S']
+        actual_cost=result['mean_cost'] if kind=='micro' else sum(result['total_costs'].values())
+        actual_qaly=result['mean_qalys'] if kind=='micro' else result['total_qalys']
+        assert actual_cost==pytest.approx(expected_cost)
+        assert actual_qaly==pytest.approx(expected_qaly)
+
+
+@pytest.mark.parametrize('method', ['beginning', 'end', 'life-table'])
+def test_micro_vectorized_rewards_match_individual_context_path(method):
+    m=identity('micro',method=method,n_cycles=3,dr_cost=.02)
+    m.set_transitions('S',[[.7,.3],[0,1]])
+    m.set_state_cost('care',{'Alive':lambda p,k:100*k})
+    m.set_state_qaly('health',{'Alive':.8})
+    m.set_starting_cost('start',30)
+    m.set_starting_qaly('ae',-.02)
+    m.set_entry_cost('entry','Alive',20)
+    m.set_transition_cost('terminal','Alive','Dead',500)
+    m.set_entry_qaly('loss','Dead',-.1)
+    fast=m.run_base_case(seed=42,verbose=False).results['S']
+    m.set_custom_cost('force_context',lambda ctx:0)
+    slow=m.run_base_case(seed=42,verbose=False).results['S']
+    for key in ('cost_history','qaly_history','ly_history','state_history'):
+        np.testing.assert_allclose(fast[key],slow[key],rtol=1e-12)

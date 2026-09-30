@@ -1,779 +1,178 @@
-# PyHEOR — Python Health Economics and Outcome Research
+# PyHEOR
 
-[English](README.md) | **中文** | [Français](README_fr.md)
+用于卫生经济学建模与成本效果分析的 Python 框架。
 
-> **用 Python 做卫生经济学建模，像 R 的 hesim / DARTH 一样专业，但更简洁。**
+[English](README.md) · [Français](README_fr.md)
 
-PyHEOR 是一个面向卫生经济学研究的 Python 框架，支持：
+## 结果展示
 
-| 功能                              | 说明                                                                                        |
-| --------------------------------- | ------------------------------------------------------------------------------------------- |
-| **Markov 队列模型**               | 离散时间状态转移模型 (cDTSTM)，时齐 / 时变转移矩阵                                          |
-| **分区生存模型 (PSM)**            | 基于参数化生存曲线的状态概率划分                                                            |
-| **微观模拟**                      | 个体水平状态转移模型，支持患者异质性、事件处理器、双层 PSA                                  |
-| **离散事件模拟 (DES)**            | 连续时间个体模拟，竞争风险、time-to-event 分布驱动、HR/AFT 集成                             |
-| **参数化生存分布**                | Exponential, Weibull, Log-logistic, Log-normal, Gompertz, Generalized Gamma 等 10 种        |
-| **灵活的费用定义**                | 首周期费用、时间依赖函数、一次性费用、WLOS 方法、转移费用计划表、自定义费用函数               |
-| **基础分析 / OWSA / PSA**         | 确定性分析、龙卷风图 (INMB/ICER)、Monte Carlo + CE 散点图 + CEAC                            |
-| **多策略比较 & NMB**              | 效率前沿、支配/扩展支配检测、NMB 曲线、CEAF、EVPI                                           |
-| **可视化**                        | 19 种专业图表：状态转移图、前沿图、NMB 曲线、CEAF、EVPI、CEAC 等                            |
-| **导出**                          | Excel 多 Sheet 导出、Excel 公式验证模型、Markdown 一键报告                                   |
+以下图形由仓库中的模拟示例生成，点击图片可查看原图。
 
----
+| 生存建模 | 参数不确定性 |
+|:---:|:---:|
+| [<img src="examples/psm_oncology/figures/survival_curves.png" width="440" alt="两种策略的 PFS 和 OS 生存曲线">](examples/psm_oncology/figures/survival_curves.png) | [<img src="examples/psm_oncology/figures/ce_scatter.png" width="440" alt="PSA 增量成本和增量 QALY 散点图">](examples/psm_oncology/figures/ce_scatter.png) |
+| 比较不同策略的 PFS 与 OS 拟合曲线。 | 展示 PSA 抽样中的增量成本与增量 QALY。 |
+| **成本效果可接受曲线（CEAC）** | **多策略决策分析（CEAF）** |
+| [<img src="examples/psm_oncology/figures/ceac.png" width="440" alt="两种策略的成本效果可接受曲线">](examples/psm_oncology/figures/ceac.png) | [<img src="examples/multi_strategy_comparison/figures/ceaf.png" width="440" alt="含策略切换的成本效果可接受前沿">](examples/multi_strategy_comparison/figures/ceaf.png) |
+| 查看成本效果概率随支付意愿阈值的变化。 | 展示推荐策略及其具有成本效果的概率。 |
 
-## 目录
-
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [用户指南](#用户指南)
-  - [模型类型](#模型类型) · [参数系统](#参数系统) · [转移矩阵](#转移矩阵) · [费用与效用](#费用与效用) · [生存分析](#生存分析) · [敏感性分析与报告](#敏感性分析与报告) · [高级功能](#高级功能) · [导出](#导出)
-- [可视化一览](#可视化一览)
-- [项目结构](#项目结构) · [设计理念](#设计理念) · [路线图](#路线图)
-
----
+运行[肿瘤 PSM](examples/psm_oncology/example.py)和[多策略比较](examples/multi_strategy_comparison/example.py)示例即可复现。CEAC/CEAF 图中已标注显示平滑；分析和导出保留原始概率。
 
 ## 安装
 
 ```bash
-# 从源码安装
-git clone <repo-url>
-cd pyheor
 pip install -e .
 ```
 
-依赖：`numpy`, `pandas`, `matplotlib`, `scipy`（可选：`openpyxl` 用于 Excel 导出，`tabulate` 用于 Markdown 报告）
+Python 3.9+；依赖 NumPy、SciPy、pandas、matplotlib、openpyxl。
 
----
+## 模型
+
+| 模型 | 时间 | 成本与效果 |
+|---|---|---|
+| `MarkovModel` | 显式固定周期 | 队列状态及转移收益 |
+| `PSMModel` | 显式固定周期 | 生存曲线决定占比，可选 Terminal 临终记账状态 |
+| `MicroSimModel` | 显式固定周期 | 个体状态及转移收益，支持异质性与共同随机数 |
+| `DESModel` | 声明单位的连续时间 | 状态收益率按时间积分，事件收益按实际时间计入 |
+
+支持基线分析、敏感性分析、策略比较、CE 平面、CEAC、状态轨迹及报告。DES 保留基线和 PSA 分析。
 
 ## 快速开始
 
+状态成本与 QALY 输入是**每周期量**，贴现率是**每周期有效率**。第一周期不贴现。效用权重通过 `qaly()` 显式转换为 QALY，月周期的结果仍然是 QALY。
+
 ```python
 import pyheor as ph
 
-# ── 定义模型 ──
+cycle = ph.Cycle(1, "month")
 model = ph.MarkovModel(
-    states=["Healthy", "Sick", "Dead"],
-    strategies=["SOC", "Treatment"],
-    n_cycles=40,
-    cycle_length=1,
-    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="费用贴现率"),
-    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="效用贴现率"),
-    half_cycle_correction=True,
+    states=["Alive", "Dead"], strategies=["SOC", "TRT"],
+    n_cycles=120, cycle=cycle, method="life-table",
+    dr_cost=ph.rescale_discount_rate(.03, ph.Cycle(1, "year"), cycle),
+    dr_qaly=ph.rescale_discount_rate(.03, ph.Cycle(1, "year"), cycle),
 )
-
-# ── 参数 ──
-model.add_param("p_HS", base=0.15, low=0.10, high=0.20,
-    dist=ph.Beta(mean=0.15, sd=0.03))
-model.add_param("c_drug", base=2000, low=1500, high=2500,
-    dist=ph.Gamma(mean=2000, sd=400))
-
-# ── 转移矩阵 (ph.C = 补数) ──
-model.set_transitions("SOC", lambda p, t: [
-    [ph.C,  p["p_HS"], 0.02],
-    [0,     ph.C,      0.10],
-    [0,     0,         1   ],
-])
-model.set_transitions("Treatment", lambda p, t: [
-    [ph.C,  p["p_HS"] * 0.7, 0.02],
-    [0,     ph.C,             0.08],
-    [0,     0,                1   ],
-])
-
-# ── 费用 & 效用 ──
-model.set_state_cost("medical", {"Healthy": 500, "Sick": 3000, "Dead": 0})
-model.set_state_cost("drug", {
-    "SOC": {"Healthy": 0, "Sick": 0, "Dead": 0},
-    "Treatment": {
-        "Healthy": lambda p, t: p["c_drug"],
-        "Sick": lambda p, t: p["c_drug"],
-        "Dead": 0,
-    },
+model.add_param("u_alive", base=.8, dist=ph.Beta(mean=.8, sd=.05))
+model.set_transitions("SOC", [[.98, .02], [0, 1]])
+model.set_transitions("TRT", [[.985, .015], [0, 1]])
+model.set_state_cost("care", {
+    "SOC": {"Alive": 1000}, "TRT": {"Alive": 1500},
 })
-model.set_utility({"Healthy": 0.95, "Sick": 0.60, "Dead": 0.0})
+model.set_state_qaly("health", {
+    "Alive": lambda p, k: ph.qaly(p["u_alive"], cycle),
+})
+model.set_starting_cost("test", 200)
+model.set_state_cost("loading", {"Alive": 500}, cycles=1)
+model.set_transition_cost("terminal", "Alive", "Dead", 10000)
 
-# ── 运行分析 ──
-result = model.run_base_case()
-print(result.summary())
-print(result.icer())
-
-owsa = model.run_owsa()       # 贴现率通过 Param 自动参与 OWSA
-owsa.plot_tornado()
-
-psa = model.run_psa(n_sim=1000)
-psa.plot_ceac()
-
-# ── 一键生成 Markdown 报告 ──
-ph.generate_report(model, "report.md")
+base = model.run_base_case()
+print(base.summary())
+print(base.icer())
+psa = model.run_psa(n_sim=100, seed=42)
 ```
 
----
+## 成本和效果
 
-## 用户指南
+成本和 QALY 具有对应的状态、起始一次性、入态、转移、自定义接口。状态收益通过 `cycles=1` 或周期列表限定发生时间；回调支持参数、从 1 开始的周期编号以及患者属性。起始一次性收益不加权；第一周期状态收益按占比加权，两者含义不同。
 
-### 模型类型
+`method` 为 `beginning`、`end` 或默认 `life-table`，状态计数及转移流量矫正遵循 heemod。PSM 无法从 PFS/OS 曲线识别每对状态的转移流量，因此不支持入态/转移收益，可按文档使用 Terminal 临终费用记账。
 
-所有模型都提供统一的完整类名，并保留简洁别名用于日常建模：
+## 实用工具
 
-| 完整类名 | 简洁别名 |
+所有工具均可通过 `import pyheor as ph` 使用。模型不会自动猜测输入单位；下面的工具帮助显式完成换算。
+
+| 工具 | 用途与输入口径 |
 |---|---|
-| `CohortStateTransitionModel` | `MarkovModel` |
-| `PartitionedSurvivalModel` | `PSMModel` |
-| `IndividualStateTransitionModel` | `MicroSimModel` |
-| `DiscreteEventSimulationModel` | `DESModel` |
-
-两种名称指向同一个类，可以互换使用。以下示例采用简洁别名。
-
-#### Markov 队列模型
-
-离散时间队列模型 (cDTSTM)，适用于状态转移概率已知的简单模型。完整示例见 [快速开始](#快速开始)。
-
-#### 分区生存模型 (PSM)
-
-基于参数化生存曲线推导状态占比，适用于肿瘤经济学中常见的 PFS/OS 分析框架。
+| `Cycle(length, unit)` | 定义周期；`.years` 返回年数，`.in_unit(unit)` 换算时长，`.time(k, unit=...)` 返回第 k 个周期边界的时间 |
+| `qaly(utility, duration, unit=None)` | 效用权重乘持续年数，得到 QALY；时长可用 `Cycle`，或数值加显式单位；支持效用数组及效用减损 |
+| `rescale_discount_rate(rate, from_period, to_period)` | 换算有效贴现率：`(1 + rate) ** (目标时长 / 原时长) - 1`；两个时长均用 `Cycle`，或均用同单位数值 |
+| `rescale_survival(curve, from_unit=..., to_period=...)` | 把拟合曲线的时间单位换成模型周期；同步转换风险率和分位时间 |
+| `from_flexsurv(distribution, **parameters)` | 用 R/flexsurv 的自然尺度参数构建生存分布；不接收优化器系数，也不自动转换时间单位 |
+| `ScaledSurvival(curve, factor)` | 底层时间缩放：`S_new(t) = S_old(t * factor)`；已知单位时优先使用 `rescale_survival()` |
+| `ProportionalHazards(curve, hr)` | 应用比例风险效应：`S_new(t) = S_old(t) ** hr`；HR 不改变时间单位 |
+| `AcceleratedFailureTime(curve, af)` | 应用生存时间倍数：`S_new(t) = S_old(t / af)`；例如 `af=1.2` 将生存时间延长 20% |
+| `Beta`、`Gamma`、`LogNormal` 的 `mean`/`sd` | 从原尺度均值和标准差自动推导抽样分布参数；`LogNormal` 也接受 `meanlog`/`sdlog` |
+| `C` | 自动补足转移矩阵一行的剩余概率；每行最多一个，例如 `[ph.C, .02]` 中 `C=.98` |
 
 ```python
 import pyheor as ph
 
-psm = ph.PSMModel(
-    states=["PFS", "Progressed", "Dead"],
-    survival_endpoints=["PFS", "OS"],
-    strategies=["SOC", "New Drug"],
-    n_cycles=120,
-    cycle_length=1/12,
-    dr_cost=0.03,
-    dr_qaly=0.03,
+month = ph.Cycle(1, "month")
+year = ph.Cycle(1, "year")
+monthly_qaly = ph.qaly(.8, month)                    # 0.066667 QALY
+monthly_cost = 12000 * month.years                  # 年成本 → 月成本：1000
+monthly_dr = ph.rescale_discount_rate(.03, year, month)
+three_month_qaly = ph.qaly(.8, 3, unit="month")      # 0.2 QALY
+month_boundaries = month.time([0, 1, 12], unit="year")
+
+# 这条 Weibull 曲线拟合时以年为单位；换算后 t=1 表示一个月。
+curve = ph.from_flexsurv("weibull", shape=1.3, scale=1.5)
+monthly_curve = ph.rescale_survival(
+    curve, from_unit="year", to_period=month,
 )
-
-# 基线生存曲线
-baseline_pfs = ph.LogLogistic(shape=1.5, scale=18)
-baseline_os = ph.Weibull(shape=1.2, scale=36)
-
-# SOC: 直接使用基线
-psm.set_survival("SOC", "PFS", baseline_pfs)
-psm.set_survival("SOC", "OS", baseline_os)
-
-# New Drug: HR / AFT 修饰
-psm.set_survival("New Drug", "PFS",
-    lambda p: ph.AcceleratedFailureTime(baseline_pfs, af=1.3))
-psm.set_survival("New Drug", "OS",
-    lambda p: ph.ProportionalHazards(baseline_os, hr=0.7))
-
-# 费用 & 效用
-psm.set_state_cost("treatment", {
-    "SOC": {"PFS": 1000, "Progressed": 2500, "Dead": 0},
-    "New Drug": {"PFS": 6000, "Progressed": 2500, "Dead": 0},
-})
-psm.set_utility({"PFS": 0.80, "Progressed": 0.55, "Dead": 0.0})
-
-result = psm.run_base_case()
-print(result.summary())
-result.plot_survival()
-result.plot_state_area()
+treated_curve = ph.ProportionalHazards(monthly_curve, hr=.75)
 ```
 
-#### 微观模拟 (Microsimulation)
+`from_flexsurv()` 支持的分布及参数：
 
-个体水平状态转移模型，与 MarkovModel 共享同一套 API（`add_param`, `set_transitions`, `set_state_cost`, `set_utility`），但每位患者独立采样，产生个体异质性结局。
+| 分布名称 | 参数 |
+|---|---|
+| `exp` | `rate` |
+| `weibull`、`weibullPH`、`llogis` | `shape`, `scale` |
+| `lnorm` | `meanlog`, `sdlog` |
+| `gompertz` | `shape`, `rate` |
+| `gengamma` | `mu`, `sigma`, `Q` |
+| `gengamma.orig` | `shape`, `scale`, `k` |
+
+这些参数按对应 R 分布的定义解释；同名参数不能跨分布直接互换。`weibullPH` 的 `scale` 是比例风险参数化的系数，转换器会换算成 PyHEOR 的 Weibull 尺度。
+
+时间约定为一年 = 12 月 = 52 周 = 365 天，用于模型时长换算，不是日历日期运算。年度状态成本可乘周期年数；一次性成本按发生额输入。QALY、贴现率和曲线换算若依赖 PSA/OWSA 参数，应放在参数回调内，确保每次抽样重新计算。
+
+## 绘图
+
+| 图形 | 用途 | 调用入口 |
+|---|---|---|
+| 状态轨迹 | 查看状态占比变化；Markov 另支持堆叠面积图 | Markov、PSM、MicroSim：`base.plot_trace()` |
+| 生存曲线 | 比较策略的生存概率 | PSM、MicroSim、DES：`base.plot_survival()` |
+| 分区生存面积图 | 展示 PFS、进展和死亡状态占比 | PSM：`base.plot_state_area()` |
+| 个体结果直方图 | 查看成本、QALY 或生命年分布 | MicroSim、DES：`base.plot_outcomes_histogram()` |
+| 模型结构／转移图 | 展示状态及转移关系 | Markov：`base.plot_model_diagram()`、`base.plot_transition_diagram()` |
+| 龙卷风图 | 比较参数对结果的影响 | `owsa.plot_tornado()` |
+| 单参数敏感性曲线 | 查看已计算情景中的参数与结果关系 | `owsa.plot_owsa("参数名")` |
+| PSA 成本效果散点图 | 展示增量成本和增量 QALY | `psa.plot_scatter()` |
+| CEAC | 查看各策略具有成本效果的概率 | `psa.plot_ceac()` |
+| PSA 收敛图 | 查看抽样结果是否趋于稳定 | Markov、PSM：`psa.plot_convergence()` |
+| 效率前沿／NMB 曲线 | 比较多个策略及不同支付意愿阈值 | `cea.plot_frontier()`、`cea.plot_nmb_curve()` |
+| CEAF／EVPI 曲线 | 查看推荐策略的不确定性和完全信息价值 | 含 PSA 的 `cea.plot_ceaf()`、`cea.plot_evpi()` |
+
+绘图返回 Matplotlib `Figure`，可继续调整或导出：
 
 ```python
-import pyheor as ph
+fig = psa.plot_ceac(wtp_range=(0, 100000))
+fig.savefig("ceac.png", dpi=150, bbox_inches="tight")
 
-model = ph.MicroSimModel(
-    states=["Healthy", "Sick", "Sicker", "Dead"],
-    strategies=["SOC", "Treatment"],
-    n_cycles=30,
-    n_patients=5000,
-    cycle_length=1.0,
-    dr_cost=0.03,
-    dr_qaly=0.03,
-    seed=42,
-)
-
-model.add_param("p_HS", base=0.15, dist=ph.Beta(mean=0.15, sd=0.03))
-model.add_param("hr_trt", base=0.70, dist=ph.LogNormal(mean=0.70, sd=0.10))
-
-model.set_transitions("SOC", lambda p, t: [
-    [ph.C,  p["p_HS"],                0,     0.005],
-    [0,     ph.C,                     0.10,  0.05 ],
-    [0,     0,                        ph.C,  0.10 ],
-    [0,     0,                        0,     1    ],
-])
-model.set_transitions("Treatment", lambda p, t: [
-    [ph.C,  p["p_HS"] * p["hr_trt"], 0,     0.005],
-    [0,     ph.C,                     0.10 * p["hr_trt"], 0.05],
-    [0,     0,                        ph.C,  0.10 ],
-    [0,     0,                        0,     1    ],
-])
-
-model.set_state_cost("medical", {"Healthy": 500, "Sick": 3000, "Sicker": 8000, "Dead": 0})
-model.set_state_cost("drug", {
-    "SOC": {"Healthy": 0, "Sick": 0, "Sicker": 0, "Dead": 0},
-    "Treatment": {"Healthy": 5000, "Sick": 5000, "Sicker": 5000, "Dead": 0},
-})
-model.set_utility({"Healthy": 0.95, "Sick": 0.75, "Sicker": 0.50, "Dead": 0.0})
-
-# 事件处理器：进入 Sicker 时一次性住院费
-model.on_state_enter("Sicker", lambda idx, t, attrs: {"cost": 15000})
-
-result = model.run_base_case(verbose=True)
-print(result.summary())   # 含 SD 和 95% 百分位数
-
-# PSA: 外层参数不确定性 × 内层个体随机性
-psa = model.run_psa(n_outer=500, n_inner=2000, seed=42)
-psa.plot_ceac(wtp_range=(0, 150000))
+cea = ph.CEAnalysis.from_psa(psa)
+cea.plot_ceaf(wtp_range=(0, 100000))
 ```
 
-**患者异质性**：转移概率支持 3 参数 lambda `(params, cycle, attrs)`，可基于个体属性（年龄、性别等）调整：
+显示平滑不改变分析和导出值；经验生存曲线保留阶梯。
 
-```python
-import numpy as np
+## 结果与导出
 
-pop = ph.PatientProfile(
-    n_patients=5000,
-    attributes={
-        "age": np.random.normal(55, 12, 5000).clip(20, 90),
-        "female": np.random.binomial(1, 0.52, 5000),
-    }
-)
-model.set_population(pop)
+`base.summary()` 和 `base.icer()` 给出汇总与增量分析；`reward_components` 给出成本和 QALY 分项，`cycle_rewards`、`state_occupancy` 给出周期明细。DES 另有事件日志和状态停留时间；`metadata` 记录单位与计算规则。
 
-model.set_transitions("SOC", lambda p, t, attrs: [
-    [ph.C,  p["p_HS"] * (1 + (attrs["age"] - 55) * 0.02), 0.005],
-    [0,     ph.C,  0.05],
-    [0,     0,     1],
-])
+通过 `ph.export_to_excel(base, "results.xlsx")` 导出结果表，`ph.export_excel_model(base, "model.xlsx")` 导出 Markov／PSM 公式工作簿，`ph.generate_report(model, "report.md")` 生成分析报告。
+
+## 示例
+
+[可运行示例](examples)覆盖 Markov、PSM、MicroSim 和策略比较。版本历史见 [CHANGELOG](CHANGELOG.md)。
+
+## 开发
+
+参见[开发与版本号更新规则](CONTRIBUTING.md)。
+
+```bash
+pip install -e '.[dev]'
+pytest
 ```
 
-**性能优化**：当转移矩阵不依赖个体属性（2 参数 lambda）时，引擎自动使用向量化批量采样，速度接近队列模型。
-
-#### 离散事件模拟 (DES)
-
-DES 在**连续时间**下模拟个体患者，事件时间直接从生存分布中抽样，无需固定周期长度。
-
-```python
-import pyheor as ph
-
-model = ph.DESModel(
-    states=["PFS", "Progressed", "Dead"],
-    strategies={"SOC": "Standard of Care", "TRT": "New Treatment"},
-    time_horizon=40,
-    clock="reset",  # 或使用 "forward" 表示按研究绝对时间计风险
-    dr_cost=0.03,
-    dr_qaly=0.03,
-)
-
-model.add_param("hr_pfs", base=0.70,
-    dist=ph.LogNormal(mean=-0.36, sd=0.15))
-
-baseline_pfs2prog = ph.Weibull(shape=1.2, scale=5.0)
-baseline_pfs2dead = ph.Weibull(shape=1.0, scale=20.0)
-baseline_prog2dead = ph.Weibull(shape=1.5, scale=3.0)
-
-# SOC: 直接使用基线
-model.set_event("SOC", "PFS", "Progressed", baseline_pfs2prog)
-model.set_event("SOC", "PFS", "Dead",       baseline_pfs2dead)
-model.set_event("SOC", "Progressed", "Dead", baseline_prog2dead)
-
-# TRT: HR 应用于 PFS→Progressed
-model.set_event("TRT", "PFS", "Progressed",
-    lambda p: ph.ProportionalHazards(baseline_pfs2prog, p["hr_pfs"]))
-model.set_event("TRT", "PFS", "Dead",       baseline_pfs2dead)
-model.set_event("TRT", "Progressed", "Dead", baseline_prog2dead)
-
-# 费用 (连续时间费率: 元/年)
-model.set_state_cost("drug", {
-    "SOC": {"PFS": 500, "Progressed": 200, "Dead": 0},
-    "TRT": {"PFS": 3000, "Progressed": 200, "Dead": 0},
-})
-model.set_state_cost("medical", {"PFS": 1000, "Progressed": 5000, "Dead": 0})
-model.set_entry_cost("surgery", "Progressed", 50000)
-
-model.set_utility({"PFS": 0.85, "Progressed": 0.50, "Dead": 0})
-
-# 运行
-result = model.run(n_patients=3000, seed=42)
-result.summary()
-result.icer()
-
-# PSA
-psa = model.run_psa(n_sim=200, n_patients=1000, seed=123)
-psa.summary()
-```
-
-**DES vs 其他模型类型**：
-
-| 特性 | MarkovModel | MicroSimModel | DESModel |
-|------|-------------|---------------|----------|
-| 时间轴 | 离散周期 | 离散周期 | 连续时间 |
-| 分析层级 | 队列 | 个体 | 个体 |
-| 转移机制 | 转移矩阵 | 转移概率 | time-to-event 分布 |
-| 竞争风险 | 需手动处理 | 需手动处理 | 天然支持 |
-| 周期伪影 | 有 (需半周期校正) | 有 | 无 |
-| 速度 | 最快 | 中等 | 较慢 |
-| 适用场景 | 简单模型 | 复杂异质性 | 事件驱动的复杂模型 |
-
----
-
-### 参数系统
-
-每个参数通过 `add_param()` 定义，包含：
-
-| 属性               | 说明                                                                              |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `base`           | 基线值（确定性分析）                                                              |
-| `low` / `high` | OWSA 范围                                                                         |
-| `dist`           | PSA 分布（Beta, Gamma, Normal, LogNormal, Uniform, Triangular, Dirichlet, Fixed） |
-
-```python
-model.add_param("p_progression",
-    base=0.15,           # 基线分析用
-    low=0.10, high=0.20, # OWSA 范围
-    dist=ph.Beta(mean=0.15, sd=0.03),  # PSA 用
-    label="疾病进展概率",  # 用于图表显示
-)
-```
-
-#### 贴现率
-
-所有模型均通过 `dr_cost` 和 `dr_qaly` 两个独立参数设置贴现率。**默认值为 0（不贴现）**，未设置的一方不会被贴现。
-
-```python
-# 固定贴现率
-model = ph.MarkovModel(..., dr_cost=0.03, dr_qaly=0.03)
-
-# 只贴现费用
-model = ph.MarkovModel(..., dr_cost=0.06)  # dr_qaly 默认 0
-```
-
-传入 `Param` 对象即可将贴现率纳入 OWSA / PSA，无需额外调用 `add_param()`：
-
-```python
-model = ph.MarkovModel(
-    ...,
-    dr_cost=ph.Param(0.03, low=0.0, high=0.08, label="费用贴现率"),
-    dr_qaly=ph.Param(0.03, low=0.0, high=0.05, label="效用贴现率"),
-)
-
-owsa = model.run_owsa()
-owsa.plot_tornado()  # 龙卷风图中包含贴现率
-
-# 也可以只对其中一个做敏感性分析
-model = ph.MarkovModel(
-    ...,
-    dr_cost=0.03,                                        # 固定
-    dr_qaly=ph.Param(0.03, low=0.0, high=0.05),          # 变动
-)
-```
-
-> **设计原则**：贴现率的基准值和敏感性分析范围在同一处定义，避免重复指定。`float` = 固定值，`Param` = 可变动值。
-
-#### 半周期校正
-
-| 值                         | 说明                                            |
-| -------------------------- | ----------------------------------------------- |
-| `True` / `"trapezoidal"` | 梯形法：每个时间区间使用相邻 trace 时点的平均占比（默认） |
-| `False` / `None`          | 不校正                                          |
-
-```python
-model.half_cycle_correction = "trapezoidal"
-model.half_cycle_correction = False
-```
-
----
-
-### 转移矩阵
-
-使用 `ph.C`（补数哨兵）自动计算对角线元素：
-
-```python
-# 时齐矩阵
-model.set_transitions("Strategy", lambda p, t: [
-    [ph.C,  p["p_AB"], p["p_AD"]],
-    [0,     ph.C,      p["p_BD"]],
-    [0,     0,         1        ],
-])
-
-# 时变矩阵（t 为周期数）
-model.set_transitions("Strategy", lambda p, t: [
-    [ph.C,  p["p_AB"] * (1 + 0.01 * t), p["p_AD"]],
-    [0,     ph.C,                        p["p_BD"] + 0.001 * t],
-    [0,     0,                           1],
-])
-```
-
----
-
-### 费用与效用
-
-#### 状态费用
-
-```python
-# 基础状态费用
-model.set_state_cost("medical", {"Treatment": {"Sick": 3000}})
-
-# 时间依赖费用
-model.set_state_cost("medical", lambda p, t: {
-    "Treatment": {"Sick": 3000 if t < 5 else 2000}
-})
-
-# 仅在首个时间区间持续发生的费用率
-model.set_state_cost("induction", {"Treatment": {"Sick": 50000}},
-                     first_cycle_only=True)
-
-# 模型开始时的一次性费用
-model.set_state_cost("init", {"Sick": 50000}, method="starting")
-
-# 限定应用周期
-model.set_state_cost("drug", {"Treatment": {"Sick": "c_drug"}},
-                     apply_cycles=range(24))  # 仅前 24 个时间区间
-
-# WLOS (Weighted Length of Stay) 方法
-model.set_state_cost("medical", {"Treatment": {"Sick": 5000}},
-                     method="wlos")
-```
-
-#### 转移费用 (Transition Costs)
-
-状态转移时触发的费用（如疾病进展时的手术费、转入 ICU 时的住院费）。基于每个时间区间的**转移流量**自动计算：`trace[i, from] × P_i[from→to] × 单位费用`。
-
-```python
-# 从 Healthy 进入 Sick 时的手术费
-model.set_transition_cost("surgery", "Healthy", "Sick", 50000)
-
-# 参数引用
-model.set_transition_cost("surgery", "Healthy", "Sick", "c_surgery")
-
-# 策略特异性
-model.set_transition_cost("icu", "Sick", "Dead", {
-    "SOC": 20000,
-    "Treatment": 15000,
-})
-```
-
-**费用计划表**：当转移后需要跨多个周期产生费用时（如手术 + 随访），传入列表。引擎通过卷积自动处理多批次转入患者的费用叠加：
-
-```python
-# 进展时手术 50000，下一周期随访 10000 → 共 2 周期
-model.set_transition_cost("surgery", "PFS", "Progressed", [50000, 10000])
-
-# 参数引用也可以在列表中使用
-model.set_transition_cost("chemo", "PFS", "Progressed",
-    ["c_chemo_init", "c_chemo_maint", "c_chemo_maint"])
-
-# 策略特异性 + 计划表混用
-model.set_transition_cost("rescue", "PFS", "Progressed", {
-    "SOC": [30000, 5000],       # 计划表
-    "New Drug": 15000,           # 标量
-})
-```
-
-> **与 `first_cycle_only` 的区别**：`first_cycle_only` 表示仅在区间 0 内持续发生的费用率；transition cost 在发生转移时作为一次性费用计入。Transition cost 不乘周期长度，也不受半周期校正影响。
-
-#### 自定义费用 (Custom Costs)
-
-当 `set_transition_cost` 按单个状态对定义费用不够灵活时，可以用 `set_custom_cost` 传入自定义函数，直接基于转移矩阵和状态分布计算费用。支持 MarkovModel 和 PSMModel。
-
-```python
-# 函数签名
-# func(strategy, params, t, state_prev, state_curr, P, states) -> float
-
-# MarkovModel: 基于转移流量计算手术费
-def surgery_cost(strategy, params, t, state_prev, state_curr, P, states):
-    i_from = states.index("PFS")
-    i_to = states.index("Progressed")
-    flow = state_prev[i_from] * P[i_from, i_to]
-    return flow * params["c_surgery"]
-
-model.set_custom_cost("surgery", surgery_cost)
-
-# PSMModel: 基于状态变化量计算进展费用 (无转移矩阵，P=None)
-def progression_cost(strategy, params, t, state_prev, state_curr, P, states):
-    i_prog = states.index("Progressed")
-    new_prog = max(0, state_curr[i_prog] - state_prev[i_prog])
-    return new_prog * params["c_progression"]
-
-psm.set_custom_cost("progression", progression_cost)
-```
-
-> 自定义费用不受半周期校正影响（与转移费用一致）。函数通过 `params` 接收参数值，OWSA/PSA 的参数变化和抽样会自然传导。
-
----
-
-### 生存分析
-
-#### 参数化生存分布
-
-10 种内置生存分布：
-
-| 分布                               | 参数      | 风险形状特征                         |
-| ---------------------------------- | --------- | ------------------------------------ |
-| `Exponential(rate)`              | λ        | 常数风险                             |
-| `Weibull(shape, scale)`          | α, λ    | shape>1 递增，<1 递减                |
-| `LogLogistic(shape, scale)`      | α, λ    | shape>1 先升后降                     |
-| `SurvLogNormal(meanlog, sdlog)`  | μ, σ    | 先升后降                             |
-| `Gompertz(shape, rate)`          | a, b      | shape>0 递增，<0 递减                |
-| `GeneralizedGamma(mu, sigma, Q)` | μ, σ, Q | 灵活（含 Weibull、LogNormal 为特例） |
-
-辅助分布：
-
-| 分布                                         | 说明                            |
-| -------------------------------------------- | ------------------------------- |
-| `ProportionalHazards(baseline, hr)`        | 等比例风险：h(t) = h₀(t) × HR |
-| `AcceleratedFailureTime(baseline, af)`     | 加速失效：S(t) = S₀(t/AF)      |
-| `KaplanMeier(times, probs)`                | 经验分布 + 外推                 |
-| `PiecewiseExponential(breakpoints, rates)` | 分段常数风险                    |
-
-每个分布都提供 `survival(t)`, `hazard(t)`, `pdf(t)`, `quantile(p)`, `cumulative_hazard(t)`, `restricted_mean(t_max)` 方法。
-
-
-### 敏感性分析与报告
-
-#### OWSA & PSA
-
-```python
-# OWSA（贴现率通过 Param 自动注册）
-owsa = model.run_owsa(wtp=50000)
-print(owsa.summary(outcome="icer"))   # 按 ICER 影响幅度排序
-owsa.plot_tornado(outcome="nmb", max_params=10)
-
-# PSA (Monte Carlo)
-psa = model.run_psa(n_sim=1000, seed=42)
-print(psa.summary())
-print(psa.icer())
-psa.plot_scatter(wtp=50000)
-psa.plot_ceac()
-psa.plot_convergence()
-```
-
-#### 一键报告 (`generate_report`)
-
-模型参数设置完毕后，一键运行全部分析并生成 Markdown 报告 + 配套图片：
-
-```python
-ph.generate_report(
-    model,
-    "report.md",       # 输出路径，图片存入 report_files/
-    wtp=50000,          # WTP 阈值
-    n_sim=1000,         # PSA 模拟次数
-    max_params=10,      # 龙卷风图最多显示参数数
-    run_psa=None,       # None=自动检测（有 dist 就跑）
-)
-```
-
-报告内容包含：模型概述、参数表、基础分析结果、ICER、OWSA 龙卷风图及排序表、PSA 汇总统计及增量分析、CE 平面散点图、CEAC 曲线。所有模型类型（Markov / PSM / MicroSim / DES）均支持。
-
----
-
-### 高级功能
-
-#### 多策略比较 & NMB 分析
-
-```python
-# 从确定性结果创建 CEAnalysis
-result = model.run_base_case()
-cea = ph.CEAnalysis.from_result(result)
-
-# 效率前沿：顺序 ICER + 支配/扩展支配检测
-print(cea.frontier())
-
-# NMB 排名
-print(cea.nmb(wtp=100000))
-print(f"最优策略: {cea.optimal_strategy(wtp=100000)}")
-
-# 可视化
-cea.plot_frontier(wtp=100000)
-cea.plot_nmb_curve(wtp_range=(0, 200000))
-```
-
-**PSA → CEAF & EVPI**：
-
-```python
-psa_result = model.run_psa(n_sim=2000)
-cea_psa = ph.CEAnalysis.from_psa(psa_result)
-
-cea_psa.plot_ceaf(wtp_range=(0, 200000))
-print(f"EVPI at WTP=$100K: ${cea_psa.evpi_single(100000):,.0f}")
-cea_psa.plot_evpi(wtp_range=(0, 200000), population=100000)
-```
-
-
-### 导出
-
-#### Excel 导出
-
-```python
-# 结果数据导出 (多 Sheet)
-ph.export_to_excel(result, "base_case.xlsx")
-ph.export_to_excel(owsa, "owsa.xlsx")
-ph.export_to_excel(psa, "psa.xlsx")
-
-# 多策略比较
-ph.export_comparison_excel({"Strategy A": result_a, "Strategy B": result_b}, "comparison.xlsx")
-
-```
-
-#### Excel 公式验证模型
-
-导出一个**用 Excel 公式独立计算**的完整模型文件，用于交叉验证 Python 结果：
-
-```python
-result = model.run_base_case()
-ph.export_excel_model(result, "verification.xlsx")
-
-# 或直接从模型导出
-ph.export_excel_model(model, "verification.xlsx")
-```
-
-| 区域 | 内容 |
-|------|------|
-| **输入区** (黄色底色) | 转移矩阵、状态与转移费用、生存参数、效用权重、贴现设置 |
-| **计算区** (公式) | Trace/状态概率、区间占比、转移流量、费用、QALY、贴现和总值 |
-| **Summary sheet** | Excel 公式结果 vs Python 结果 vs 差异 (应为 ~0) |
-
-**支持的模型类型**：
-
-| 模型 | Trace | 费用/QALY/贴现 | ICER |
-|------|-------|----------------|------|
-| Markov (时齐) | 由一张可编辑矩阵驱动的 Excel 公式 | Excel 公式 | Excel 公式 |
-| Markov (时变) | 由每个区间的可编辑矩阵驱动的 Excel 公式 | Excel 公式 | Excel 公式 |
-| PSM | 常用参数曲线用 Excel 公式；暂不支持的曲线明确标为外部输入 | Excel 公式 | Excel 公式 |
-
-时变矩阵会作为明示的 Excel 输入展开，而不是隐藏的 Python trace 值。自定义 Python 费用回调等无法忠实翻译的逻辑会直接报错。
-
-#### Excel Sheet 内容
-
-| 分析类型    | Sheet 内容                                                            |
-| ----------- | --------------------------------------------------------------------- |
-| Base Case   | Summary, State Trace, Cost/QALY by Cycle, ICER                        |
-| OWSA        | Tornado Data, Per-Parameter Results                                   |
-| PSA         | Summary Stats, All Simulations, CEAC Data                             |
-| PSM Base    | Summary, State Probabilities, Survival Data                           |
-| 验证模型     | Summary (含差异), 每策略计算 Sheet (公式+输入)                          |
-
----
-
-## 可视化一览
-
-PyHEOR 共提供 **19 种**专业图表，覆盖全部模型类型和分析流程：
-
-### Markov 模型 (8 种)
-
-| 函数                          | 说明                              |
-| ----------------------------- | --------------------------------- |
-| `plot_transition_diagram()` | 状态转移图                        |
-| `plot_model_diagram()`      | TreeAge 风格模型图                |
-| `plot_trace()`              | Markov trace（队列轨迹）          |
-| `plot_tornado()`            | OWSA 龙卷风图                     |
-| `plot_owsa_param()`         | 单参数 OWSA 线图                  |
-| `plot_scatter()`            | CE 散点图（增量成本 vs 增量效果） |
-| `plot_ceac()`               | 成本-效果可接受曲线               |
-| `plot_convergence()`        | PSA 收敛诊断图                    |
-
-### PSM 模型 (4 种)
-
-| 函数                       | 说明                 |
-| -------------------------- | -------------------- |
-| `plot_survival_curves()` | 参数化生存曲线       |
-| `plot_state_area()`      | 面积图（各状态占比） |
-| `plot_psm_trace()`       | PSM 状态轨迹         |
-| `plot_psm_comparison()`  | 多策略生存曲线对比   |
-
-### 微观模拟 (3 种)
-
-| 函数                         | 说明                                      |
-| ---------------------------- | ----------------------------------------- |
-| `plot_microsim_trace()`    | 个体模拟状态占比轨迹                      |
-| `plot_microsim_survival()` | 经验生存曲线（基于模拟数据）              |
-| `plot_microsim_outcomes()` | 患者结局分布（QALYs / 费用 / LYs 直方图） |
-
-
-### CEA / 多策略比较 (4 种)
-
-| 函数                   | 说明                               |
-| ---------------------- | ---------------------------------- |
-| `plot_ce_frontier()`   | 效率前沿图 + WTP 线 + ICER 标注   |
-| `plot_nmb_curve()`     | NMB 曲线（多策略随 WTP 变化）      |
-| `plot_ceaf()`          | 成本效果可接受前沿曲线 (CEAF)     |
-| `plot_evpi()`          | 完美信息期望价值 (EVPI) 曲线      |
-
-
----
-
-## 项目结构
-
-```text
-pyheor/
-├── pyproject.toml
-├── README.md
-├── src/pyheor/              # 包源码 (src layout)
-│   ├── __init__.py          # 包入口，统一导出
-│   ├── utils.py             # 工具函数 (C 补数, 贴现, 验证)
-│   ├── distributions.py     # PSA 概率分布 (Beta, Gamma, ...)
-│   ├── survival.py          # 10 种参数化生存分布
-│   ├── plotting.py          # 可视化 (19 种图表)
-│   │
-│   ├── models/              # ── 建模引擎 ──
-│   │   ├── common.py        #  公共参数与成本定义
-│   │   ├── markov.py        #  Markov 队列模型 (MarkovModel)
-│   │   ├── psm.py           #  分区生存模型 (PSMModel)
-│   │   ├── microsim.py      #  微观模拟 (MicroSimModel)
-│   │   └── des.py           #  离散事件模拟 (DESModel)
-│   │
-│   ├── analysis/            # ── 分析与决策 ──
-│   │   ├── results.py       #  结果类 (BaseResult, OWSAResult, PSAResult, ...)
-│   │   └── comparison.py    #  多策略比较 / CEA (CEAnalysis)
-│   │
-│   └── export/              # ── 导出 ──
-│       ├── excel.py         #  Excel 结果数据导出
-│       ├── excel_model.py   #  Excel 公式验证模型导出
-│       └── report.py        #  Markdown 一键报告
-│
-├── tests/                   # pytest 测试套件
-└── examples/
-    ├── markov_hiv/                 # HIV Markov 研究
-    ├── psm_oncology/               # 肿瘤 PSM + 公式工作簿
-    ├── microsim_sick_sicker/       # 个体水平模拟
-    └── multi_strategy_comparison/  # 前沿、NMB、CEAF 与 EVPI
-```
-
----
-
-## 设计理念
-
-- **简洁的 API**：一个模型对象搞定 base case / OWSA / PSA，不需要分开调用
-- **灵活的参数系统**：`ph.C` 自动补数，lambda 函数定义时变概率/费用
-- **与 R 生态对齐**：分布参数化、方法命名参考 hesim / flexsurv / DARTH
-- **生产级可视化**：所有图表开箱即用，配色统一，支持自定义
-- **可验证性**：导出带公式的 Excel 模型，可独立重算并与 Python 结果交叉验证
-
----
-
-## 路线图
-
-- [X] Markov 队列模型 (cDTSTM)
-- [X] 单因素敏感性分析 (OWSA) + 龙卷风图
-- [X] 概率敏感性分析 (PSA) + CEAC + CE 散点图
-- [X] 灵活费用系统（首周期、时变、WLOS、自定义费用函数）
-- [X] 半周期校正多方法（梯形法 / 生命表法 / 无校正）& 可配置贴现率
-- [X] OWSA 龙卷风图 ICER 排序 & 贴现率通过 `Param` 直接参与敏感性分析
-- [X] 分区生存模型 (PSM)
-- [X] 10 种参数化生存分布
-- [X] Excel 多 Sheet 导出 + Excel 公式验证模型
-- [X] 微观模拟 (Individual-level simulation)
-- [X] 多队列比较 + NMB 分析 + CEAF + EVPI
-- [X] 离散事件模拟 (DES) — 连续时间、竞争风险、HR/AFT 集成
-- [X] Markdown 一键报告 (`generate_report`)
-- [X] 正式测试套件 (pytest)
-- [ ] 结构化输出 (`to_dict` / `to_json`)，面向 LLM 的机器可读结果
-- [ ] 自动解读 (`interpret(wtp)`)——标准化结论文本生成
-- [ ] 自然语言建模接口——JSON Schema 模型定义，自动构建与执行
-- [ ] HEOR Agent (`pyheor-agent`) — 自然语言驱动模型定义、运行和报告生成，同时提供 Python API (`HEORAgent`) 和 CLI 两种入口
-- [ ] Rust 底层加速（低优先级）— 用 PyO3 + maturin 加速微观模拟个体循环、DES 事件队列和 PSA 并行计算
-
----
-
-## 许可证
-
-GNU Affero General Public License v3.0（AGPL-3.0 或更高版本）
-
-Copyright (C) 2025 lenardar
+许可证：[AGPL-3.0-or-later](LICENSE)。

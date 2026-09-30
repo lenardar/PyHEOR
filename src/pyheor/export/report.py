@@ -156,14 +156,14 @@ def _build_overview(model, is_des: bool) -> str:
         )),
     ]
     if is_des:
-        rows.append(("时间范围", f"{model.time_horizon} 年"))
+        rows.append(("时间范围", f"{model.time_horizon} {model.time_unit}"))
     else:
-        rows.append(("模拟周期", f"{model.n_cycles} × {model.cycle_length} 年"))
-        hcc = getattr(model, '_hcc_method', None)
+        rows.append(("模拟周期", f"{model.n_cycles} × {model.cycle.length} {model.cycle.unit}"))
+        hcc = model.method
         rows.append(("半周期校正", hcc or "无"))
 
-    rows.append(("费用贴现率", f"{model.dr_cost:.1%}"))
-    rows.append(("效用贴现率", f"{model.dr_qaly:.1%}"))
+    rows.append(("费用贴现率（每时间单位）" if is_des else "费用贴现率（每周期）", f"{model._discount_rate('dr_cost', model._get_base_params()):.1%}"))
+    rows.append(("QALY贴现率（每时间单位）" if is_des else "QALY贴现率（每周期）", f"{model._discount_rate('dr_qaly', model._get_base_params()):.1%}"))
     rows.append(("参数数量", str(len(model.params))))
 
     lines = ["## 1. 模型概述\n"]
@@ -198,9 +198,14 @@ def _build_base_case(result) -> str:
     lines = ["## 3. 基础分析\n"]
     lines.append("### 结果汇总\n")
     lines.append(result.summary().to_markdown(index=False))
+    icer_df = result.icer()
     lines.append("")
 
-    icer_df = result.icer()
+    lines.append("### 成本与 QALY 分项\n")
+    lines.append("每位患者的累计收益；个体模型取患者均值。Undiscounted 已包含占比矫正，Discounted 为贴现后的值。\n")
+    lines.append(result.reward_components.to_markdown(index=False))
+    lines.append("")
+
     lines.append("### 增量成本效果比 (ICER)\n")
     lines.append(icer_df.to_markdown(index=False))
     lines.append("")

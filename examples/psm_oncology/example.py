@@ -9,7 +9,7 @@ The model uses:
 - An exponential OS curve with PFS defined through an excess hazard
 - Treatment effects that preserve PFS <= OS for every PSA draw
 - 3 states: PFS, Progressed, Dead
-- Monthly cycle (cycle_length = 1/12 year) over 20 years
+- Explicit monthly cycle over 20 years
 """
 
 from pathlib import Path
@@ -47,10 +47,10 @@ model = ph.PSMModel(
     survival_endpoints=["PFS", "OS"],
     strategies={"SOC": "Chemotherapy", "TRT": "Immuno + Chemo"},
     n_cycles=240,             # 240 months = 20 years
-    cycle_length=1/12,        # Monthly cycles
-    dr_cost=0.03,
-    dr_qaly=0.03,
-    half_cycle_correction=True,
+    cycle=ph.Cycle(1, 'month'),        # Monthly cycles
+    dr_cost=ph.rescale_discount_rate(0.03, 12, 1),
+    dr_qaly=ph.rescale_discount_rate(0.03, 12, 1),
+    method='life-table',
 )
 
 # =========================================================================
@@ -85,7 +85,7 @@ model.add_params({
         high=0.70,
     ),
 
-    # Annual cost rates. The model multiplies these by the 1/12-year cycle.
+    # Annual cost inputs. The callbacks explicitly convert them to monthly costs.
     "c_chemo":     ph.Param(36000, dist=ph.Gamma(mean=36000, sd=3600),
                              label="Chemo cost/year"),
     "c_immuno":    ph.Param(96000, dist=ph.Gamma(mean=96000, sd=9600),
@@ -107,19 +107,19 @@ model.add_params({
 
 # SOC: PFS has a strictly greater event rate than OS.
 model.set_survival_all("SOC", {
-    "PFS": lambda p: ph.Exponential(
+    "PFS": lambda p: ph.rescale_survival(ph.Exponential(
         rate=p["os_rate"] + p["pfs_excess_rate"],
-    ),
-    "OS": lambda p: ph.Exponential(rate=p["os_rate"]),
+    ), from_unit="year", to_period=model.cycle),
+    "OS": lambda p: ph.rescale_survival(ph.Exponential(rate=p["os_rate"]), from_unit="year", to_period=model.cycle),
 })
 
 # TRT: apply the OS effect first, then a still-positive PFS excess hazard.
 model.set_survival_all("TRT", {
-    "PFS": lambda p: ph.Exponential(
+    "PFS": lambda p: ph.rescale_survival(ph.Exponential(
         rate=(p["os_rate"] * p["hr_os"]
               + p["pfs_excess_rate"] * p["pfs_gap_ratio"]),
-    ),
-    "OS": lambda p: ph.Exponential(rate=p["os_rate"] * p["hr_os"]),
+    ), from_unit="year", to_period=model.cycle),
+    "OS": lambda p: ph.rescale_survival(ph.Exponential(rate=p["os_rate"] * p["hr_os"]), from_unit="year", to_period=model.cycle),
 })
 
 # =========================================================================
@@ -127,36 +127,22 @@ model.set_survival_all("TRT", {
 # =========================================================================
 
 # Drug costs (during PFS only)
-model.set_state_cost("drug", {
-    "SOC": {"PFS": "c_chemo", "Progressed": 0, "Dead": 0},
-    "TRT": {"PFS": lambda p, t: p["c_chemo"] + p["c_immuno"],
-             "Progressed": 0, "Dead": 0},
-})
+model.set_state_cost("drug", {"SOC": {"PFS": lambda p, t: (p['c_chemo']) * model.cycle.years, "Progressed": (0) * model.cycle.years, "Dead": (0) * model.cycle.years}, "TRT": {"PFS": lambda p, t: (p["c_chemo"] + p["c_immuno"]) * model.cycle.years, "Progressed": (0) * model.cycle.years, "Dead": (0) * model.cycle.years}})
 
 # Progressed disease care
-model.set_state_cost("prog_care", {
-    "PFS": 0, "Progressed": "c_prog_care", "Dead": 0,
-})
+model.set_state_cost("prog_care", {"PFS": (0) * model.cycle.years, "Progressed": lambda p, t: (p['c_prog_care']) * model.cycle.years, "Dead": (0) * model.cycle.years})
 
 # Best supportive care (all alive states)
-model.set_state_cost("bsc", {
-    "PFS": "c_bsc", "Progressed": "c_bsc", "Dead": 0,
-})
+model.set_state_cost("bsc", {"PFS": lambda p, t: (p['c_bsc']) * model.cycle.years, "Progressed": lambda p, t: (p['c_bsc']) * model.cycle.years, "Dead": (0) * model.cycle.years})
 
-# Adverse event cost (first cycle only for TRT)
-model.set_state_cost("ae", {
-    "TRT": {"PFS": "c_ae"},
-}, first_cycle_only=True)
+# Adverse event cost (one-time at treatment start for TRT)
+model.set_starting_cost("ae", {"TRT": "c_ae"})
 
 # =========================================================================
 # 5. Set Utility
 # =========================================================================
 
-model.set_utility({
-    "PFS": "u_pfs",
-    "Progressed": "u_prog",
-    "Dead": 0.0,
-})
+model.set_state_qaly("health", {"PFS": lambda p, t: ph.qaly(p['u_pfs'], model.cycle), "Progressed": lambda p, t: ph.qaly(p['u_prog'], model.cycle), "Dead": ph.qaly(0.0, model.cycle)})
 
 print("\n📋 Complete model specification:")
 print(model.info())
@@ -225,7 +211,7 @@ print("\n" + "=" * 70)
 print("  PROBABILISTIC SENSITIVITY ANALYSIS")
 print("=" * 70)
 
-psa = model.run_psa(n_sim=100, seed=42)
+psa = model.run_psa(n_sim=1000, seed=42)
 
 print("\n📊 PSA Summary:")
 print(psa.summary().to_string(index=False))
@@ -259,6 +245,10 @@ from pyheor.plotting import plot_state_area, plot_survival_curves
 fig = plot_survival_curves(base)
 save_figure(fig, "survival_curves.png")
 
+# State lines use the same fitted partitions as the area charts.
+fig = base.plot_trace()
+save_figure(fig, "state_trace.png")
+
 # State area plots
 for strategy in model.strategy_names:
     fig = plot_state_area(base, strategy=strategy)
@@ -273,7 +263,13 @@ fig = owsa.plot_tornado()
 save_figure(fig, "tornado.png")
 
 # PSA CEAC
-fig = psa.plot_ceac(wtp_range=(0, 200000))
+
+# PSA incremental cost-effectiveness scatter
+fig_scatter = psa.plot_scatter(wtp=100000)
+save_figure(fig_scatter, "ce_scatter.png")
+
+# Include the range where the preferred strategy changes in this example.
+fig = psa.plot_ceac(wtp_range=(0, 600000), smooth=True)
 save_figure(fig, "ceac.png")
 
 print("\n" + "=" * 70)

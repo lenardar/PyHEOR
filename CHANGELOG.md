@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-09-30 — Explicit time and rewards (breaking)
+
+- Require `Cycle(length, unit)` for Markov, PSM and MicroSim; costs and QALYs are per cycle.
+- Use heemod occupancy methods and first-cycle-undiscounted effective discounting.
+- Share state, starting, entry, transition and custom cost/QALY APIs; support cycle filters and time-dependent callbacks.
+- Add QALY, discount, survival-time conversions and natural-scale flexsurv adapters.
+- Add PSM Terminal bookkeeping; keep DES continuous with declared time units and integrated reward rates.
+- Remove the annual-input API (`cycle_length`, `half_cycle_correction`, `set_utility`, `first_cycle_only`, transition schedules and event hooks) without compatibility wrappers.
+- Add shared reward component/cycle/occupancy tables and calculation metadata; export MicroSim/DES results and named QALYs.
+- Evaluate fitted PSM curves on dense plotting grids, use monotone MicroSim survival displays and explicitly labeled CEAC/CEAF display smoothing, and add example PSA scatter plots.
+- Share dense PSM state line/area partitions and add constrained display interpolation for cycle occupancy and Terminal bookkeeping, preserving original nodes and probability sums; retain empirical steps and analytical corners.
+- Fix patient attribute propagation on censored DES paths.
+- Define iteration-based version updates and keep README focused on current usage.
+- Expand the practical-tools documentation and introduce plots through a capability table and save-figure examples in all three README languages.
+- Add a README result gallery with reproducible survival, PSA scatter, CEAC and CEAF figures and links to their generating scripts.
+- See [README](README.md) for current conventions and [CONTRIBUTING](CONTRIBUTING.md) for version rules.
+
+
+## Earlier development notes (before the explicit-cycle redesign)
+
 ### MicroSim calculation semantics
 
 This release aligns the individual-level engine with the conventions the

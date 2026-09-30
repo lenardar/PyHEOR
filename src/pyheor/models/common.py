@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
 from ..distributions import Distribution
+from .rewards import CycleRewards
 from ..utils import discount_factor, resolve_value
 
 
@@ -40,17 +41,6 @@ class Param:
         if self._explicit_bounds:
             return self.low, self.high
         return self.base * (1 - range_pct), self.base * (1 + range_pct)
-
-
-@dataclass
-class _CostDef:
-    """Internal cost definition shared by cycle-based model engines."""
-
-    name: str
-    values: Any
-    first_cycle_only: bool = False
-    apply_cycles: Optional[List[int]] = None
-    method: str = "wlos"
 
 
 class ParameterisedModel:
@@ -127,11 +117,15 @@ class ParameterisedModel:
         Rates given as ``Param`` also enter ``params`` so they can take part
         in sensitivity and probabilistic analysis.
         """
+        self._discount_expressions = {}
         for attribute, value, label in (
             ("dr_cost", dr_cost, "Discount Rate (Cost)"),
             ("dr_qaly", dr_qaly, "Discount Rate (QALY)"),
         ):
-            if isinstance(value, Param):
+            if callable(value):
+                self._discount_expressions[attribute] = value
+                setattr(self, attribute, 0.0)
+            elif isinstance(value, Param):
                 setattr(self, attribute, value.base)
                 if not value.label:
                     value.label = label
@@ -146,6 +140,14 @@ class ParameterisedModel:
                 )
             except ValueError as error:
                 raise ValueError(f"{attribute}: {error}") from None
+
+    def _discount_rate(self, attribute, params):
+        if attribute in self._discount_expressions:
+            rate = float(self._discount_expressions[attribute](params))
+        else:
+            rate = float(params.get(attribute, getattr(self, attribute)))
+        discount_factor(0, rate, convention=self.discount_convention)
+        return rate
 
     def _owsa_parameters(self, params: Optional[List[str]]) -> List[str]:
         """Names to sweep: those with a distribution, else all of them."""
@@ -172,14 +174,18 @@ class ParameterisedModel:
         }
         try:
             for name in saved:
-                setattr(self, name, values[name])
+                setattr(self, name, self._discount_rate(name, values))
+            for name in self._discount_expressions:
+                if name not in saved:
+                    saved[name] = getattr(self, name)
+                    setattr(self, name, self._discount_rate(name, values))
             yield
         finally:
             for name, original in saved.items():
                 setattr(self, name, original)
 
 
-class StateMappingModel(ParameterisedModel):
+class StateMappingModel(CycleRewards, ParameterisedModel):
     """Resolution of per-state values shared by the state-based engines.
 
     Costs and utilities may be given as ``{state: value}``, as
@@ -257,10 +263,9 @@ class StateMappingModel(ParameterisedModel):
         import numpy as np
 
         if callable(values):
-            if attrs is not None and self._callable_needs_attrs(values):
-                values = values(params, t, attrs)
-            else:
-                values = values(params, t)
+            import inspect
+            arity = len(inspect.signature(values).parameters)
+            values = values(*(params, t, attrs)[:arity])
         self._validate_state_mapping(values, "Resolved state value")
 
         result = np.zeros(self.n_states)
@@ -276,8 +281,8 @@ class StateMappingModel(ParameterisedModel):
             state_values = values
 
         for state_name, value in state_values.items():
-            result[self.states.index(state_name)] = resolve_value(
-                value, params, t
+            result[self.states.index(state_name)] = self._scalar_reward(
+                value, strategy, params, t, attrs
             )
 
         if not np.all(np.isfinite(result)):
@@ -327,7 +332,7 @@ class CohortSweepModel(StateMappingModel):
             for bound, value in (('low', low), ('high', high)):
                 test_params = dict(base_params, **{param_name: value})
                 if is_attr:
-                    with self._attr_param_override({param_name: value}):
+                    with self._attr_param_override(test_params):
                         result = self._simulate_single(test_params)
                 else:
                     result = self._simulate_single(test_params)

@@ -1,30 +1,13 @@
-"""
-Partitioned Survival Model (PSM) for health economic evaluation.
-
-A PSM derives health state occupancy from overlaid survival curves:
-- State 1 (e.g., PFS): S_PFS(t)
-- State 2 (e.g., Progressed): S_OS(t) - S_PFS(t)
-- State 3 (e.g., Dead): 1 - S_OS(t)
-
-More generally, for N survival curves and N+1 states:
-- State_1 = S_1(t)
-- State_k = S_k(t) - S_{k-1}(t)  for k = 2..N
-- State_{N+1} = 1 - S_N(t)
-
-Supports:
-- Multiple treatment strategies with different survival curves
-- Flexible cost and utility definitions (same API as MarkovModel)
-- Base case, OWSA, and PSA analysis
-- Treatment effects via HR or AFT on baseline curves
-"""
+"""Partitioned survival model with curves evaluated at cycle boundaries. See README.md."""
 
 import numpy as np
 import pandas as pd
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+from ..time import Cycle
 from ..distributions import sample_distribution
-from .common import Param as _Param, CohortSweepModel, _CostDef
+from .common import Param as _Param, CohortSweepModel
 from ..survival import SurvivalDistribution, ProportionalHazards
 from ..utils import (
     resolve_value, discount_factor, normalize_hcc, interval_occupancy,
@@ -32,58 +15,7 @@ from ..utils import (
 
 
 class PartitionedSurvivalModel(CohortSweepModel):
-    """Partitioned Survival Model (PSM).
-
-    Derives state probabilities from survival curves rather than
-    transition matrices. Common in oncology where OS and PFS data
-    are available from trials.
-
-    Parameters
-    ----------
-    states : list of str
-        Health state names. Typically 3 states: ["PFS", "Progressed", "Dead"].
-        The number of states must be len(survival_endpoints) + 1.
-    survival_endpoints : list of str
-        Names of the survival endpoints that partition the states.
-        E.g., ["PFS", "OS"]. Each endpoint separates two adjacent states.
-        Must satisfy: S_PFS(t) <= S_OS(t) at all times.
-    strategies : list of str or dict
-        Treatment strategies.
-    n_cycles : int
-        Number of model intervals. State probabilities contain
-        ``n_cycles + 1`` observation points, including time zero.
-    cycle_length : float
-        Length of each cycle in years (default: 1.0).
-    dr_cost : float or Param
-        Annual discount rate for costs. Default: 0 (no discounting).
-        Pass a ``Param`` to enable sensitivity analysis.
-    dr_qaly : float or Param
-        Annual discount rate for QALYs. Default: 0 (no discounting).
-        Pass a ``Param`` to enable sensitivity analysis.
-    half_cycle_correction : bool or str or None
-        Half-cycle correction method. Options:
-
-        - True or ``"trapezoidal"``: average the two
-          adjacent state observations within each interval.
-        - False or None: no correction
-
-        Default: True (trapezoidal).
-    state_type : dict, optional
-        Map state names to "alive" or "dead".
-    discount_convention : str
-        ``"discrete"`` uses ``(1 + rate) ** -time``; ``"continuous"`` uses
-        ``exp(-rate * time)``. Default: ``"discrete"``.
-
-    Examples
-    --------
-    >>> model = PartitionedSurvivalModel(
-    ...     states=["PFS", "Progressed", "Dead"],
-    ...     survival_endpoints=["PFS", "OS"],
-    ...     strategies={"SOC": "Standard of Care", "TRT": "New Treatment"},
-    ...     n_cycles=40,
-    ...     cycle_length=1/12,
-    ... )
-    """
+    """Partitioned survival model with curves evaluated at cycle boundaries. See README.md."""
 
     def __init__(
         self,
@@ -91,12 +23,12 @@ class PartitionedSurvivalModel(CohortSweepModel):
         survival_endpoints: List[str],
         strategies: Union[List[str], Dict[str, str]],
         n_cycles: int,
-        cycle_length: float = 1.0,
+        cycle: Cycle,
         dr_cost: Union[float, "_Param"] = 0.0,
         dr_qaly: Union[float, "_Param"] = 0.0,
-        half_cycle_correction: Union[bool, str, None] = True,
+        method: str = "life-table",
         state_type: Optional[Dict[str, str]] = None,
-        discount_convention: str = "discrete",
+        terminal_state: Optional[str] = None,
     ):
         # States
         self.states = list(states)
@@ -117,7 +49,11 @@ class PartitionedSurvivalModel(CohortSweepModel):
             )
         self.n_endpoints = len(self.survival_endpoints)
 
-        if self.n_states != self.n_endpoints + 1:
+        self.terminal_state = terminal_state
+        if terminal_state is not None and (self.n_endpoints != 2 or self.n_states != 4
+                                          or self.states[-2] != terminal_state):
+            raise ValueError("Terminal PSM requires [PFS, PD, Terminal, Dead] and two endpoints")
+        if self.n_states != self.n_endpoints + 1 + (terminal_state is not None):
             raise ValueError(
                 f"Number of states ({self.n_states}) must be "
                 f"number of survival endpoints + 1 ({self.n_endpoints + 1})"
@@ -143,19 +79,13 @@ class PartitionedSurvivalModel(CohortSweepModel):
             raise TypeError(f"n_cycles must be an integer, got {type(n_cycles).__name__}")
         if n_cycles <= 0:
             raise ValueError(f"n_cycles must be positive, got {n_cycles!r}")
-        if not np.isfinite(cycle_length) or cycle_length <= 0:
-            raise ValueError(
-                f"cycle_length must be a positive finite number, got {cycle_length!r}"
-            )
-        if discount_convention not in {"discrete", "continuous"}:
-            raise ValueError(
-                f"Unknown discount_convention {discount_convention!r}; "
-                "expected 'discrete' or 'continuous'."
-            )
+        if not isinstance(cycle, Cycle):
+            raise TypeError("cycle must be an explicit Cycle(length, unit)")
         self.n_cycles = int(n_cycles)
-        self.cycle_length = float(cycle_length)
-        self.discount_convention = discount_convention
-        self._hcc_method = normalize_hcc(half_cycle_correction)
+        self.cycle = cycle
+        self.cycle_length = cycle.years
+        self.discount_convention = "discrete"
+        self.method = normalize_hcc(method)
 
         # Parameters (init early so discount rates can register into it)
         self.params: Dict[str, _Param] = {}
@@ -186,32 +116,18 @@ class PartitionedSurvivalModel(CohortSweepModel):
                 if state_type.get(s, "alive") == "alive"
             ]
         else:
-            self._alive_states = list(range(self.n_states - 1))
+            self._alive_states = list(range(self.n_states - (2 if terminal_state is not None else 1)))
 
 
         # Survival curves: {strategy: {endpoint: SurvivalDistribution or callable}}
         self._survival_curves: Dict[str, Dict[str, Any]] = {}
 
-        # Costs and utility (same structure as MarkovModel)
-        self._costs: Dict[str, _CostDef] = {}
-        self._utility: Any = None
+        self._init_rewards()
 
-        # Custom costs: list of {'category': str, 'func': callable}
-        self._custom_costs: list = []
-
-    @property
-    def half_cycle_correction(self):
-        """Half-cycle correction method (str or None)."""
-        return self._hcc_method
-
-    @half_cycle_correction.setter
-    def half_cycle_correction(self, value):
-        self._hcc_method = normalize_hcc(value)
 
     # =========================================================================
     # Parameter Management (same API as MarkovModel)
     # =========================================================================
-
 
 
     # =========================================================================
@@ -293,127 +209,6 @@ class PartitionedSurvivalModel(CohortSweepModel):
     # Costs & Utility (same API as MarkovModel)
     # =========================================================================
 
-    def set_state_cost(
-        self,
-        category: str,
-        values: Any,
-        first_cycle_only: bool = False,
-        apply_cycles: Optional[List[int]] = None,
-        method: str = "wlos",
-    ) -> "PartitionedSurvivalModel":
-        """Define a cost category (same interface as MarkovModel).
-
-        Parameters
-        ----------
-        category : str
-            Cost category name.
-        values : dict or callable
-            Cost values per state.
-        first_cycle_only : bool
-            If True, cost only applies in cycle 0.
-        apply_cycles : list of int, optional
-            Specific cycles where cost applies.
-        method : str
-            "wlos" or "starting".
-        """
-        if method not in {"wlos", "starting"}:
-            raise ValueError(
-                f"Unknown cost method {method!r}; expected 'wlos' or 'starting'."
-            )
-        if method == "starting" and first_cycle_only:
-            raise ValueError(
-                "first_cycle_only cannot be combined with method='starting'; "
-                "a starting cost already occurs once at t=0."
-            )
-        if method == "starting" and apply_cycles is not None:
-            raise ValueError(
-                "apply_cycles cannot be combined with method='starting'; "
-                "a starting cost occurs once at t=0."
-            )
-        if apply_cycles is not None:
-            try:
-                apply_cycles = tuple(apply_cycles)
-            except TypeError as exc:
-                raise TypeError("apply_cycles must be an iterable of interval indices") from exc
-            invalid_cycles = [
-                cycle for cycle in apply_cycles
-                if isinstance(cycle, bool)
-                or not isinstance(cycle, (int, np.integer))
-                or not 0 <= int(cycle) < self.n_cycles
-            ]
-            if invalid_cycles:
-                raise ValueError(
-                    f"apply_cycles contains invalid interval indices {invalid_cycles!r}; "
-                    f"expected integers from 0 to {self.n_cycles - 1}."
-                )
-            apply_cycles = tuple(int(cycle) for cycle in apply_cycles)
-        if not callable(values):
-            self._validate_state_mapping(values, "state cost")
-        self._costs[category] = _CostDef(
-            name=category,
-            values=values,
-            first_cycle_only=first_cycle_only,
-            apply_cycles=apply_cycles,
-            method=method,
-        )
-        return self
-
-    def set_utility(self, values: Any) -> "PartitionedSurvivalModel":
-        """Define utility weights for health states."""
-        if not callable(values):
-            self._validate_state_mapping(values, "utility")
-        self._utility = values
-        return self
-
-    def set_custom_cost(
-        self,
-        category: str,
-        func: Callable,
-    ) -> "PartitionedSurvivalModel":
-        """Define a custom cost computed from simulation state each cycle.
-
-        The user-supplied function is called once per interval
-        (``t = 0, ..., n_cycles - 1``)
-        for each strategy.  Its return value is the **undiscounted cost** for
-        that cycle and category.
-
-        Parameters
-        ----------
-        category : str
-            Cost category name.
-        func : callable
-            ``func(strategy, params, t, state_prev, state_curr, P, states) -> float``
-
-            - **strategy** (str): Current strategy name.
-            - **params** (dict): Parameter values ``{name: float}``.
-            - **t** (int): Current interval index (0-based).
-            - **state_prev** (np.ndarray): State proportions at interval start.
-            - **state_curr** (np.ndarray): State proportions at interval end.
-            - **P**: Always ``None`` for PartitionedSurvivalModel (no transition matrix).
-            - **states** (list[str]): State names (same order as array indices).
-
-        Returns
-        -------
-        PartitionedSurvivalModel
-            Self, for method chaining.
-
-        Examples
-        --------
-        Cost based on newly progressed patients:
-
-        >>> def prog_cost(strategy, params, t, state_prev, state_curr, P, states):
-        ...     i = states.index("Progressed")
-        ...     new_prog = max(0, state_curr[i] - state_prev[i])
-        ...     return new_prog * params['c_progression']
-        >>> model.set_custom_cost("progression", prog_cost)
-        """
-        if not callable(func):
-            raise TypeError("func must be callable")
-        self._custom_costs.append({
-            'category': category,
-            'func': func,
-        })
-        return self
 
     # =========================================================================
     # Internal: Resolve Values
@@ -445,35 +240,12 @@ class PartitionedSurvivalModel(CohortSweepModel):
         return curve
 
 
-
-    def _get_state_costs(self, category: str, strategy: str,
-                         params: Dict[str, float], t: int) -> np.ndarray:
-        """Get per-state costs for a category at cycle t."""
-        cost_def = self._costs[category]
-        if cost_def.first_cycle_only and t != 0:
-            return np.zeros(self.n_states)
-        if cost_def.apply_cycles is not None and t not in cost_def.apply_cycles:
-            return np.zeros(self.n_states)
-        if cost_def.method == "starting" and t != 0:
-            return np.zeros(self.n_states)
-        return self._resolve_state_values(cost_def.values, strategy, params, t)
-
-    def _get_utilities(self, strategy: str, params: Dict[str, float],
-                       t: int) -> np.ndarray:
-        """Get per-state utility weights at cycle t."""
-        if self._utility is None:
-            u = np.zeros(self.n_states)
-            for i in self._alive_states:
-                u[i] = 1.0
-            return u
-        return self._resolve_state_values(self._utility, strategy, params, t)
-
     # =========================================================================
     # Simulation Engine
     # =========================================================================
 
     def _resolve_survival_values(
-        self, strategy: str, params: Dict[str, float],
+        self, strategy: str, params: Dict[str, float], curves=None,
     ) -> np.ndarray:
         """Evaluate and validate every endpoint curve for one strategy.
 
@@ -482,10 +254,10 @@ class PartitionedSurvivalModel(CohortSweepModel):
         np.ndarray
             Shape (n_cycles + 1, n_endpoints).
         """
-        times = np.arange(self.n_cycles + 1) * self.cycle_length
+        times = np.arange(self.n_cycles + 1)
         surv_values = np.zeros((self.n_cycles + 1, self.n_endpoints))
         for j, endpoint in enumerate(self.survival_endpoints):
-            curve = self._resolve_curve(strategy, endpoint, params)
+            curve = curves[endpoint] if curves is not None else self._resolve_curve(strategy, endpoint, params)
             values = np.asarray(curve.survival(times), dtype=float)
             if values.shape != times.shape:
                 raise ValueError(
@@ -529,7 +301,7 @@ class PartitionedSurvivalModel(CohortSweepModel):
         return surv_values
 
     def _compute_state_probs(
-        self, strategy: str, params: Dict[str, float],
+        self, strategy: str, params: Dict[str, float], surv_values=None,
     ) -> np.ndarray:
         """Compute state probabilities from survival curves.
 
@@ -538,7 +310,8 @@ class PartitionedSurvivalModel(CohortSweepModel):
         np.ndarray
             Shape (n_cycles + 1, n_states). State membership at each cycle.
         """
-        surv_values = self._resolve_survival_values(strategy, params)
+        if surv_values is None:
+            surv_values = self._resolve_survival_values(strategy, params)
 
         # Derive state probabilities
         state_probs = np.zeros((self.n_cycles + 1, self.n_states))
@@ -553,7 +326,12 @@ class PartitionedSurvivalModel(CohortSweepModel):
             state_probs[:, k] = surv_values[:, k] - surv_values[:, k - 1]
 
         # Last state: 1 - S_last(t)
-        state_probs[:, -1] = 1.0 - surv_values[:, -1]
+        death = 1.0 - surv_values[:, -1]
+        if self.terminal_state is not None:
+            state_probs[:, -2] = np.diff(death, prepend=0)
+            state_probs[:, -1] = np.concatenate(([0.0], death[:-1]))
+        else:
+            state_probs[:, -1] = death
 
         if np.any(state_probs < -1e-10) or np.any(state_probs > 1 + 1e-10):
             bad = np.argwhere(
@@ -566,157 +344,20 @@ class PartitionedSurvivalModel(CohortSweepModel):
 
         return state_probs
 
-    def _simulate_single(self, params: Dict[str, float]) -> Dict[str, Any]:
-        """Run one deterministic simulation with given parameter values."""
+    def _simulate_single(self, params):
         results = {}
-
-        n_intervals = self.n_cycles
-        interval_index = np.arange(n_intervals, dtype=float)
-        flow_df_cost = discount_factor(
-            interval_index + 0.5, self.dr_cost, self.cycle_length,
-            self.discount_convention,
-        )
-        flow_df_qaly = discount_factor(
-            interval_index + 0.5, self.dr_qaly, self.cycle_length,
-            self.discount_convention,
-        )
-        event_df_cost = discount_factor(
-            interval_index + 1.0, self.dr_cost, self.cycle_length,
-            self.discount_convention,
-        )
-
-        alive_mask = np.zeros(self.n_states)
-        alive_mask[self._alive_states] = 1.0
-
         for strategy in self.strategy_names:
-            trace = self._compute_state_probs(strategy, params)
-
-            start_occupancy = interval_occupancy(trace, None)
-            reward_occupancy = interval_occupancy(trace, self._hcc_method)
-
-            qalys = np.zeros(n_intervals)
-            qalys_hcc = np.zeros(n_intervals)
-            lys = start_occupancy @ alive_mask * self.cycle_length
-            lys_hcc = reward_occupancy @ alive_mask * self.cycle_length
-            state_costs_raw = {
-                category: np.zeros(n_intervals) for category in self._costs
-            }
-            state_costs_hcc = {
-                category: np.zeros(n_intervals) for category in self._costs
-            }
-            starting_costs = {
-                category: np.zeros(n_intervals) for category in self._costs
-            }
-            event_costs: Dict[str, np.ndarray] = {}
-
-            for interval in range(n_intervals):
-                utility = self._get_utilities(strategy, params, interval)
-                qalys[interval] = (
-                    np.dot(start_occupancy[interval], utility)
-                    * self.cycle_length
-                )
-                qalys_hcc[interval] = (
-                    np.dot(reward_occupancy[interval], utility)
-                    * self.cycle_length
-                )
-
-                for category, cost_def in self._costs.items():
-                    costs = self._get_state_costs(
-                        category, strategy, params, interval
-                    )
-                    if cost_def.method == "starting":
-                        if interval == 0:
-                            starting_costs[category][0] = float(
-                                np.dot(trace[0], costs)
-                            )
-                    else:
-                        state_costs_raw[category][interval] = (
-                            np.dot(start_occupancy[interval], costs)
-                            * self.cycle_length
-                        )
-                        state_costs_hcc[category][interval] = (
-                            np.dot(reward_occupancy[interval], costs)
-                            * self.cycle_length
-                        )
-
-            for custom_cost in self._custom_costs:
-                category = custom_cost['category']
-                category_events = event_costs.setdefault(
-                    category, np.zeros(n_intervals)
-                )
-                for interval in range(n_intervals):
-                    amount = float(custom_cost['func'](
-                        strategy, params, interval,
-                        trace[interval], trace[interval + 1],
-                        None, self.states,
-                    ))
-                    if not np.isfinite(amount):
-                        raise ValueError(
-                            f"Custom cost {category!r} returned a non-finite "
-                            f"value for strategy {strategy!r}, interval {interval}."
-                        )
-                    category_events[interval] += amount
-
-            categories = list(dict.fromkeys([*self._costs, *event_costs]))
-            costs_by_cycle = {}
-            costs_hcc = {}
-            discounted_costs = {}
-            for category in categories:
-                state_raw = state_costs_raw.get(
-                    category, np.zeros(n_intervals)
-                )
-                state_hcc = state_costs_hcc.get(
-                    category, np.zeros(n_intervals)
-                )
-                at_start = starting_costs.get(
-                    category, np.zeros(n_intervals)
-                )
-                at_event = event_costs.get(
-                    category, np.zeros(n_intervals)
-                )
-                costs_by_cycle[category] = state_raw + at_start + at_event
-                costs_hcc[category] = state_hcc + at_start + at_event
-                discounted_costs[category] = (
-                    state_hcc * flow_df_cost
-                    + at_start
-                    + at_event * event_df_cost
-                )
-
-            discounted_qalys = qalys_hcc * flow_df_qaly
-            discounted_lys = lys_hcc * flow_df_qaly
-
-            # --- Survival values for plotting ---
-            times = np.arange(self.n_cycles + 1) * self.cycle_length
-            surv_values = self._resolve_survival_values(strategy, params)
-            surv_curves = {
-                endpoint: surv_values[:, j]
-                for j, endpoint in enumerate(self.survival_endpoints)
-            }
-
-            # --- Totals ---
-            results[strategy] = {
-                'trace': trace,
-                'survival_curves': surv_curves,
-                'times': times,
-                'interval_times': (interval_index + 0.5) * self.cycle_length,
-                'costs_by_cycle': costs_by_cycle,
-                'qalys_by_cycle': qalys,
-                'lys_by_cycle': lys,
-                'costs_hcc': costs_hcc,
-                'qalys_hcc': qalys_hcc,
-                'lys_hcc': lys_hcc,
-                'discounted_costs': discounted_costs,
-                'discounted_qalys': discounted_qalys,
-                'discounted_lys': discounted_lys,
-                'total_costs': {
-                    cat: float(np.sum(discounted_costs[cat]))
-                    for cat in discounted_costs
-                },
-                'total_qalys': float(np.sum(discounted_qalys)),
-                'total_lys': float(np.sum(discounted_lys)),
-            }
-
+            curves = {endpoint: self._resolve_curve(strategy, endpoint, params)
+                      for endpoint in self.survival_endpoints}
+            values = self._resolve_survival_values(strategy, params, curves)
+            trace = self._compute_state_probs(strategy, params, values)
+            result = self._cycle_rewards(strategy, params, trace)
+            result['times'] = self.cycle.time(np.arange(self.n_cycles + 1), unit="year")
+            result['survival_distributions'] = curves
+            result['survival_curves'] = {e: values[:, j] for j, e in enumerate(self.survival_endpoints)}
+            results[strategy] = result
         return results
+
 
     # =========================================================================
     # Analysis Entry Points
@@ -728,8 +369,6 @@ class PartitionedSurvivalModel(CohortSweepModel):
         params = self._get_base_params()
         sim = self._simulate_single(params)
         return PSMBaseResult(model=self, results=sim, params=params)
-
-
 
 
     def run_psa(
@@ -776,41 +415,12 @@ class PartitionedSurvivalModel(CohortSweepModel):
     # Convenience
     # =========================================================================
 
-    def info(self) -> str:
-        """Return a summary string describing the model."""
-        lines = [
-            f"PartitionedSurvivalModel",
-            f"  States ({self.n_states}): {self.states}",
-            f"  Endpoints ({self.n_endpoints}): {self.survival_endpoints}",
-            f"  Strategies ({self.n_strategies}): {self.strategy_names}",
-            f"  Cycles: {self.n_cycles} × {self.cycle_length} year(s)",
-            f"  Discount rates: cost={self.dr_cost:.1%}, QALY={self.dr_qaly:.1%}",
-            f"  Discount convention: {self.discount_convention}",
-            f"  Half-cycle correction: {self._hcc_method or 'None'}",
-            f"  Parameters ({len(self.params)}):",
-        ]
-        for name, p in self.params.items():
-            dist_str = repr(p.dist) if p.dist else "Fixed"
-            lines.append(f"    {name}: {p.base} [{dist_str}]")
+    def info(self):
+        return (f"{type(self).__name__}: {self.n_states} states, {self.n_strategies} strategies\n"
+                f"  Cycles: {self.n_cycles} × {self.cycle.length} {self.cycle.unit}\n"
+                f"  Method: {self.method}; discount rates per cycle: {self._discount_rate('dr_cost', self._get_base_params())}, {self._discount_rate('dr_qaly', self._get_base_params())}\n"
+                f"  Cost components: {list(self._costs)}; QALY components: {list(self._qalys)}")
 
-        lines.append(f"  Survival curves:")
-        for strategy in self.strategy_names:
-            curves = self._survival_curves.get(strategy, {})
-            for ep in self.survival_endpoints:
-                c = curves.get(ep, "NOT SET")
-                lines.append(f"    {strategy}/{ep}: {c}")
-
-        lines.append(f"  Cost categories ({len(self._costs)}):")
-        for cat, cd in self._costs.items():
-            flags = []
-            if cd.first_cycle_only:
-                flags.append("first-cycle")
-            if cd.method == "starting":
-                flags.append("one-time")
-            flag_str = f" ({', '.join(flags)})" if flags else ""
-            lines.append(f"    {cat}{flag_str}")
-
-        return "\n".join(lines)
 
     def __repr__(self):
         return (

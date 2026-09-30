@@ -213,70 +213,22 @@ def discount_factor(t: Union[int, float, np.ndarray], rate: float,
 # =============================================================================
 
 def normalize_hcc(value):
-    """Normalize half_cycle_correction input to a canonical form.
-
-    Parameters
-    ----------
-    value : bool, str, or None
-        - True → "trapezoidal"
-        - False or None → None (no correction)
-        - "trapezoidal" → "trapezoidal"
-
-    Returns
-    -------
-    str or None
-        "trapezoidal" or None.
-
-    Raises
-    ------
-    ValueError
-        If value is not a recognized option.
-    """
-    if value is True:
-        return "trapezoidal"
-    elif value is False or value is None:
-        return None
-    elif isinstance(value, str):
-        v = value.lower().strip()
-        if v == "trapezoidal":
-            return "trapezoidal"
-        raise ValueError(
-            f"Invalid half_cycle_correction: {value!r}. "
-            f"Expected True, False, None, or 'trapezoidal'."
-        )
-    else:
-        raise TypeError(
-            f"half_cycle_correction must be bool, str, or None, "
-            f"got {type(value).__name__}"
-        )
+    """Validate a heemod state-occupancy method."""
+    if value not in ("beginning", "end", "life-table"):
+        raise ValueError("method must be 'beginning', 'end', or 'life-table'")
+    return value
 
 
-def interval_occupancy(trace, half_cycle_correction=None):
-    """Return one state-occupancy row for each model interval.
-
-    A trace contains ``n_cycles + 1`` observation points. Rewards accrue over
-    the ``n_cycles`` intervals between them. Without half-cycle correction the
-    interval uses its starting occupancy; trapezoidal correction averages the
-    two endpoints.
-
-    Parameters
-    ----------
-    trace : array-like, shape (n_cycles + 1, n_states)
-    half_cycle_correction : bool, str, or None
-        Accepted values are the same as :func:`normalize_hcc`.
-
-    Returns
-    -------
-    np.ndarray, shape (n_cycles, n_states)
-    """
+def interval_occupancy(trace, method="beginning"):
+    """Map N+1 boundary observations to N cycle occupancies."""
     values = np.asarray(trace, dtype=float)
     if values.ndim != 2 or values.shape[0] < 2:
-        raise ValueError(
-            "trace must be a 2D array with at least two observation points"
-        )
-    method = normalize_hcc(half_cycle_correction)
-    if method == "trapezoidal":
-        return (values[:-1] + values[1:]) / 2.0
+        raise ValueError("trace must be a 2D array with at least two observations")
+    method = normalize_hcc(method)
+    if method == "life-table":
+        return (values[:-1] + values[1:]) / 2
+    if method == "end":
+        return values[1:].copy()
     return values[:-1].copy()
 
 
