@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.3.1 — 2026-10-04 — Simplify OWSA plots
+
+- Remove single-parameter OWSA plotting (`OWSAResult.plot_owsa()` and `plot_owsa_param()`). OWSA calculations, result tables, and tornado plots remain available.
+- Clarify the `0.x` version policy: narrowly scoped auxiliary API removals can be patch updates, with incompatibilities documented explicitly. Core modeling API and calculation-convention changes still require a minor update.
+
 ## 0.3.0 — 2026-09-30 — Explicit time and rewards (breaking)
 
 - Require `Cycle(length, unit)` for Markov, PSM and MicroSim; costs and QALYs are per cycle.

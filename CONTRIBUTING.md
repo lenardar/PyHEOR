@@ -8,13 +8,23 @@ by itself mean that the package has been published.
 
 | Change | While version is `0.x.y` | From `1.0.0` onward |
 |---|---|---|
-| Public API removal or incompatible change; intentional change to units or calculation conventions | Increase minor, reset patch | Increase major, reset minor and patch |
+| Core modeling API removal or incompatible change; intentional change to units or calculation conventions | Increase minor, reset patch | Increase major, reset minor and patch |
+| Small auxiliary API removal or simplification, with model calculations and core workflows unchanged | Increase patch; document the incompatibility | Increase major, reset minor and patch |
 | New public functionality with existing usage preserved | Increase minor, reset patch | Increase minor, reset patch |
 | Bug fixes, plotting improvements, documentation/examples, internal refactoring with existing usage preserved | Increase patch | Increase patch |
 
 A numerical bug fix can change results while remaining a patch change. Its
 CHANGELOG entry must explain which results change and why. An intentional
 change in model assumptions or accounting rules belongs to the first row.
+
+During `0.x` development, removing a narrowly scoped auxiliary plotting
+interface can be a patch change. For example, removing the single-parameter
+OWSA plot while retaining OWSA calculations, result tables and tornado plots
+qualifies. This exception does not apply to model construction, time/reward
+inputs, calculation conventions, or core result interfaces. State the removed
+API explicitly in CHANGELOG; a patch number does not imply full compatibility
+under this development policy. From `1.0.0`, any public API removal requires
+a major version increase.
 
 ## When to update
 

@@ -137,7 +137,6 @@ Duration conventions are 12 months, 52 weeks or 365 days per year, rather than c
 | Individual outcome histograms | Cost, QALY or life-year distributions | MicroSim, DES: `base.plot_outcomes_histogram()` |
 | Model / transition diagrams | State structure and transitions | Markov: `base.plot_model_diagram()`, `base.plot_transition_diagram()` |
 | Tornado | Rank parameter impacts | `owsa.plot_tornado()` |
-| Single-parameter sensitivity | Outcomes at calculated parameter scenarios | `owsa.plot_owsa("parameter")` |
 | PSA cost-effectiveness scatter | Incremental costs and QALYs | `psa.plot_scatter()` |
 | CEAC | Cost-effectiveness probability by strategy | `psa.plot_ceac()` |
 | PSA convergence | Inspect simulation stability | Markov, PSM: `psa.plot_convergence()` |

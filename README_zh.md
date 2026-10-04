@@ -137,7 +137,6 @@ treated_curve = ph.ProportionalHazards(monthly_curve, hr=.75)
 | 个体结果直方图 | 查看成本、QALY 或生命年分布 | MicroSim、DES：`base.plot_outcomes_histogram()` |
 | 模型结构／转移图 | 展示状态及转移关系 | Markov：`base.plot_model_diagram()`、`base.plot_transition_diagram()` |
 | 龙卷风图 | 比较参数对结果的影响 | `owsa.plot_tornado()` |
-| 单参数敏感性曲线 | 查看已计算情景中的参数与结果关系 | `owsa.plot_owsa("参数名")` |
 | PSA 成本效果散点图 | 展示增量成本和增量 QALY | `psa.plot_scatter()` |
 | CEAC | 查看各策略具有成本效果的概率 | `psa.plot_ceac()` |
 | PSA 收敛图 | 查看抽样结果是否趋于稳定 | Markov、PSM：`psa.plot_convergence()` |

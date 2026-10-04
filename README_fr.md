@@ -126,7 +126,6 @@ Une année correspond à 12 mois, 52 semaines ou 365 jours ; il ne s'agit pas de
 | Histogrammes individuels | Distributions des coûts, QALY ou années de vie | MicroSim, DES : `base.plot_outcomes_histogram()` |
 | Diagrammes de modèle / transition | Structure des états et transitions | Markov : `base.plot_model_diagram()`, `base.plot_transition_diagram()` |
 | Tornade | Impact des paramètres | `owsa.plot_tornado()` |
-| Sensibilité à un paramètre | Résultats des scénarios calculés | `owsa.plot_owsa("paramètre")` |
 | Nuage coût-efficacité PSA | Coûts et QALY différentiels | `psa.plot_scatter()` |
 | CEAC | Probabilités coût-efficacité par stratégie | `psa.plot_ceac()` |
 | Convergence PSA | Stabilité des simulations | Markov, PSM : `psa.plot_convergence()` |

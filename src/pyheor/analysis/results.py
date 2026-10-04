@@ -523,15 +523,6 @@ class OWSAResult:
             self, comparator=comparator, intervention=intervention,
             outcome=outcome, **kwargs,
         )
-    
-    def plot_owsa(self, param_name: str, comparator=None, intervention=None,
-                  **kwargs):
-        """Plot one-way sensitivity for a specific parameter."""
-        from ..plotting import plot_owsa_param
-        return plot_owsa_param(
-            self, param_name, comparator=comparator, intervention=intervention,
-            **kwargs,
-        )
 
 
 class PSAResult:
