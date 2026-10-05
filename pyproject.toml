@@ -29,6 +29,12 @@ dependencies = [
     "openpyxl>=3.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/lenardar/PyHEOR"
+Repository = "https://github.com/lenardar/PyHEOR"
+Issues = "https://github.com/lenardar/PyHEOR/issues"
+Changelog = "https://github.com/lenardar/PyHEOR/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = ["pytest", "jupyter", "seaborn"]
 

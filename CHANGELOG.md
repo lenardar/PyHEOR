@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prepare PyPI publishing: add project URLs, use PyPI installation instructions and absolute README links, and add a GitHub Release-triggered workflow that verifies the release version, builds, checks, and tests distributions before Trusted Publishing, then attaches the same packages to the Release.
+
 ## 0.4.0 — 2026-10-05 — PSM PSA crossing resampling
 
 - Resample PSM PSA parameter sets when ordered survival endpoints cross within a strategy, including models with more than three states. `n_sim` now counts valid simulations; `max_attempts` limits total draws (default `10 * n_sim`). Warn once with rejected-draw and attempt counts. Rejection conditions the PSA distribution on valid endpoint ordering and can change results for models that previously stopped on crossings.

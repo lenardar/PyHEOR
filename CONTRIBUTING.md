@@ -66,3 +66,19 @@ verification can form `0.2.0`; a subsequent completed plotting fix can be
 Creating Git release tags, pushing changes or publishing a package requires
 an explicit release instruction; completing a local iteration does not
 authorize those actions.
+
+## Publishing to PyPI
+
+Configure a PyPI Trusted Publisher for GitHub owner `lenardar`, repository
+`PyHEOR`, workflow `publish.yml`, and environment `pypi`. For the first upload,
+use a pending publisher with project name `pyheor`.
+
+After explicitly approving publication, create a GitHub Release from the
+reviewed commit with tag `v<version>` (for example, `v0.4.0`). Publishing the
+Release starts `.github/workflows/publish.yml`; saving a draft does not.
+
+The workflow checks that the tag, package metadata and source versions match,
+builds the wheel and source distribution, validates their metadata and README,
+and runs the tests against the installed wheel. Only then does it publish to
+PyPI using Trusted Publishing and attach the same distributions to the GitHub
+Release. Check the Actions run for completion before announcing availability.

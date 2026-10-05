@@ -2,7 +2,7 @@
 
 Bibliothèque Python de modélisation médico-économique et d'analyse coût-efficacité.
 
-[English](README.md) · [中文](README_zh.md)
+[English](https://github.com/lenardar/PyHEOR/blob/main/README.md) · [中文](https://github.com/lenardar/PyHEOR/blob/main/README_zh.md)
 
 ## Exemples de résultats
 
@@ -10,18 +10,18 @@ Figures produites par les exemples synthétiques du dépôt. Cliquez sur une ima
 
 | Modélisation de la survie | Incertitude des paramètres |
 |:---:|:---:|
-| [<img src="examples/psm_oncology/figures/survival_curves.png" width="440" alt="Courbes PFS et OS de deux stratégies">](examples/psm_oncology/figures/survival_curves.png) | [<img src="examples/psm_oncology/figures/ce_scatter.png" width="440" alt="Nuage PSA des coûts et QALY différentiels">](examples/psm_oncology/figures/ce_scatter.png) |
+| [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/psm_oncology/figures/survival_curves.png" width="440" alt="Courbes PFS et OS de deux stratégies">](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/figures/survival_curves.png) | [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/psm_oncology/figures/ce_scatter.png" width="440" alt="Nuage PSA des coûts et QALY différentiels">](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/figures/ce_scatter.png) |
 | Comparer les courbes PFS et OS ajustées. | Explorer les coûts et QALY différentiels des tirages PSA. |
 | **Acceptabilité coût-efficacité (CEAC)** | **Décision entre plusieurs stratégies (CEAF)** |
-| [<img src="examples/psm_oncology/figures/ceac.png" width="440" alt="Courbes d'acceptabilité coût-efficacité de deux stratégies">](examples/psm_oncology/figures/ceac.png) | [<img src="examples/multi_strategy_comparison/figures/ceaf.png" width="440" alt="Frontière d'acceptabilité avec changements de stratégie">](examples/multi_strategy_comparison/figures/ceaf.png) |
+| [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/psm_oncology/figures/ceac.png" width="440" alt="Courbes d'acceptabilité coût-efficacité de deux stratégies">](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/figures/ceac.png) | [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/multi_strategy_comparison/figures/ceaf.png" width="440" alt="Frontière d'acceptabilité avec changements de stratégie">](https://github.com/lenardar/PyHEOR/blob/main/examples/multi_strategy_comparison/figures/ceaf.png) |
 | Suivre les probabilités selon le seuil WTP. | Identifier la stratégie recommandée et sa probabilité d'être coût-efficace. |
 
-Reproduisez les figures avec les exemples [PSM oncologie](examples/psm_oncology/example.py) et [comparaison multistratégie](examples/multi_strategy_comparison/example.py). Le lissage visuel CEAC/CEAF est indiqué ; analyses et exports conservent les probabilités brutes.
+Reproduisez les figures avec les exemples [PSM oncologie](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/example.py) et [comparaison multistratégie](https://github.com/lenardar/PyHEOR/blob/main/examples/multi_strategy_comparison/example.py). Le lissage visuel CEAC/CEAF est indiqué ; analyses et exports conservent les probabilités brutes.
 
 ## Installation
 
 ```bash
-pip install -e .
+pip install pyheor
 ```
 
 Python 3.9+ ; NumPy, SciPy, pandas, matplotlib et openpyxl.
@@ -154,8 +154,8 @@ Utiliser `ph.export_to_excel(base, "results.xlsx")` pour les tableaux, `ph.expor
 
 ## Exemples
 
-Consulter les [exemples](examples) et le [README anglais](README.md). L'historique des versions figure dans [CHANGELOG](CHANGELOG.md).
+Consulter les [exemples](https://github.com/lenardar/PyHEOR/blob/main/examples) et le [README anglais](https://github.com/lenardar/PyHEOR/blob/main/README.md). L'historique des versions figure dans [CHANGELOG](https://github.com/lenardar/PyHEOR/blob/main/CHANGELOG.md).
 
-Tests : `pytest`. Licence : [AGPL-3.0-or-later](LICENSE).
+Tests : `pytest`. Licence : [AGPL-3.0-or-later](https://github.com/lenardar/PyHEOR/blob/main/LICENSE).
 
-Voir les [règles de développement et de version](CONTRIBUTING.md).
+Voir les [règles de développement et de version](https://github.com/lenardar/PyHEOR/blob/main/CONTRIBUTING.md).

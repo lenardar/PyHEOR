@@ -2,7 +2,7 @@
 
 用于卫生经济学建模与成本效果分析的 Python 框架。
 
-[English](README.md) · [Français](README_fr.md)
+[English](https://github.com/lenardar/PyHEOR/blob/main/README.md) · [Français](https://github.com/lenardar/PyHEOR/blob/main/README_fr.md)
 
 ## 结果展示
 
@@ -10,18 +10,18 @@
 
 | 生存建模 | 参数不确定性 |
 |:---:|:---:|
-| [<img src="examples/psm_oncology/figures/survival_curves.png" width="440" alt="两种策略的 PFS 和 OS 生存曲线">](examples/psm_oncology/figures/survival_curves.png) | [<img src="examples/psm_oncology/figures/ce_scatter.png" width="440" alt="PSA 增量成本和增量 QALY 散点图">](examples/psm_oncology/figures/ce_scatter.png) |
+| [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/psm_oncology/figures/survival_curves.png" width="440" alt="两种策略的 PFS 和 OS 生存曲线">](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/figures/survival_curves.png) | [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/psm_oncology/figures/ce_scatter.png" width="440" alt="PSA 增量成本和增量 QALY 散点图">](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/figures/ce_scatter.png) |
 | 比较不同策略的 PFS 与 OS 拟合曲线。 | 展示 PSA 抽样中的增量成本与增量 QALY。 |
 | **成本效果可接受曲线（CEAC）** | **多策略决策分析（CEAF）** |
-| [<img src="examples/psm_oncology/figures/ceac.png" width="440" alt="两种策略的成本效果可接受曲线">](examples/psm_oncology/figures/ceac.png) | [<img src="examples/multi_strategy_comparison/figures/ceaf.png" width="440" alt="含策略切换的成本效果可接受前沿">](examples/multi_strategy_comparison/figures/ceaf.png) |
+| [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/psm_oncology/figures/ceac.png" width="440" alt="两种策略的成本效果可接受曲线">](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/figures/ceac.png) | [<img src="https://raw.githubusercontent.com/lenardar/PyHEOR/main/examples/multi_strategy_comparison/figures/ceaf.png" width="440" alt="含策略切换的成本效果可接受前沿">](https://github.com/lenardar/PyHEOR/blob/main/examples/multi_strategy_comparison/figures/ceaf.png) |
 | 查看成本效果概率随支付意愿阈值的变化。 | 展示推荐策略及其具有成本效果的概率。 |
 
-运行[肿瘤 PSM](examples/psm_oncology/example.py)和[多策略比较](examples/multi_strategy_comparison/example.py)示例即可复现。CEAC/CEAF 图中已标注显示平滑；分析和导出保留原始概率。
+运行[肿瘤 PSM](https://github.com/lenardar/PyHEOR/blob/main/examples/psm_oncology/example.py)和[多策略比较](https://github.com/lenardar/PyHEOR/blob/main/examples/multi_strategy_comparison/example.py)示例即可复现。CEAC/CEAF 图中已标注显示平滑；分析和导出保留原始概率。
 
 ## 安装
 
 ```bash
-pip install -e .
+pip install pyheor
 ```
 
 Python 3.9+；依赖 NumPy、SciPy、pandas、matplotlib、openpyxl。
@@ -165,15 +165,15 @@ cea.plot_ceaf(wtp_range=(0, 100000))
 
 ## 示例
 
-[可运行示例](examples)覆盖 Markov、PSM、MicroSim 和策略比较。版本历史见 [CHANGELOG](CHANGELOG.md)。
+[可运行示例](https://github.com/lenardar/PyHEOR/blob/main/examples)覆盖 Markov、PSM、MicroSim 和策略比较。版本历史见 [CHANGELOG](https://github.com/lenardar/PyHEOR/blob/main/CHANGELOG.md)。
 
 ## 开发
 
-参见[开发与版本号更新规则](CONTRIBUTING.md)。
+参见[开发与版本号更新规则](https://github.com/lenardar/PyHEOR/blob/main/CONTRIBUTING.md)。
 
 ```bash
 pip install -e '.[dev]'
 pytest
 ```
 
-许可证：[AGPL-3.0-or-later](LICENSE)。
+许可证：[AGPL-3.0-or-later](https://github.com/lenardar/PyHEOR/blob/main/LICENSE)。
