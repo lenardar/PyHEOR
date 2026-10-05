@@ -76,6 +76,8 @@ psa = model.run_psa(n_sim=100, seed=42)
 
 `method` 为 `beginning`、`end` 或默认 `life-table`，状态计数及转移流量矫正遵循 heemod。PSM 无法从 PFS/OS 曲线识别每对状态的转移流量，因此不支持入态/转移收益，可按文档使用 Terminal 临终费用记账。
 
+PSM 的 PSA 遇到同一方案内终点曲线顺序不合法时会重抽，并提示拒绝次数。`n_sim` 为有效模拟次数；`max_attempts` 默认为 `10 * n_sim`。基线分析仍严格报错。重抽得到的是满足曲线顺序约束的参数分布。
+
 ## 实用工具
 
 所有工具均可通过 `import pyheor as ph` 使用。模型不会自动猜测输入单位；下面的工具帮助显式完成换算。

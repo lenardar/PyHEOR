@@ -116,3 +116,81 @@ class TestPSMGoldenCalculations:
         model = self._flat_model(n_cycles=1)
         with pytest.raises(ValueError, match='positive integer'):
             model.run_psa(n_sim=0, progress=False)
+
+
+class TestPSACrossingResampling:
+    @staticmethod
+    def _model(multi_state=False):
+        endpoints = ['PFS', 'PFS2', 'OS'] if multi_state else ['PFS', 'OS']
+        states = ['PF', 'PD1', 'PD2', 'Dead'] if multi_state else ['PF', 'PD', 'Dead']
+        model = PSMModel(states=states, survival_endpoints=endpoints,
+                         strategies=['A', 'B'], n_cycles=3,
+                         cycle=_ph.Cycle(1, 'year'))
+        model.add_param('rate', base=0.3, dist=object())
+        for strategy in model.strategy_names:
+            model.set_survival(strategy, 'PFS', Exponential(rate=0.4))
+            if multi_state:
+                model.set_survival(strategy, 'PFS2',
+                                   lambda p: Exponential(rate=p['rate']))
+                model.set_survival(strategy, 'OS', Exponential(rate=0.1))
+            else:
+                model.set_survival(strategy, 'OS',
+                                   Exponential(rate=0.1) if strategy == 'A'
+                                   else lambda p: Exponential(rate=p['rate']))
+        return model
+
+    @pytest.mark.parametrize('multi_state', [False, True])
+    def test_rejects_whole_draw_and_returns_valid_results(self, monkeypatch, multi_state):
+        model = self._model(multi_state)
+        draws = iter([0.5, 0.2, 0.3])
+        monkeypatch.setattr('pyheor.models.psm.sample_distribution',
+                            lambda *args: np.array([next(draws)]))
+        with pytest.warns(UserWarning, match='rejected 1 draws'):
+            result = model.run_psa(n_sim=2, seed=42, progress=False)
+        assert [p['rate'] for p in result.sampled_params] == [0.2, 0.3]
+        assert len(result.psa_results) == 2
+        for draw in result.psa_results:
+            for strategy in model.strategy_names:
+                trace = draw[strategy]['trace']
+                assert np.all(trace >= 0)
+                np.testing.assert_allclose(trace.sum(axis=1), 1)
+        assert model.params['rate'].base == 0.3
+
+    def test_stops_at_attempt_limit(self, monkeypatch):
+        model = self._model()
+        calls = []
+        def draw(*args):
+            calls.append(1)
+            return np.array([0.5])
+        monkeypatch.setattr('pyheor.models.psm.sample_distribution', draw)
+        with pytest.raises(RuntimeError, match='accepted 0/2.*rejected 3'):
+            model.run_psa(n_sim=2, max_attempts=3, progress=False)
+        assert len(calls) == 3
+
+    def test_other_errors_are_not_retried(self, monkeypatch):
+        model = self._model()
+        calls = []
+        def draw(*args):
+            calls.append(1)
+            return np.array([0.2])
+        monkeypatch.setattr('pyheor.models.psm.sample_distribution', draw)
+        model.set_survival('B', 'OS', lambda p: (_ for _ in ()).throw(
+            ValueError('invalid custom curve')))
+        with pytest.raises(ValueError, match='invalid custom curve'):
+            model.run_psa(n_sim=2, progress=False)
+        assert len(calls) == 1
+
+    def test_seed_reproduces_accepted_draws(self):
+        from pyheor.distributions import Uniform
+        model = self._model()
+        model.params['rate'].dist = Uniform(0.1, 0.6)
+        with pytest.warns(UserWarning):
+            first = model.run_psa(n_sim=10, seed=42, progress=False)
+        with pytest.warns(UserWarning):
+            second = model.run_psa(n_sim=10, seed=42, progress=False)
+        assert first.sampled_params == second.sampled_params
+
+    @pytest.mark.parametrize('limit', [0, 1, True, 2.5])
+    def test_invalid_attempt_limit(self, limit):
+        with pytest.raises(ValueError, match='max_attempts'):
+            self._model().run_psa(n_sim=2, max_attempts=limit, progress=False)

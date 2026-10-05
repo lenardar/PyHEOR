@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import warnings
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -12,6 +13,10 @@ from ..survival import SurvivalDistribution, ProportionalHazards
 from ..utils import (
     resolve_value, discount_factor, normalize_hcc, interval_occupancy,
 )
+
+
+class _CurveCrossingError(ValueError):
+    """Ordered PSM endpoints cross within a strategy."""
 
 
 class PartitionedSurvivalModel(CohortSweepModel):
@@ -292,7 +297,7 @@ class PartitionedSurvivalModel(CohortSweepModel):
             crossed = surv_values[:, j] < surv_values[:, j - 1] - 1e-12
             if np.any(crossed):
                 indices = np.flatnonzero(crossed)
-                raise ValueError(
+                raise _CurveCrossingError(
                     f"PSM curve crossing for strategy {strategy!r}: endpoint "
                     f"{self.survival_endpoints[j]!r} falls below "
                     f"{self.survival_endpoints[j - 1]!r} at time indices "
@@ -376,31 +381,71 @@ class PartitionedSurvivalModel(CohortSweepModel):
         n_sim: int = 1000,
         seed: Optional[int] = None,
         progress: bool = True,
+        *,
+        max_attempts: Optional[int] = None,
     ) -> "PSAResult":
-        """Run probabilistic sensitivity analysis."""
+        """Run PSA, resampling parameter sets whose ordered curves cross.
+
+        ``n_sim`` counts accepted simulations. ``max_attempts`` limits total
+        draws (default: ``10 * n_sim``). Rejected draws are reported in one
+        warning on completion; other model errors propagate unchanged.
+        """
         from ..analysis.results import PSAResult
 
         if isinstance(n_sim, bool) or not isinstance(n_sim, (int, np.integer)):
             raise TypeError("n_sim must be a positive integer")
         if n_sim <= 0:
             raise ValueError("n_sim must be a positive integer")
+        # Bound retries when the sampled parameters rarely produce valid curves.
+        if max_attempts is None:
+            max_attempts = 10 * n_sim
+        if (isinstance(max_attempts, bool)
+                or not isinstance(max_attempts, (int, np.integer))
+                or max_attempts < n_sim):
+            raise ValueError("max_attempts must be an integer >= n_sim")
         rng = np.random.default_rng(seed)
-
         sampled_params = []
-        for i in range(n_sim):
+        psa_results = []
+        attempts = 0
+        rejected = 0
+        # Count accepted simulations toward n_sim, including all strategies.
+        while len(psa_results) < n_sim:
+            if attempts >= max_attempts:
+                raise RuntimeError(
+                    f"PSM PSA reached max_attempts={max_attempts}: "
+                    f"accepted {len(psa_results)}/{n_sim} simulations; "
+                    f"rejected {rejected} draws due to curve crossing. "
+                    "Check the survival parameter distributions."
+                )
+            attempts += 1
             p = self._get_base_params()
             for name, param in self.params.items():
                 if param.dist is not None:
                     p[name] = float(sample_distribution(param.dist, 1, rng)[0])
+            try:
+                with self._attr_param_override(p):
+                    result = self._simulate_single(p)
+            except _CurveCrossingError:
+                # Discard the entire parameter set and redraw for every strategy.
+                # Other errors propagate instead of triggering a retry.
+                rejected += 1
+                continue
             sampled_params.append(p)
-
-        psa_results = []
-        for i, p in enumerate(sampled_params):
-            if progress and (i + 1) % max(1, n_sim // 10) == 0:
-                print(f"  PSA: {i+1}/{n_sim} ({100*(i+1)/n_sim:.0f}%)")
-            with self._attr_param_override(p):
-                result = self._simulate_single(p)
             psa_results.append(result)
+            accepted = len(psa_results)
+            if progress and accepted % max(1, n_sim // 10) == 0:
+                print(f"  PSA: {accepted}/{n_sim} ({100*accepted/n_sim:.0f}%)")
+
+        if rejected:
+            # Report once, even with progress disabled, to avoid per-draw noise.
+            warnings.warn(
+                f"PSM PSA rejected {rejected} draws due to curve crossing "
+                f"and resampled; completed {n_sim} valid simulations "
+                f"in {attempts} attempts. Resampling conditions the parameter "
+                "distribution on valid curve ordering.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         if progress:
             print(f"  PSA complete: {n_sim} simulations")

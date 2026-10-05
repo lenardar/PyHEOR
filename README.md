@@ -76,6 +76,8 @@ Costs and QALYs have parallel state, starting, entry, transition and custom inte
 
 `method` is `beginning`, `end`, or `life-table` (default). State counts and event flows follow heemod conventions. PSM cannot identify pairwise transition flows, so entry/transition reward registration is unavailable there; use an explicit Terminal state for the documented end-of-life accounting rule.
 
+PSM PSA resamples draws when ordered survival endpoints cross within a strategy, and warns with the rejected-draw count. `n_sim` counts valid simulations; `max_attempts` defaults to `10 * n_sim`. Base-case runs remain strict. Resampling conditions the parameter distribution on valid curve ordering.
+
 ## Practical tools
 
 Use these tools through `import pyheor as ph`. Model engines require explicit units; the helpers perform the conversions you request.

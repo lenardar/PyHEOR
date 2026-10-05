@@ -65,6 +65,8 @@ Interfaces parallèles pour coûts et QALY : état, début du modèle, entrée d
 
 `method` accepte `beginning`, `end` et `life-table` (par défaut), avec les conventions de comptage et de correction des flux de heemod. PSM n'identifie pas les flux de transition individuels ; un état Terminal optionnel permet la comptabilisation documentée des coûts de fin de vie.
 
+La PSA du PSM rééchantillonne les tirages dont les courbes de survie ne respectent pas l’ordre des critères au sein d’une stratégie, puis signale le nombre de rejets. `n_sim` compte les simulations valides ; `max_attempts` vaut par défaut `10 * n_sim`. L’analyse de référence reste stricte. Le rééchantillonnage conditionne la distribution des paramètres au respect de cet ordre.
+
 ## Outils pratiques
 
 Tous les outils sont accessibles avec `import pyheor as ph`. Les unités sont explicites ; les modèles ne les déduisent pas automatiquement.
