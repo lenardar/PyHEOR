@@ -363,6 +363,18 @@ class GeneralizedGamma(SurvivalDistribution):
         - Q = 1: Weibull
         - Q = 0: Log-normal
         - sigma = Q: Gamma
+
+    Notes
+    -----
+    Parameters follow flexsurv's Prentice parameterization. For
+    ``abs(Q) < 1e-5``, survival, density and hazard use the log-normal limit
+    with ``meanlog=mu`` and ``sdlog=sigma`` to avoid precision loss from the
+    Gamma shape ``1/Q**2``. This is exact at Q=0 and an approximation for
+    nonzero Q; it need not match flexsurv's nonzero-Q evaluation exactly.
+    Generated Excel survival formulas use the same threshold. Excel evaluates
+    positive-Q upper tails as 1 minus the Gamma CDF, so extremely small tail
+    probabilities may round to zero while Python's survival function retains
+    them.
     """
 
     def __init__(self, mu: float, sigma: float, Q: float):
@@ -372,31 +384,25 @@ class GeneralizedGamma(SurvivalDistribution):
         self.sigma = float(sigma)
         self.Q = float(Q)
 
-    def _params(self):
-        """Convert to scipy-compatible parameters."""
-        if abs(self.Q) < 1e-10:
-            # Limiting case: log-normal
-            return None
-        gamma_shape = self.Q ** (-2)
-        gamma_scale = np.exp(self.mu + self.sigma * np.log(self.Q ** 2) / self.Q)
-        gamma_pow = self.Q / self.sigma
-        return gamma_shape, gamma_scale, gamma_pow
+    # Below this threshold, evaluating the Gamma density loses precision
+    # because its shape is 1/Q**2. Use the continuous log-normal limit.
+    _LOGNORMAL_Q_THRESHOLD = 1e-5
 
     def survival(self, t):
         t = np.asarray(t, dtype=float)
         t_safe = np.maximum(t, 1e-300)
+        w = (np.log(t_safe) - self.mu) / self.sigma
 
-        if abs(self.Q) < 1e-10:
-            # Log-normal limit
-            z = (np.log(t_safe) - self.mu) / self.sigma
-            return 1.0 - sp_stats.norm.cdf(z)
+        if abs(self.Q) < self._LOGNORMAL_Q_THRESHOLD:
+            return sp_stats.norm.sf(w)
 
-        gamma_shape, gamma_scale, gamma_pow = self._params()
-        u = (t_safe / gamma_scale) ** gamma_pow
-        if self.Q > 0:
-            return 1.0 - sp_stats.gamma.cdf(u, gamma_shape)
-        else:
-            return sp_stats.gamma.cdf(u, gamma_shape)
+        # Form the Gamma argument directly: the equivalent scale conversion
+        # exp(mu + sigma*log(Q**2)/Q) overflows near Q=0.
+        a = self.Q ** -2
+        with np.errstate(over="ignore"):
+            u = a * np.exp(self.Q * w)
+        return (sp_stats.gamma.sf(u, a) if self.Q > 0
+                else sp_stats.gamma.cdf(u, a))
 
     def hazard(self, t):
         t = np.asarray(t, dtype=float)
@@ -408,15 +414,21 @@ class GeneralizedGamma(SurvivalDistribution):
     def pdf(self, t):
         t = np.asarray(t, dtype=float)
         t_safe = np.maximum(t, 1e-300)
+        w = (np.log(t_safe) - self.mu) / self.sigma
 
-        if abs(self.Q) < 1e-10:
-            z = (np.log(t_safe) - self.mu) / self.sigma
-            return sp_stats.norm.pdf(z) / (t_safe * self.sigma)
+        if abs(self.Q) < self._LOGNORMAL_Q_THRESHOLD:
+            return sp_stats.norm.pdf(w) / (t_safe * self.sigma)
 
-        gamma_shape, gamma_scale, gamma_pow = self._params()
-        u = (t_safe / gamma_scale) ** gamma_pow
-        du_dt = gamma_pow * t_safe ** (gamma_pow - 1) / gamma_scale ** gamma_pow
-        return sp_stats.gamma.pdf(u, gamma_shape) * np.abs(du_dt)
+        a = self.Q ** -2
+        # Evaluate the density and Jacobian in log space to avoid 0*inf
+        # in the tails. At an infinite Gamma argument, the density is zero.
+        log_u = np.log(a) + self.Q * w
+        with np.errstate(over="ignore", invalid="ignore"):
+            u = np.exp(log_u)
+            log_pdf = (sp_stats.gamma.logpdf(u, a) + np.log(abs(self.Q))
+                       + log_u - np.log(self.sigma) - np.log(t_safe))
+            result = np.exp(log_pdf)
+        return np.where(np.isinf(u) | np.isinf(t), 0.0, result)
 
     def __repr__(self):
         return f"GeneralizedGamma(mu={self.mu:.4f}, sigma={self.sigma:.4f}, Q={self.Q:.4f})"

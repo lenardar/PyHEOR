@@ -1,6 +1,6 @@
 """PyHEOR: health economic models with explicit time and reward units."""
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __author__ = "PyHEOR Team"
 
 # Core sentinel

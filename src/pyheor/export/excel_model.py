@@ -369,14 +369,16 @@ def _survival_formula(spec, time_ref):
         q = spec["q"]
         mu = spec["mu"]
         sigma = spec["sigma"]
-        gamma_scale = f"EXP({mu}+{sigma}*LN({q}^2)/{q})"
-        u = f"({time_ref}/({gamma_scale}))^({q}/{sigma})"
+        from ..survival import GeneralizedGamma
+        threshold = f"{GeneralizedGamma._LOGNORMAL_Q_THRESHOLD:.0E}"
+        # Match Python's stable Prentice transformation without a scale term.
+        u = f"EXP({q}*((LN({time_ref})-{mu})/{sigma}))/({q})^2"
         gamma_cdf = f"_xlfn.GAMMA.DIST({u},1/({q}^2),1,TRUE)"
         lognormal = (
-            f"1-_xlfn.NORM.S.DIST((LN({time_ref})-{mu})/{sigma},TRUE)"
+            f"_xlfn.NORM.S.DIST(-((LN({time_ref})-{mu})/{sigma}),TRUE)"
         )
         return (
-            f"=IF({time_ref}=0,1,IF(ABS({q})<1E-10,{lognormal},"
+            f"=IF({time_ref}=0,1,IF(ABS({q})<{threshold},{lognormal},"
             f"IF({q}>0,1-{gamma_cdf},{gamma_cdf})))"
         )
     if kind == "piecewise_exponential":

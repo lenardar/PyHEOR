@@ -125,6 +125,8 @@ Supported `from_flexsurv()` inputs:
 | `gengamma` | `mu`, `sigma`, `Q` |
 | `gengamma.orig` | `shape`, `scale`, `k` |
 
+`GeneralizedGamma` (including `from_flexsurv("gengamma", ...)`) uses the log-normal limit with `meanlog=mu` and `sdlog=sigma` when `abs(Q) < 1e-5`, to avoid numerical precision loss. This is exact at Q=0 and an approximation for nonzero Q. Excel export uses the same threshold; its positive-Q Gamma upper tails use `1-CDF`, which can round very small probabilities to zero.
+
 Parameters follow the respective R distribution definitions; names are not interchangeable across distributions. In particular, `weibullPH` uses a PH coefficient named `scale`, which the adapter converts to PyHEOR's Weibull scale.
 
 Duration conventions are 12 months, 52 weeks or 365 days per year, rather than calendar date arithmetic. Multiply annual state cost rates by cycle years; enter one-time costs at their occurrence amounts. Put parameter-dependent QALY, discount-rate and survival conversions inside PSA/OWSA callbacks so they are recomputed for each draw.

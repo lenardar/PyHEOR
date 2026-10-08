@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-- Prepare PyPI publishing: add project URLs, use PyPI installation instructions and absolute README links, and add a GitHub Release-triggered workflow that verifies the release version, builds, checks, and tests distributions before Trusted Publishing, then attaches the same packages to the Release.
+## 0.4.1 — 2026-10-08 — Generalized Gamma numerical stability
+
+- Fix `GeneralizedGamma.survival()`, `pdf()` and `hazard()` near zero Q by forming the Gamma argument directly instead of using an overflowing scale conversion. Use the log-normal limit for `|Q| < 1e-5` and survival functions for accurate Python upper tails. Corrected curves change model/PSA results that previously silently used all-zero or all-one survival, and restore finite densities on the reported grid.
+- Apply the same stable transformation and limiting threshold to generated Excel formulas. Excel still uses Gamma CDF subtraction for positive-Q upper tails; native Excel recalculation was not exercised in this verification.
+- Add regressions against 320 synthetic reference points generated with R flexsurv 2.3.2, density/threshold/tail checks, monthly PSM life-year checks, and Excel formula checks.
+- Clarify release history: PyPI metadata/README setup and GitHub Release-based Trusted Publishing were introduced and successfully exercised with 0.4.0.
 
 ## 0.4.0 — 2026-10-05 — PSM PSA crossing resampling
 

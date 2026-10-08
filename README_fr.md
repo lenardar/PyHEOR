@@ -114,6 +114,8 @@ Paramètres acceptés par `from_flexsurv()` :
 | `gengamma` | `mu`, `sigma`, `Q` |
 | `gengamma.orig` | `shape`, `scale`, `k` |
 
+`GeneralizedGamma` (y compris `from_flexsurv("gengamma", ...)`) utilise la limite log-normale avec `meanlog=mu` et `sdlog=sigma` lorsque `abs(Q) < 1e-5`, pour éviter une perte de précision numérique. Cette limite est exacte à Q=0 et approximative pour Q non nul. L’export Excel utilise le même seuil ; les probabilités de queue supérieure Gamma pour Q positif sont calculées par `1-CDF` et peuvent être arrondies à zéro lorsqu’elles sont très petites.
+
 Les paramètres suivent la définition de chaque distribution R et ne sont pas interchangeables. Pour `weibullPH`, `scale` désigne le coefficient PH, converti en échelle Weibull PyHEOR par l'adaptateur.
 
 Une année correspond à 12 mois, 52 semaines ou 365 jours ; il ne s'agit pas de dates calendaires. Multiplier les coûts annuels d'état par la durée du cycle en années ; saisir les coûts ponctuels à leur montant de survenue. Pour PSA/OWSA, effectuer les conversions dépendant des paramètres dans les callbacks afin de les recalculer à chaque tirage.

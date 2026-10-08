@@ -1,6 +1,6 @@
 [project]
 name = "pyheor"
-version = "0.4.0"
+version = "0.4.1"
 description = "Python Health Economics Research Optimizer - A framework for Markov cohort models and cost-effectiveness analysis"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}

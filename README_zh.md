@@ -125,6 +125,8 @@ treated_curve = ph.ProportionalHazards(monthly_curve, hr=.75)
 | `gengamma` | `mu`, `sigma`, `Q` |
 | `gengamma.orig` | `shape`, `scale`, `k` |
 
+`GeneralizedGamma`（包括 `from_flexsurv("gengamma", ...)`）在 `abs(Q) < 1e-5` 时使用 `meanlog=mu`、`sdlog=sigma` 的对数正态极限，避免数值精度损失。Q=0 时精确等价，非零 Q 时是近似，不保证与 R 逐位一致。Excel 导出使用同一阈值；正 Q 的 Gamma 上尾采用 `1-CDF`，极小概率可能舍入为零。
+
 这些参数按对应 R 分布的定义解释；同名参数不能跨分布直接互换。`weibullPH` 的 `scale` 是比例风险参数化的系数，转换器会换算成 PyHEOR 的 Weibull 尺度。
 
 时间约定为一年 = 12 月 = 52 周 = 365 天，用于模型时长换算，不是日历日期运算。年度状态成本可乘周期年数；一次性成本按发生额输入。QALY、贴现率和曲线换算若依赖 PSA/OWSA 参数，应放在参数回调内，确保每次抽样重新计算。
