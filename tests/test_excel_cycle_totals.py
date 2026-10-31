@@ -26,6 +26,7 @@ def calculate(ws, address):
         if isinstance(node, ast.Call):
             name=node.func.id
             if name=='CELL': return calculate(ws, node.args[0].value)
+            if name=='MIN': return min(walk(arg) for arg in node.args)
             if name=='IF': return walk(node.args[1] if walk(node.args[0]) else node.args[2])
             if name=='EXP': return math.exp(walk(node.args[0]))
         raise AssertionError(ast.dump(node))
@@ -72,3 +73,38 @@ def test_export_totals_follow_cycle_reward_semantics(tmp_path, method, kind):
     row=next(row[0].row for row in ws.iter_rows() if row[0].value=='Starting cost / start')
     ws.cell(row,2,175)
     assert calculate(ws,'B7')==pytest.approx(sum(expected['total_costs'].values())+100)
+
+
+@pytest.mark.parametrize('method', ['beginning', 'end', 'life-table'])
+@pytest.mark.parametrize('terminal', [False, True])
+def test_crossing_psm_excel_formulas_preserve_os_and_rewards(tmp_path, method, terminal):
+    import numpy as np
+    endpoints = ['PFS','OS'] if terminal else ['PFS','PFS2','OS']
+    states = ['PF','PD','Terminal','Dead'] if terminal else ['PF','PD1','PD2','Dead']
+    model=ph.PSMModel(states=states, survival_endpoints=endpoints, strategies=['S'],
+                      cycle=ph.Cycle(1,'year'), n_cycles=3, method=method,
+                      terminal_state='Terminal' if terminal else None)
+    for name, rate in zip(endpoints, [.1,.2] if terminal else [.1,.15,.2]):
+        model.set_survival('S', name, ph.Exponential(rate))
+    model.set_state_cost('care', {'PF': 10})
+    model.set_state_qaly('health', {'PF': .8})
+    path=tmp_path/'crossing.xlsx'
+    ph.export_excel_model(model,path)
+    ws=load_workbook(path)['Calc_S']
+    first=next(cell.row+1 for row in ws for cell in row if cell.value=='Boundary')
+    trace=np.array([[calculate(ws,f'{col}{r}') for col in 'BCDE'] for r in range(first,first+4)])
+    np.testing.assert_allclose(trace.sum(axis=1),1)
+    assert (trace>=0).all()
+    os=np.exp(-.2*np.arange(4))
+    np.testing.assert_allclose(trace[:,0],os)
+    np.testing.assert_allclose(trace[:,1],0)
+    if not terminal:
+        np.testing.assert_allclose(trace[:,2],0)
+        np.testing.assert_allclose(trace[:,3],1-os)
+    else:
+        np.testing.assert_allclose(trace[1:,2],-np.diff(os))
+        np.testing.assert_allclose(trace[1:,3],1-os[:-1])
+    exposure={'beginning':os[:-1].sum(), 'end':os[1:].sum(),
+              'life-table':((os[:-1]+os[1:])/2).sum()}[method]
+    assert calculate(ws,'B7')==pytest.approx(10*exposure)
+    assert calculate(ws,'B8')==pytest.approx(.8*exposure)

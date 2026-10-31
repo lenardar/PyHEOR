@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-31 — Ordered PSM curve correction (breaking)
+
+- Change PSM crossing behavior: preserve the final endpoint (usually OS) and cap preceding endpoints in reverse order using each corrected successor. Apply the same rule to base cases, PSA, dense survival/occupancy plots and Excel formula exports; keep raw fitted distributions available in results.
+- Remove PSA crossing rejection/resampling and the `max_attempts` argument (breaking). Every sampled parameter set is retained. This changes PSA distributions and state rewards for crossing curves; invalid individual curves still raise errors.
+- Document endpoint nesting and add numerical regressions for multi-state and Terminal partitions, rewards, retained PSA draws, plots and Excel formulas.
+
 ## 0.4.1 — 2026-10-08 — Generalized Gamma numerical stability
 
 - Fix `GeneralizedGamma.survival()`, `pdf()` and `hazard()` near zero Q by forming the Gamma argument directly instead of using an overflowing scale conversion. Use the log-normal limit for `|Q| < 1e-5` and survival functions for accurate Python upper tails. Corrected curves change model/PSA results that previously silently used all-zero or all-one survival, and restore finite densities on the reported grid.

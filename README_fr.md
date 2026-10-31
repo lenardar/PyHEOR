@@ -65,7 +65,7 @@ Interfaces parallèles pour coûts et QALY : état, début du modèle, entrée d
 
 `method` accepte `beginning`, `end` et `life-table` (par défaut), avec les conventions de comptage et de correction des flux de heemod. PSM n'identifie pas les flux de transition individuels ; un état Terminal optionnel permet la comptabilisation documentée des coûts de fin de vie.
 
-La PSA du PSM rééchantillonne les tirages dont les courbes de survie ne respectent pas l’ordre des critères au sein d’une stratégie, puis signale le nombre de rejets. `n_sim` compte les simulations valides ; `max_attempts` vaut par défaut `10 * n_sim`. L’analyse de référence reste stricte. Le rééchantillonnage conditionne la distribution des paramètres au respect de cet ordre.
+Le PSM suit l’ordre d’emboîtement de `survival_endpoints`, par exemple `["PFS", "PFS2", "OS"]`. À chaque instant, il conserve la dernière courbe et applique en remontant `S[j] = min(S[j], S[j+1])`, avec la courbe suivante déjà corrigée. Les proportions des états, les graphiques et les exports Excel utilisent les courbes corrigées. L’analyse de référence et la PSA suivent la même règle ; chaque tirage de paramètres est conservé. Les courbes individuelles doivent rester finies, dans `[0, 1]` et non croissantes. La correction modifie les durées dans les états et les coûts et effets ; les croisements importants nécessitent un examen des hypothèses d’extrapolation.
 
 ## Outils pratiques
 

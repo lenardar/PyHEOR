@@ -100,12 +100,15 @@ class TestPSMGoldenCalculations:
         model.run_base_case()
         assert seen == [1, 2, 3]
 
-    def test_curve_crossing_raises_instead_of_clamping(self):
+    def test_curve_crossing_caps_pfs_at_os(self):
         model = PSMModel(states=['PFS', 'Progressed', 'Dead'], survival_endpoints=['PFS', 'OS'], strategies=['S1'], n_cycles=3, cycle=_ph.Cycle(1, 'year'))
         model.set_survival('S1', 'PFS', Exponential(rate=0.1))
         model.set_survival('S1', 'OS', Exponential(rate=0.2))
-        with pytest.raises(ValueError, match='curve crossing'):
-            model.run_base_case()
+        result = model.run_base_case().results['S1']
+        expected = np.exp(-0.2 * np.arange(4))
+        np.testing.assert_allclose(result['trace'][:, 0], expected)
+        np.testing.assert_allclose(result['trace'][:, 1], 0)
+        np.testing.assert_allclose(result['trace'][:, 2], 1 - expected)
 
     def test_missing_curve_has_context(self):
         model = PSMModel(states=['Alive', 'Dead'], survival_endpoints=['OS'], strategies=['S1'], n_cycles=1, cycle=_ph.Cycle(1, 'year'))
@@ -118,7 +121,7 @@ class TestPSMGoldenCalculations:
             model.run_psa(n_sim=0, progress=False)
 
 
-class TestPSACrossingResampling:
+class TestPSACrossingCorrection:
     @staticmethod
     def _model(multi_state=False):
         endpoints = ['PFS', 'PFS2', 'OS'] if multi_state else ['PFS', 'OS']
@@ -140,14 +143,13 @@ class TestPSACrossingResampling:
         return model
 
     @pytest.mark.parametrize('multi_state', [False, True])
-    def test_rejects_whole_draw_and_returns_valid_results(self, monkeypatch, multi_state):
+    def test_keeps_every_draw_and_returns_valid_results(self, monkeypatch, multi_state):
         model = self._model(multi_state)
         draws = iter([0.5, 0.2, 0.3])
         monkeypatch.setattr('pyheor.models.psm.sample_distribution',
                             lambda *args: np.array([next(draws)]))
-        with pytest.warns(UserWarning, match='rejected 1 draws'):
-            result = model.run_psa(n_sim=2, seed=42, progress=False)
-        assert [p['rate'] for p in result.sampled_params] == [0.2, 0.3]
+        result = model.run_psa(n_sim=2, seed=42, progress=False)
+        assert [p['rate'] for p in result.sampled_params] == [0.5, 0.2]
         assert len(result.psa_results) == 2
         for draw in result.psa_results:
             for strategy in model.strategy_names:
@@ -156,16 +158,16 @@ class TestPSACrossingResampling:
                 np.testing.assert_allclose(trace.sum(axis=1), 1)
         assert model.params['rate'].base == 0.3
 
-    def test_stops_at_attempt_limit(self, monkeypatch):
+    def test_all_crossing_draws_are_kept(self, monkeypatch):
         model = self._model()
         calls = []
         def draw(*args):
             calls.append(1)
             return np.array([0.5])
         monkeypatch.setattr('pyheor.models.psm.sample_distribution', draw)
-        with pytest.raises(RuntimeError, match='accepted 0/2.*rejected 3'):
-            model.run_psa(n_sim=2, max_attempts=3, progress=False)
-        assert len(calls) == 3
+        result = model.run_psa(n_sim=2, progress=False)
+        assert len(calls) == 2
+        assert [p['rate'] for p in result.sampled_params] == [0.5, 0.5]
 
     def test_other_errors_are_not_retried(self, monkeypatch):
         model = self._model()
@@ -180,17 +182,16 @@ class TestPSACrossingResampling:
             model.run_psa(n_sim=2, progress=False)
         assert len(calls) == 1
 
-    def test_seed_reproduces_accepted_draws(self):
+    def test_seed_reproduces_original_draws(self):
         from pyheor.distributions import Uniform
         model = self._model()
         model.params['rate'].dist = Uniform(0.1, 0.6)
-        with pytest.warns(UserWarning):
-            first = model.run_psa(n_sim=10, seed=42, progress=False)
-        with pytest.warns(UserWarning):
-            second = model.run_psa(n_sim=10, seed=42, progress=False)
+        first = model.run_psa(n_sim=10, seed=42, progress=False)
+        second = model.run_psa(n_sim=10, seed=42, progress=False)
         assert first.sampled_params == second.sampled_params
+        expected = np.random.default_rng(42).uniform(0.1, 0.6, 10)
+        np.testing.assert_allclose([p['rate'] for p in first.sampled_params], expected)
 
-    @pytest.mark.parametrize('limit', [0, 1, True, 2.5])
-    def test_invalid_attempt_limit(self, limit):
-        with pytest.raises(ValueError, match='max_attempts'):
-            self._model().run_psa(n_sim=2, max_attempts=limit, progress=False)
+    def test_retry_argument_removed(self):
+        with pytest.raises(TypeError, match='max_attempts'):
+            self._model().run_psa(n_sim=2, max_attempts=20, progress=False)

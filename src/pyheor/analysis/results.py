@@ -809,7 +809,8 @@ class PSMBaseResult(StrategyOutcomeResult):
         return pd.DataFrame(rows)
 
     def survival_at(self, times, *, unit='year') -> pd.DataFrame:
-        """Evaluate fitted curves at requested elapsed times; no interpolation."""
+        """Evaluate and cap ordered fitted curves at requested elapsed times."""
+        from ..survival_tools import _cap_ordered_survival
         from ..time import Cycle
         values = np.asarray(times, dtype=float)
         if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0):
@@ -822,6 +823,7 @@ class PSMBaseResult(StrategyOutcomeResult):
             if (not np.all(np.isfinite(evaluated)) or np.any(evaluated < -1e-10)
                     or np.any(evaluated > 1+1e-10)):
                 raise ValueError('Invalid survival probabilities at requested times')
+            evaluated = _cap_ordered_survival(evaluated)
             for j, endpoint in enumerate(self.model.survival_endpoints):
                 for time, boundary, probability in zip(values, boundaries, evaluated[:,j]):
                     rows.append(dict(Time=float(time),TimeUnit=unit,Cycle=float(boundary),

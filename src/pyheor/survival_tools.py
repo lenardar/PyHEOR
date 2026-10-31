@@ -8,6 +8,11 @@ from .survival import (
 )
 
 
+def _cap_ordered_survival(values):
+    """Cap each endpoint by its corrected successor, preserving the last one."""
+    return np.minimum.accumulate(values[:, ::-1], axis=1)[:, ::-1]
+
+
 class ScaledSurvival(SurvivalDistribution):
     """S_target(t) = S_source(t × factor), with hazards and quantiles scaled too."""
 

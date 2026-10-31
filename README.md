@@ -76,7 +76,7 @@ Costs and QALYs have parallel state, starting, entry, transition and custom inte
 
 `method` is `beginning`, `end`, or `life-table` (default). State counts and event flows follow heemod conventions. PSM cannot identify pairwise transition flows, so entry/transition reward registration is unavailable there; use an explicit Terminal state for the documented end-of-life accounting rule.
 
-PSM PSA resamples draws when ordered survival endpoints cross within a strategy, and warns with the rejected-draw count. `n_sim` counts valid simulations; `max_attempts` defaults to `10 * n_sim`. Base-case runs remain strict. Resampling conditions the parameter distribution on valid curve ordering.
+PSM uses the order in `survival_endpoints` as the nesting order (e.g. `["PFS", "PFS2", "OS"]`). At each time, it preserves the final curve and works backward: `S[j] = min(S[j], S[j+1])`, using the already corrected next curve. State occupancy, plots and Excel exports use the corrected curves. Base-case and PSA calculations follow the same rule; PSA keeps every sampled parameter set. Individual curves must still be finite, within `[0, 1]`, and nonincreasing. This adjustment changes state time and rewards where curves cross; inspect substantial crossovers when selecting extrapolations.
 
 ## Practical tools
 

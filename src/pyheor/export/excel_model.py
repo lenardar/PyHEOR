@@ -86,12 +86,12 @@ def _build_cycle_sheet(ws, model, strategy, params):
             matrices.append([input_row(f"P cycle {k} / {state}", P[j]) for j, state in enumerate(model.states)])
     else:
         specs, external = [], []
-        values = model._resolve_survival_values(strategy, params)
         for j, endpoint in enumerate(model.survival_endpoints):
             curve = model._resolve_curve(strategy, endpoint, params)
             spec, row = _write_survival_curve_inputs(ws, row, endpoint, curve)
             specs.append(spec)
-            external.append([input_row(f"{endpoint} external survival boundary {k}", [values[k, j]])[0]
+            values = curve.survival(np.arange(N + 1)) if spec is None else None
+            external.append([input_row(f"{endpoint} external survival boundary {k}", [values[k]])[0]
                              for k in range(N + 1)] if spec is None else None)
     state_inputs = {}
     for kind, definitions in (("cost", model._costs), ("qaly", model._qalys)):
@@ -127,7 +127,11 @@ def _build_cycle_sheet(ws, model, strategy, params):
                 col = S + 3 + j
                 ref = f"{CL(col)}{r}"
                 curve_refs.append(ref)
-                ws.cell(r, col, _survival_formula(spec, f"A{r}") if spec is not None else f"={external[j][k]}")
+                formula = _survival_formula(spec, f"A{r}") if spec is not None else f"={external[j][k]}"
+                if j < len(specs) - 1:
+                    # Reference the already-capped next endpoint, not its raw curve.
+                    formula = f"=MIN({formula[1:]},{CL(col + 1)}{r})"
+                ws.cell(r, col, formula)
             curves.append(curve_refs)
             ws.cell(r, 2, f"={curve_refs[0]}")
             for j in range(1, len(specs)):

@@ -1128,7 +1128,7 @@ def _psm_plot_data(result, strategy, n_points):
     data = result.survival_at(times)
     data = data[data['strategy'] == strategy]
     values = {e: data[data.Endpoint == e].Survival.to_numpy() for e in model.survival_endpoints}
-    styles = {e: 'steps-post' if steps[j] is not None else 'default' for j,e in enumerate(model.survival_endpoints)}
+    styles = {e: 'steps-post' if any(step is not None for step in steps[j:]) else 'default' for j,e in enumerate(model.survival_endpoints)}
     return times, values, styles
 
 
