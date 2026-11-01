@@ -70,6 +70,15 @@ print(base.icer())
 psa = model.run_psa(n_sim=100, seed=42)
 ```
 
+Markov and PSM PSA optionally support multiple processes. The default `n_jobs=1` stays serial; use a positive integer such as `2` or `4` for larger runs. Each draw evaluates all strategies together. With a fixed seed and deterministic callbacks, parameter draws and result order match serial execution. Small runs may be slower in parallel. Callbacks should depend on their inputs, not shared mutable state or unseeded randomness.
+
+In a Python script, protect parallel execution with the main guard:
+
+```python
+if __name__ == "__main__":
+    psa = model.run_psa(n_sim=1000, seed=42, n_jobs=4)
+```
+
 ## Reward APIs
 
 Costs and QALYs have parallel state, starting, entry, transition and custom interfaces. State rewards accept `cycles=1` or a list of cycle numbers. Callbacks receive parameters and optionally a 1-based cycle index and patient attributes. Starting rewards are unweighted time-zero amounts; first-cycle state rewards are weighted by occupancy.

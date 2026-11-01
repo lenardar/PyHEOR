@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-11-01 — Optional parallel cohort PSA
+
+- Add optional process-based PSA for Markov and PSM with keyword-only `n_jobs` (default 1). Sample parameters in the parent process, load each worker model once, and preserve draw/strategy grouping and result order. Keep serial behavior unchanged.
+- Add cloudpickle for transferring local callbacks and custom survival distributions. Document script main guards and deterministic callback requirements; parallel execution can be slower for small workloads.
+
+## 0.5.2 — 2026-11-01 — Streamline scalar reward calculations
+
+- Use scalar finite-value checks for resolved rewards and remove the redundant state-vector check after every element has already been validated.
+- Handle scalar QALY utilities without constructing NumPy arrays, preserving explicit duration validation, finite-utility checks, and existing array behavior.
+- Verify scalar/array agreement, negative utilities, non-finite inputs, array shapes and unchanged inputs. Public interfaces and calculation conventions are unchanged.
+
+## 0.5.1 — 2026-11-01 — Reduce repeated simulation preparation
+
+- Reuse callback signatures and validated fixed state-reward mappings within each discrete-time reward evaluation, including cohort and individual simulations. Rebuild this local preparation for each evaluation; continue evaluating time-varying callbacks and checking their outputs every cycle.
+- Resolve and validate callback-free Markov transition matrices once per strategy simulation instead of every cycle. Keep per-cycle validation for dynamic matrices and matrix entries.
+- Preserve public interfaces, sampling order and calculation conventions. Add regression coverage for refreshed inputs between runs, unhashable callbacks, changing callback-produced mappings and invalid dynamic values.
+
 ## 0.5.0 — 2026-10-31 — Ordered PSM curve correction (breaking)
 
 - Change PSM crossing behavior: preserve the final endpoint (usually OS) and cap preceding endpoints in reverse order using each corrected successor. Apply the same rule to base cases, PSA, dense survival/occupancy plots and Excel formula exports; keep raw fitted distributions available in results.

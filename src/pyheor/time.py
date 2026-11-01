@@ -1,5 +1,6 @@
 """Explicit durations and conversions; model engines never infer input units."""
 
+from math import isfinite
 from dataclasses import dataclass
 import numpy as np
 
@@ -50,6 +51,12 @@ def qaly(utility, duration, unit=None):
         if unit is None:
             raise ValueError("Numeric duration requires an explicit unit")
         years = Cycle(duration, unit).years
+    # Scalar utilities are common in per-cycle callbacks; avoid array reductions.
+    if isinstance(utility, (int, float, np.integer, np.floating)):
+        value = float(utility)
+        if not isfinite(value):
+            raise ValueError("Utility must be finite")
+        return float(value * years)
     value = np.asarray(utility, dtype=float)
     if not np.all(np.isfinite(value)):
         raise ValueError("Utility must be finite")

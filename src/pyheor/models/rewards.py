@@ -1,5 +1,6 @@
 """Cycle rewards shared by cohort and individual discrete-time engines."""
 
+from math import isfinite
 from dataclasses import dataclass
 from types import MappingProxyType
 import numpy as np
@@ -146,23 +147,34 @@ class CycleRewards:
     def set_custom_qaly(self, category, func):
         return self._set_custom("qaly", category, func)
 
-    def _scalar_reward(self, value, strategy, params, cycle_index, attrs=None):
+    @staticmethod
+    def _reward_arity(callback, cache=None):
+        """Inspect each callback once per reward evaluation, including unhashable callables."""
+        import inspect
+        if cache is None:
+            return len(inspect.signature(callback).parameters)
+        key = ("arity", id(callback))
+        if key not in cache:
+            # Retain the object so its identity cannot be reused during this run.
+            cache[key] = (callback, len(inspect.signature(callback).parameters))
+        return cache[key][1]
+
+    def _scalar_reward(self, value, strategy, params, cycle_index, attrs=None, cache=None):
         if isinstance(value, dict):
             value = value.get(strategy, 0)
         if callable(value):
-            import inspect
-            arity = len(inspect.signature(value).parameters)
+            arity = self._reward_arity(value, cache)
             args = (params, cycle_index, attrs)[:arity]
             value = value(*args)
         result = resolve_value(value, params, cycle_index)
-        if not np.isfinite(result):
+        if not isfinite(result):
             raise ValueError("Reward must be finite")
         return result
 
-    def _state_reward_vector(self, definition, strategy, params, cycle_index, attrs=None):
+    def _state_reward_vector(self, definition, strategy, params, cycle_index, attrs=None, cache=None):
         if definition.cycles is not None and cycle_index not in definition.cycles:
             return np.zeros(self.n_states)
-        return self._resolve_state_values(definition.values, strategy, params, cycle_index, attrs)
+        return self._resolve_state_values(definition.values, strategy, params, cycle_index, attrs, cache)
 
     def _get_qalys(self, strategy, params, cycle_index, attrs=None):
         return sum((self._state_reward_vector(d, strategy, params, cycle_index, attrs)
@@ -174,6 +186,7 @@ class CycleRewards:
     def _cycle_rewards(self, strategy, params, trace, flows=None, matrices=None,
                        attrs=None, patient_index=None):
         """Evaluate one trace; flows are known transitions, never net prevalence."""
+        cache = {}
         raw_occupancy = interval_occupancy(trace, "beginning")
         occupancy = interval_occupancy(trace, self.method)
         corrected = None
@@ -194,7 +207,7 @@ class CycleRewards:
             for i in range(self.n_cycles):
                 cycle_index = i + 1
                 for category, definition in definitions.items():
-                    vector = self._state_reward_vector(definition, strategy, params, cycle_index, attrs)
+                    vector = self._state_reward_vector(definition, strategy, params, cycle_index, attrs, cache)
                     by_category[category][i] += occupancy[i] @ vector
                     raw[category][i] += raw_occupancy[i] @ vector
                 for category, source, target, value in self._event_rewards[kind]:
@@ -203,7 +216,7 @@ class CycleRewards:
                         weight = trace[0, j] if i == 0 else corrected[i, :, j].sum() - corrected[i, j, j]
                     else:
                         weight = corrected[i, self.states.index(source), j]
-                    amount = weight * self._scalar_reward(value, strategy, params, cycle_index, attrs)
+                    amount = weight * self._scalar_reward(value, strategy, params, cycle_index, attrs, cache)
                     by_category[category][i] += amount
                     raw[category][i] += amount
                 for category, callback in self._custom_rewards[kind].items():
@@ -226,7 +239,7 @@ class CycleRewards:
                     by_category[category][i] += amount
                     raw[category][i] += amount
             for category, value in self._starting_rewards[kind].items():
-                amount = self._scalar_reward(value, strategy, params, 0, attrs)
+                amount = self._scalar_reward(value, strategy, params, 0, attrs, cache)
                 by_category[category][0] += amount
                 raw[category][0] += amount
             outputs[kind] = by_category
@@ -254,6 +267,7 @@ class CycleRewards:
 
     def _batch_patient_rewards(self, strategy, params, histories):
         """Vectorized rewards for homogeneous patients without custom callbacks."""
+        cache = {}
         N, T = histories.shape[0], self.n_cycles
         cost = {c: np.zeros((N, T)) for c in self._costs}
         health = {c: np.zeros((N, T)) for c in self._qalys}
@@ -268,7 +282,7 @@ class CycleRewards:
         for i in range(T):
             for definitions, outputs in ((self._costs, cost), (self._qalys, health)):
                 for category, definition in definitions.items():
-                    vector = self._state_reward_vector(definition, strategy, params, i + 1)
+                    vector = self._state_reward_vector(definition, strategy, params, i + 1, cache=cache)
                     outputs[category][:, i] = occupied(vector, i)
             lys[:, i] = occupied(alive, i)
         for kind, outputs in (("cost", cost), ("qaly", health)):
@@ -282,10 +296,10 @@ class CycleRewards:
                 weight = (raw + previous) / 2 if self.method == "life-table" else previous if self.method == "beginning" else raw
                 if source is None:
                     weight[:, 0] = histories[:, 0] == j
-                values = np.array([self._scalar_reward(value, strategy, params, i + 1) for i in range(T)])
+                values = np.array([self._scalar_reward(value, strategy, params, i + 1, cache=cache) for i in range(T)])
                 outputs.setdefault(category, np.zeros((N, T)))[:] += weight * values
             for category, value in self._starting_rewards[kind].items():
-                outputs.setdefault(category, np.zeros((N, T)))[:, 0] += self._scalar_reward(value, strategy, params, 0)
+                outputs.setdefault(category, np.zeros((N, T)))[:, 0] += self._scalar_reward(value, strategy, params, 0, cache=cache)
         time_alive = lys.sum(axis=1)
         cost_df = discount_factor(np.arange(T), self._discount_rate("dr_cost", params))
         qaly_df = discount_factor(np.arange(T), self._discount_rate("dr_qaly", params))

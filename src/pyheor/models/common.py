@@ -258,38 +258,39 @@ class StateMappingModel(CycleRewards, ParameterisedModel):
 
     def _resolve_state_values(self, values: Any, strategy: str,
                               params: Dict[str, float], t: int,
-                              attrs: Optional[dict] = None):
+                              attrs: Optional[dict] = None, cache=None):
         """Resolve per-state values into an array indexed by state."""
         import numpy as np
 
-        if callable(values):
-            import inspect
-            arity = len(inspect.signature(values).parameters)
+        dynamic = callable(values)
+        if dynamic:
+            arity = self._reward_arity(values, cache)
             values = values(*(params, t, attrs)[:arity])
-        self._validate_state_mapping(values, "Resolved state value")
+
+        # Cache only declared mappings. Callback-produced mappings are checked
+        # every time, since both their keys and values may change each cycle.
+        key = ("mapping", id(values), strategy)
+        prepared = cache.get(key) if cache is not None and not dynamic else None
+        if prepared is None:
+            self._validate_state_mapping(values, "Resolved state value")
+            by_strategy = set(values) <= set(self.strategy_names) and all(
+                isinstance(value, dict) for value in values.values()
+            )
+            state_values = values.get(strategy, {}) if by_strategy else values
+            indexed = tuple((self.states.index(name), value)
+                            for name, value in state_values.items())
+            if cache is not None and not dynamic:
+                cache[key] = (values, indexed)
+        else:
+            indexed = prepared[1]
 
         result = np.zeros(self.n_states)
-        if not values:
-            return result
-
-        by_strategy = set(values) <= set(self.strategy_names) and all(
-            isinstance(value, dict) for value in values.values()
-        )
-        if by_strategy:
-            state_values = values.get(strategy, {})
-        else:
-            state_values = values
-
-        for state_name, value in state_values.items():
-            result[self.states.index(state_name)] = self._scalar_reward(
-                value, strategy, params, t, attrs
+        for index, value in indexed:
+            result[index] = self._scalar_reward(
+                value, strategy, params, t, attrs, cache
             )
 
-        if not np.all(np.isfinite(result)):
-            raise ValueError(
-                f"Non-finite state cost or utility for strategy {strategy!r}, "
-                f"interval {t}"
-            )
+        # Every assigned value is a finite float checked by _scalar_reward.
         return result
 
 

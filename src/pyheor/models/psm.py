@@ -9,6 +9,7 @@ from ..survival_tools import _cap_ordered_survival
 from ..time import Cycle
 from ..distributions import sample_distribution
 from .common import Param as _Param, CohortSweepModel
+from ._parallel import validate_n_jobs, run_parallel_psa
 from ..survival import SurvivalDistribution, ProportionalHazards
 from ..utils import (
     resolve_value, discount_factor, normalize_hcc, interval_occupancy,
@@ -373,14 +374,25 @@ class PartitionedSurvivalModel(CohortSweepModel):
         n_sim: int = 1000,
         seed: Optional[int] = None,
         progress: bool = True,
+        *,
+        n_jobs: int = 1,
     ) -> "PSAResult":
-        """Run exactly n_sim draws, capping crossing curves in each simulation."""
+        """Run exactly n_sim draws, capping crossing curves in each simulation.
+
+        ``n_jobs`` selects worker processes (default 1, serial). Each draw
+        includes all strategies. In scripts, protect parallel calls with
+        ``if __name__ == "__main__":``. Callbacks must be deterministic
+        functions of their inputs; external state changes are not shared.
+        """
         from ..analysis.results import PSAResult
 
         if isinstance(n_sim, bool) or not isinstance(n_sim, (int, np.integer)):
             raise TypeError("n_sim must be a positive integer")
         if n_sim <= 0:
             raise ValueError("n_sim must be a positive integer")
+        validate_n_jobs(n_jobs)
+        if n_jobs != 1:
+            return run_parallel_psa(self, n_sim, seed, progress, n_jobs)
         rng = np.random.default_rng(seed)
         sampled_params = []
         psa_results = []

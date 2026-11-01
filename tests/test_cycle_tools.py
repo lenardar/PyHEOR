@@ -56,3 +56,32 @@ def test_r_adapter_rejects_ambiguous_parameters():
     with pytest.raises(ValueError): ph.from_flexsurv('weibull',shape=2,rate=1)
     with pytest.raises(ValueError): ph.from_flexsurv('excel_weibull',shape=2,scale=1)
     with pytest.raises(ValueError): ph.from_flexsurv('gengamma.orig',shape=0,scale=1,k=2)
+
+
+@pytest.mark.parametrize('utility', [0, True, -.2, .8, np.float32(.8),
+                                    np.float64(.8), np.int64(1), np.array(.8)])
+@pytest.mark.parametrize('numeric_duration', [False, True])
+def test_qaly_scalar_and_array_paths_agree(utility, numeric_duration):
+    args = (3, 'month') if numeric_duration else (ph.Cycle(3, 'month'),)
+    result = ph.qaly(utility, *args)
+    expected = ph.qaly(np.array([utility], dtype=float), *args)[0]
+    assert type(result) is float
+    assert result == expected
+
+
+@pytest.mark.parametrize('value', [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize('wrap', [float, np.float32, np.asarray,
+                                 lambda x: [0, x], lambda x: [[x], [0]]])
+def test_qaly_rejects_nonfinite_scalar_and_array_utilities(value, wrap):
+    with pytest.raises(ValueError, match='Utility must be finite'):
+        ph.qaly(wrap(value), ph.Cycle(1, 'month'))
+
+
+def test_qaly_preserves_array_shape_and_input():
+    values = np.array([[.8, -.2], [0, 1]])
+    before = values.copy()
+    result = ph.qaly(values, 3, 'month')
+    np.testing.assert_array_equal(result, values * .25)
+    np.testing.assert_array_equal(values, before)
+    assert result.shape == values.shape
+    assert ph.qaly(np.empty((0, 2)), ph.Cycle(1, 'month')).shape == (0, 2)

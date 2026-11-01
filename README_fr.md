@@ -59,6 +59,15 @@ print(base.icer())
 psa = model.run_psa(n_sim=100, seed=42)
 ```
 
+La PSA des modèles Markov et PSM accepte plusieurs processus avec `n_jobs=2` ou `n_jobs=4`. La valeur par défaut, `n_jobs=1`, conserve le calcul séquentiel. Chaque tirage calcule toutes les stratégies. Avec une graine fixe et des fonctions déterministes, les paramètres et l’ordre des résultats restent identiques. Les petits calculs peuvent être plus lents en parallèle. Les fonctions doivent dépendre de leurs entrées, sans état mutable partagé ni hasard non contrôlé.
+
+Dans un script Python, protéger l’appel parallèle :
+
+```python
+if __name__ == "__main__":
+    psa = model.run_psa(n_sim=1000, seed=42, n_jobs=4)
+```
+
 ## Récompenses et survie
 
 Interfaces parallèles pour coûts et QALY : état, début du modèle, entrée dans un état, transition et fonction personnalisée. `cycles=` limite une récompense d'état à certains cycles. Les callbacks reçoivent les paramètres et éventuellement le numéro du cycle (1…N) et les attributs du patient.

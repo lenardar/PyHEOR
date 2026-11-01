@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from ..time import Cycle
 from ..distributions import sample_distribution
 from .common import Param as _Param, CohortSweepModel
+from ._parallel import validate_n_jobs, run_parallel_psa
 from ..utils import (
     C, _Complement, resolve_complement, resolve_value, discount_factor,
     normalize_hcc, interval_occupancy, validate_transition_matrix,
@@ -298,8 +299,20 @@ class CohortStateTransitionModel(CohortSweepModel):
             raise ValueError(f"Missing transition matrices for strategies: {sorted(missing)}")
         results = {}
         for strategy in self.strategy_names:
-            matrices = np.array([self._get_transition_matrix(strategy, params, k)
-                                 for k in range(1, self.n_cycles + 1)])
+            transitions = self._transitions[strategy]
+            # Only concrete, callback-free matrices are constant. Leave other
+            # iterables and all callback results on the per-cycle validation path.
+            fixed = isinstance(transitions, (list, tuple, np.ndarray)) and all(
+                isinstance(row, (list, tuple, np.ndarray))
+                and all(not callable(value) for value in row)
+                for row in transitions
+            )
+            if fixed:
+                matrix = self._get_transition_matrix(strategy, params, 1)
+                matrices = np.repeat(matrix[None, :, :], self.n_cycles, axis=0)
+            else:
+                matrices = np.array([self._get_transition_matrix(strategy, params, k)
+                                     for k in range(1, self.n_cycles + 1)])
             trace = np.zeros((self.n_cycles + 1, self.n_states))
             trace[0, self.initial_state_idx] = 1
             for i, matrix in enumerate(matrices):
@@ -334,6 +347,8 @@ class CohortStateTransitionModel(CohortSweepModel):
         n_sim: int = 1000,
         seed: Optional[int] = None,
         progress: bool = True,
+        *,
+        n_jobs: int = 1,
     ) -> "PSAResult":
         """Run probabilistic sensitivity analysis (PSA).
         
@@ -345,6 +360,11 @@ class CohortStateTransitionModel(CohortSweepModel):
             Random seed for reproducibility.
         progress : bool
             Whether to print progress updates.
+        n_jobs : int, keyword-only
+            Worker processes (default 1, serial). Each draw includes all strategies.
+            In scripts, protect parallel calls with ``if __name__ == "__main__":``.
+            Callbacks must be deterministic functions of their inputs; changes
+            to external state are not shared between processes.
         
         Returns
         -------
@@ -357,6 +377,9 @@ class CohortStateTransitionModel(CohortSweepModel):
             raise TypeError("n_sim must be a positive integer")
         if n_sim <= 0:
             raise ValueError("n_sim must be a positive integer")
+        validate_n_jobs(n_jobs)
+        if n_jobs != 1:
+            return run_parallel_psa(self, n_sim, seed, progress, n_jobs)
         rng = np.random.default_rng(seed)
         
         # Sample parameters
